@@ -1,0 +1,107 @@
+package main
+
+import (
+	"errors"
+	"fmt"
+	"net/url"
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
+
+	"platform/api/internal/keys"
+	"platform/api/internal/session"
+)
+
+// Environment variables read by "serve". The database comes from the standard PG* variables.
+const (
+	envInternalAddr = "PLATFORM_INTERNAL_ADDR"
+	envPublicAddr   = "PLATFORM_PUBLIC_ADDR"
+	envAuthHost     = "PLATFORM_AUTH_HOST"
+	envIssuer       = "PLATFORM_ISSUER"
+	envKEKFile      = keys.KEKFileEnv // PLATFORM_KEK_FILE
+	envIdleTimeout  = "PLATFORM_IDLE_TIMEOUT"
+	envFakeLogin    = "PLATFORM_FAKE_LOGIN"
+	// envAllowPrivilegedDBLogin is a DEVELOPMENT-ONLY escape hatch (default false). By default "serve" refuses to
+	// start when the database login role (session_user) is a superuser, bypasses RLS, owns tables of schema
+	// public or can CREATE there: the runtime role is assumed with a startup parameter, so such a login can
+	// undo it with RESET ROLE / SET ROLE and a SQL injection would regain full privileges. Setting it to true
+	// only downgrades that refusal to a loud WARN. Never set it in production.
+	envAllowPrivilegedDBLogin = "PLATFORM_ALLOW_PRIVILEGED_DB_LOGIN"
+)
+
+// hostPattern matches the host form stored in deployments.host (lowercase, no port).
+var hostPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`)
+
+// config is the validated runtime configuration of "serve".
+type config struct {
+	InternalAddr string
+	PublicAddr   string
+	AuthHost     string
+	Issuer       string
+	KEKFile      string
+	IdleTimeout  time.Duration
+	FakeLogin    bool
+	// AllowPrivilegedDBLogin is the value of PLATFORM_ALLOW_PRIVILEGED_DB_LOGIN (development only).
+	AllowPrivilegedDBLogin bool
+}
+
+// loadConfig reads and validates the environment through getenv, reporting every problem at once.
+func loadConfig(getenv func(string) string) (config, error) {
+	var errs []error
+	required := func(name string) string {
+		v := strings.TrimSpace(getenv(name))
+		if v == "" {
+			errs = append(errs, fmt.Errorf("%s is required", name))
+		}
+		return v
+	}
+	c := config{
+		InternalAddr: required(envInternalAddr),
+		PublicAddr:   required(envPublicAddr),
+		AuthHost:     required(envAuthHost),
+		Issuer:       required(envIssuer),
+		KEKFile:      required(envKEKFile),
+		IdleTimeout:  session.DefaultIdleTimeout,
+	}
+	if c.InternalAddr != "" && c.InternalAddr == c.PublicAddr {
+		errs = append(errs, fmt.Errorf("%s and %s must differ: /forwardauth must never share a listener with the public routes", envInternalAddr, envPublicAddr))
+	}
+	if c.AuthHost != "" && !hostPattern.MatchString(c.AuthHost) {
+		errs = append(errs, fmt.Errorf("%s must be a lowercase host without scheme, port or path", envAuthHost))
+	}
+	if c.Issuer != "" && c.AuthHost != "" {
+		if u, err := url.Parse(c.Issuer); err != nil || u.Scheme != "https" || u.Host != c.AuthHost || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.User != nil {
+			errs = append(errs, fmt.Errorf("%s must be exactly https://<%s>", envIssuer, envAuthHost))
+		}
+	}
+	if v := strings.TrimSpace(getenv(envIdleTimeout)); v != "" {
+		d, err := time.ParseDuration(v)
+		switch {
+		case err != nil:
+			errs = append(errs, fmt.Errorf("%s: %w", envIdleTimeout, err))
+		case d < session.MinIdleTimeout || d > session.MaxIdleTimeout:
+			errs = append(errs, fmt.Errorf("%s must be within [%s, %s]", envIdleTimeout, session.MinIdleTimeout, session.MaxIdleTimeout))
+		default:
+			c.IdleTimeout = d
+		}
+	}
+	if v := strings.TrimSpace(getenv(envFakeLogin)); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", envFakeLogin, err))
+		}
+		c.FakeLogin = b
+	}
+	if v := strings.TrimSpace(getenv(envAllowPrivilegedDBLogin)); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", envAllowPrivilegedDBLogin, err))
+		}
+		c.AllowPrivilegedDBLogin = b
+	}
+	if err := errors.Join(errs...); err != nil {
+		return config{}, fmt.Errorf("invalid configuration: %w", err)
+	}
+	return c, nil
+}

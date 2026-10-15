@@ -1,0 +1,14 @@
+.git
+**/.git
+# Only the Go modules listed in go.work are needed to build
+web
+docs
+**/node_modules
+**/*.md
+# Local build output
+**/bin
+**/dist
+**/*.test
+**/*.out
+platform-api
+**/hello/hello
