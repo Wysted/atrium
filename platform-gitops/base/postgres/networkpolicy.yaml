@@ -1,0 +1,19 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: default-deny, namespace: platform-db}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+# Only the platform namespace (platform-api and the migrate Job). PostgreSQL needs no egress at all.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: allow-ingress-platform, namespace: platform-db}
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: postgres}}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: platform}}
+      ports:
+        - {protocol: TCP, port: 5432}

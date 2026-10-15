@@ -1,0 +1,24 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: hello-b
+resources: [../../../base/hello]
+labels:
+  - pairs: {app.kubernetes.io/instance: hello-b}
+    includeSelectors: false
+patches:
+  - target: {kind: Deployment, name: hello}
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata: {name: hello}
+      spec:
+        template:
+          spec:
+            containers:
+              - name: hello
+                env:
+                  - {name: HELLO_APP_ID, value: app_016XJSY1BRD79NEGNJBXQJT5KT}
+                  - {name: HELLO_ISSUER, value: "https://auth.apps.wysted.dev"}
+  - target: {kind: IngressRoute, name: hello}
+    patch: |-
+      - {op: replace, path: /spec/routes/0/match, value: "Host(`hello-b.apps.wysted.dev`)"}

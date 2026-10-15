@@ -1,0 +1,80 @@
+# Reference app (platform/examples/hello). The overlay sets the namespace, HELLO_APP_ID and the host.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: hello
+  labels: {app.kubernetes.io/name: hello, app.kubernetes.io/part-of: portal-platform}
+automountServiceAccountToken: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hello
+  labels: {app.kubernetes.io/name: hello, app.kubernetes.io/part-of: portal-platform}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: hello}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: hello, app.kubernetes.io/part-of: portal-platform}
+    spec:
+      serviceAccountName: hello
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: hello
+          image: portal-hello:dev
+          imagePullPolicy: IfNotPresent
+          env:
+            - {name: HELLO_LISTEN_ADDR, value: ":8080"}
+            - {name: HELLO_APP_ID, value: app_REPLACED_BY_OVERLAY}
+            - {name: HELLO_ISSUER, value: "https://auth.invalid"}
+            # In-cluster URL of the internal listener, never through the public route.
+            - {name: HELLO_JWKS_URL, value: "http://platform-api-internal.platform.svc.cluster.local:8081/.well-known/jwks.json"}
+          ports:
+            - {name: http, containerPort: 8080}
+          # /healthz is exempt from assertion validation (kubelet does not go through Traefik).
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 5
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {cpu: 200m, memory: 64Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hello
+  labels: {app.kubernetes.io/name: hello, app.kubernetes.io/part-of: portal-platform}
+spec:
+  selector: {app.kubernetes.io/name: hello}
+  ports:
+    - {name: http, port: 8080, targetPort: http}
+---
+# Exact Host() match; the host is patched by the overlay.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: hello
+  labels: {app.kubernetes.io/name: hello, app.kubernetes.io/part-of: portal-platform}
+spec:
+  entryPoints: [websecure]
+  routes:
+    - kind: Rule
+      match: Host(`hello.invalid`)
+      services:
+        - {name: hello, port: 8080}
+  tls: {}

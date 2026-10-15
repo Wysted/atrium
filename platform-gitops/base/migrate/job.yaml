@@ -1,0 +1,74 @@
+# Applies the database migrations as the schema owner (platform_owner: LOGIN, not a superuser).
+# Jobs are immutable: overlays/local/up.sh deletes the previous run before applying.
+# Secret platform-owner-pgpass (key pgpass) is mounted only here; the Deployment never sees the owner password.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: platform-migrate
+  labels: {app.kubernetes.io/name: platform-migrate, app.kubernetes.io/part-of: portal-platform}
+automountServiceAccountToken: false
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: migrate
+  labels: {app.kubernetes.io/name: platform-migrate, app.kubernetes.io/part-of: portal-platform}
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: platform-migrate, app.kubernetes.io/part-of: portal-platform}
+    spec:
+      restartPolicy: Never
+      serviceAccountName: platform-migrate
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      # A fresh pod is not yet in kube-router's allow set for ~1-2 s: its first connection to PostgreSQL is
+      # refused. Wait with the pinned postgres image (pg_isready) instead of burning a restart/backoff.
+      initContainers:
+        - name: wait-for-db
+          image: postgres:18.6-trixie@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336
+          imagePullPolicy: IfNotPresent
+          command: [sh, -c, 'until pg_isready -q -h "$PGHOST" -p "$PGPORT"; do sleep 1; done']
+          env:
+            - {name: PGHOST, value: postgres.platform-db.svc.cluster.local}
+            - {name: PGPORT, value: "5432"}
+            # libpq cannot look up uid 65532 (no passwd entry) and pg_isready would report "no attempt".
+            - {name: PGUSER, value: wait_for_db}
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {cpu: 100m, memory: 32Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+      containers:
+        - name: migrate
+          image: portal-platform-api:dev
+          imagePullPolicy: IfNotPresent
+          args: [migrate]
+          env:
+            - {name: PGHOST, value: postgres.platform-db.svc.cluster.local}
+            - {name: PGPORT, value: "5432"}
+            - {name: PGUSER, value: platform_owner}
+            - {name: PGDATABASE, value: platform}
+            - {name: PGSSLMODE, value: disable}
+            - {name: PGPASSFILE, value: /etc/platform/pgpass/pgpass}
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: pgpass, mountPath: /etc/platform/pgpass, readOnly: true}
+      volumes:
+        - name: pgpass
+          secret: {secretName: platform-owner-pgpass, defaultMode: 0440}

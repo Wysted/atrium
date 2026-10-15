@@ -1,0 +1,118 @@
+# platform-api: ForwardAuth decision point (internal listener) and auth host (public listener).
+# Secrets (created by overlays/local/up.sh): platform-kek (key kek), platform-api-pgpass (key pgpass).
+# PLATFORM_AUTH_HOST / PLATFORM_ISSUER are set by the overlay (domain-specific).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: platform-api
+  labels: {app.kubernetes.io/name: platform-api, app.kubernetes.io/part-of: portal-platform}
+automountServiceAccountToken: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: platform-api
+  labels: {app.kubernetes.io/name: platform-api, app.kubernetes.io/part-of: portal-platform}
+spec:
+  # Two replicas on purpose: exercises the advisory lock, NOTIFY-driven cache invalidation and shared sessions.
+  replicas: 2
+  selector:
+    matchLabels: {app.kubernetes.io/name: platform-api}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: platform-api, app.kubernetes.io/part-of: portal-platform}
+    spec:
+      serviceAccountName: platform-api
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        # Secret files belong to root: the non-root process reads them through the group (mode 0440).
+        fsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      terminationGracePeriodSeconds: 30
+      # A fresh pod is not yet in kube-router's allow set for ~1-2 s: its first connection to PostgreSQL is
+      # refused. Wait with the pinned postgres image (pg_isready) instead of burning a restart/backoff.
+      initContainers:
+        - name: wait-for-db
+          image: postgres:18.6-trixie@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336
+          imagePullPolicy: IfNotPresent
+          command: [sh, -c, 'until pg_isready -q -h "$PGHOST" -p "$PGPORT"; do sleep 1; done']
+          env:
+            - {name: PGHOST, value: postgres.platform-db.svc.cluster.local}
+            - {name: PGPORT, value: "5432"}
+            # libpq cannot look up uid 65532 (no passwd entry) and pg_isready would report "no attempt".
+            - {name: PGUSER, value: wait_for_db}
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {cpu: 100m, memory: 32Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+      containers:
+        - name: platform-api
+          image: portal-platform-api:dev
+          imagePullPolicy: IfNotPresent
+          args: [serve]
+          env:
+            - {name: PLATFORM_INTERNAL_ADDR, value: ":8081"}
+            - {name: PLATFORM_PUBLIC_ADDR, value: ":8080"}
+            - {name: PLATFORM_KEK_FILE, value: /etc/platform/kek/kek}
+            # Development only: Google login arrives in a later part.
+            - {name: PLATFORM_FAKE_LOGIN, value: "true"}
+            # Connection through libpq-style env; the password comes from PGPASSFILE. No privileged-login escape hatch.
+            - {name: PGHOST, value: postgres.platform-db.svc.cluster.local}
+            - {name: PGPORT, value: "5432"}
+            - {name: PGUSER, value: platform_api}
+            - {name: PGDATABASE, value: platform}
+            - {name: PGSSLMODE, value: disable}
+            - {name: PGPASSFILE, value: /etc/platform/pgpass/pgpass}
+          ports:
+            - {name: public, containerPort: 8080}
+            - {name: internal, containerPort: 8081}
+          livenessProbe:
+            httpGet: {path: /healthz, port: internal}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: {path: /readyz, port: internal}
+            periodSeconds: 5
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: kek, mountPath: /etc/platform/kek, readOnly: true}
+            - {name: pgpass, mountPath: /etc/platform/pgpass, readOnly: true}
+      volumes:
+        - name: kek
+          secret: {secretName: platform-kek, defaultMode: 0440}
+        - name: pgpass
+          secret: {secretName: platform-api-pgpass, defaultMode: 0440}
+---
+# Listener reachable by Traefik (ForwardAuth) and by app namespaces (JWKS). Never exposed by an IngressRoute.
+apiVersion: v1
+kind: Service
+metadata:
+  name: platform-api-internal
+  labels: {app.kubernetes.io/name: platform-api, app.kubernetes.io/component: internal, app.kubernetes.io/part-of: portal-platform}
+spec:
+  selector: {app.kubernetes.io/name: platform-api}
+  ports:
+    - {name: internal, port: 8081, targetPort: internal}
+---
+# Auth host browser routes; the only target of the auth host IngressRoute.
+apiVersion: v1
+kind: Service
+metadata:
+  name: platform-api-public
+  labels: {app.kubernetes.io/name: platform-api, app.kubernetes.io/component: public, app.kubernetes.io/part-of: portal-platform}
+spec:
+  selector: {app.kubernetes.io/name: platform-api}
+  ports:
+    - {name: public, port: 8080, targetPort: public}

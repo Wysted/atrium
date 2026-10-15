@@ -1,0 +1,15 @@
+# Auth host only, to the public listener. The host is patched by the overlay. Exact Host() match:
+# ForwardAuth answers 200 for the auth host, so a router without it would expose whatever it points to.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: platform-api
+  labels: {app.kubernetes.io/name: platform-api, app.kubernetes.io/part-of: portal-platform}
+spec:
+  entryPoints: [websecure]
+  routes:
+    - kind: Rule
+      match: Host(`auth.invalid`)
+      services:
+        - {name: platform-api-public, port: 8080}
+  tls: {}

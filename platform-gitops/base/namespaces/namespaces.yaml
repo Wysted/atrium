@@ -1,0 +1,32 @@
+# One namespace per concern. Pod Security "restricted" is enforced everywhere.
+# Namespaces that host initiative apps carry portal.wysted.dev/app-namespace=true: platform-api's internal
+# listener (JWKS) accepts ingress from them.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: platform-db
+  labels: {app.kubernetes.io/part-of: portal-platform, pod-security.kubernetes.io/enforce: restricted}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: platform
+  labels: {app.kubernetes.io/part-of: portal-platform, pod-security.kubernetes.io/enforce: restricted}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: hello-a
+  labels:
+    app.kubernetes.io/part-of: portal-platform
+    pod-security.kubernetes.io/enforce: restricted
+    portal.wysted.dev/app-namespace: "true"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: hello-b
+  labels:
+    app.kubernetes.io/part-of: portal-platform
+    pod-security.kubernetes.io/enforce: restricted
+    portal.wysted.dev/app-namespace: "true"

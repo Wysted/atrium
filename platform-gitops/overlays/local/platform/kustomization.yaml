@@ -1,0 +1,20 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: [../../../base/platform-api]
+patches:
+  - target: {kind: Deployment, name: platform-api}
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata: {name: platform-api}
+      spec:
+        template:
+          spec:
+            containers:
+              - name: platform-api
+                env:
+                  - {name: PLATFORM_AUTH_HOST, value: auth.apps.wysted.dev}
+                  - {name: PLATFORM_ISSUER, value: "https://auth.apps.wysted.dev"}
+  - target: {kind: IngressRoute, name: platform-api}
+    patch: |-
+      - {op: replace, path: /spec/routes/0/match, value: "Host(`auth.apps.wysted.dev`)"}

@@ -1,0 +1,39 @@
+# Entrypoint-level chain for websecure (see overlays/local/traefik/entrypoint-values.yaml), in this order:
+# platform-strip-assertion@kubernetescrd, platform-forwardauth@kubernetescrd.
+# Both MUST exist before Traefik is upgraded with the entrypoint values.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: strip-assertion
+  labels: {app.kubernetes.io/name: platform-api, app.kubernetes.io/part-of: portal-platform}
+spec:
+  headers:
+    customRequestHeaders:
+      # Empty value deletes the header: a client-forged assertion never reaches platform-api nor an app on
+      # paths where ForwardAuth answers 200 without issuing one (preflight, auth host).
+      Platform-Assertion: ""
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: forwardauth
+  labels: {app.kubernetes.io/name: platform-api, app.kubernetes.io/part-of: portal-platform}
+spec:
+  forwardAuth:
+    address: http://platform-api-internal.platform.svc.cluster.local:8081/forwardauth
+    # Deprecated in v3.7; kept explicitly false (no trustedIPs on the entrypoint: client X-Forwarded-* never trusted).
+    trustForwardHeader: false
+    # Allowlist (contract block 2). Sec-Fetch-Site and Origin feed the logout CSRF check.
+    authRequestHeaders:
+      - Cookie
+      - Accept
+      - Sec-Fetch-Mode
+      - Sec-Fetch-Site
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - X-Requested-With
+      - User-Agent
+    # Bytes read from the auth response; larger -> 401 (default is unlimited).
+    maxResponseBodySize: 4096
+    authResponseHeaders: [Platform-Assertion]
