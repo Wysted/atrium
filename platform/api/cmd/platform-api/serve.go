@@ -12,6 +12,7 @@ import (
 
 	"platform/api/internal/access"
 	"platform/api/internal/app"
+	"platform/api/internal/googlelogin"
 	"platform/api/internal/housekeeping"
 	"platform/api/internal/keys"
 	"platform/api/internal/postgres"
@@ -44,7 +45,7 @@ func newServer(addr string, h http.Handler) *http.Server {
 // serve runs platform-api until ctx ends or a listener fails, then shuts everything down in order:
 // listeners first (in-flight requests finish), background jobs next, the pool last.
 func serve(ctx context.Context, cfg config, log *slog.Logger) error {
-	if cfg.FakeLogin {
+	if cfg.FakeLogin && cfg.Google == nil {
 		log.Warn("PLATFORM_FAKE_LOGIN is enabled: anyone who can reach the auth host can log in as any email. Never use this in production")
 	}
 	kek, err := keys.LoadKEKFile(cfg.KEKFile)
@@ -88,10 +89,15 @@ func serve(ctx context.Context, cfg config, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	a, err := app.New(app.Config{
+	acfg := app.Config{
 		AuthHost: cfg.AuthHost, Issuer: cfg.Issuer, IdleTimeout: cfg.IdleTimeout, FakeLogin: cfg.FakeLogin,
 		Pool: pool, Keyring: ring, Logger: log,
-	})
+	}
+	if g := cfg.Google; g != nil {
+		// Issuer stays empty: googlelogin.GoogleIssuer. It is never read from the environment.
+		acfg.Google = &googlelogin.Config{ClientID: g.ClientID, ClientSecret: g.ClientSecret, AllowedHD: g.AllowedHD}
+	}
+	a, err := app.New(acfg)
 	if err != nil {
 		return err
 	}
@@ -115,6 +121,10 @@ func serve(ctx context.Context, cfg config, log *slog.Logger) error {
 	spawn(ring.Run)
 	spawn(func(c context.Context) { rotator.Run(c, 0) })
 	spawn(job.Run)
+	if a.Login != nil {
+		// Discovery retries in the background: Google being unreachable never blocks start-up or /readyz.
+		spawn(a.Login.Run)
+	}
 	spawn(func(c context.Context) { postgres.Listen(c, pool, access.NotifyChannel, a.InvalidateAccess, log) })
 
 	servers := map[string]*http.Server{

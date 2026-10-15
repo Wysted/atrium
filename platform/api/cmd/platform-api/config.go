@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"platform/api/internal/keys"
+	"platform/api/internal/secretfile"
 	"platform/api/internal/session"
 )
 
@@ -22,6 +24,10 @@ const (
 	envKEKFile      = keys.KEKFileEnv // PLATFORM_KEK_FILE
 	envIdleTimeout  = "PLATFORM_IDLE_TIMEOUT"
 	envFakeLogin    = "PLATFORM_FAKE_LOGIN"
+	// Google login. All three are set together or none is (see loadConfig).
+	envGoogleClientID         = "PLATFORM_GOOGLE_CLIENT_ID"
+	envGoogleClientSecretFile = "PLATFORM_GOOGLE_CLIENT_SECRET_FILE"
+	envAllowedHD              = "PLATFORM_ALLOWED_HD"
 	// envAllowPrivilegedDBLogin is a DEVELOPMENT-ONLY escape hatch (default false). By default "serve" refuses to
 	// start when the database login role (session_user) is a superuser, bypasses RLS, owns tables of schema
 	// public or can CREATE there: the runtime role is assumed with a startup parameter, so such a login can
@@ -29,6 +35,9 @@ const (
 	// only downgrades that refusal to a loud WARN. Never set it in production.
 	envAllowPrivilegedDBLogin = "PLATFORM_ALLOW_PRIVILEGED_DB_LOGIN"
 )
+
+// maxClientSecretBytes bounds the Google client secret file (real secrets are about 35 bytes).
+const maxClientSecretBytes = 4 << 10
 
 // hostPattern matches the host form stored in deployments.host (lowercase, no port).
 var hostPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`)
@@ -41,9 +50,20 @@ type config struct {
 	Issuer       string
 	KEKFile      string
 	IdleTimeout  time.Duration
-	FakeLogin    bool
+	// FakeLogin is the parsed PLATFORM_FAKE_LOGIN. It is only honored without Google (see googleConfig).
+	FakeLogin bool
+	// Google is nil when no Google variable is set (only valid with FakeLogin). When present, the fake login is
+	// switched off by the auth host with a WARN: the two never coexist.
+	Google *googleConfig
 	// AllowPrivilegedDBLogin is the value of PLATFORM_ALLOW_PRIVILEGED_DB_LOGIN (development only).
 	AllowPrivilegedDBLogin bool
+}
+
+// googleConfig is the validated Google login configuration. The secret was read from its file at load time.
+type googleConfig struct {
+	ClientID     string
+	ClientSecret string
+	AllowedHD    []string // lowercase, deduplicated, non-empty
 }
 
 // loadConfig reads and validates the environment through getenv, reporting every problem at once.
@@ -100,8 +120,70 @@ func loadConfig(getenv func(string) string) (config, error) {
 		}
 		c.AllowPrivilegedDBLogin = b
 	}
+	g, gerrs := loadGoogleConfig(getenv)
+	errs = append(errs, gerrs...)
+	c.Google = g
+	if g == nil && len(gerrs) == 0 && !c.FakeLogin {
+		errs = append(errs, fmt.Errorf("%s=false requires Google login: set %s, %s and %s",
+			envFakeLogin, envGoogleClientID, envGoogleClientSecretFile, envAllowedHD))
+	}
 	if err := errors.Join(errs...); err != nil {
 		return config{}, fmt.Errorf("invalid configuration: %w", err)
 	}
 	return c, nil
+}
+
+// loadGoogleConfig returns nil, nil when none of the Google variables is set. If any is set, all are required
+// and validated: a half-configured login must fail at start-up, not at the first user.
+func loadGoogleConfig(getenv func(string) string) (*googleConfig, []error) {
+	id := strings.TrimSpace(getenv(envGoogleClientID))
+	secretPath := strings.TrimSpace(getenv(envGoogleClientSecretFile))
+	hdRaw := strings.TrimSpace(getenv(envAllowedHD))
+	if id == "" && secretPath == "" && hdRaw == "" {
+		return nil, nil
+	}
+	var errs []error
+	g := &googleConfig{ClientID: id}
+	if id == "" {
+		errs = append(errs, fmt.Errorf("%s is required when Google login is configured", envGoogleClientID))
+	} else if strings.ContainsAny(id, " \t\r\n") {
+		errs = append(errs, fmt.Errorf("%s must not contain whitespace", envGoogleClientID))
+	}
+	if secretPath == "" {
+		errs = append(errs, fmt.Errorf("%s is required when Google login is configured", envGoogleClientSecretFile))
+	} else if raw, err := secretfile.Read(secretPath, maxClientSecretBytes); err != nil {
+		errs = append(errs, fmt.Errorf("%s: %w", envGoogleClientSecretFile, err))
+	} else {
+		g.ClientSecret = strings.TrimSpace(string(raw)) // a mounted file usually ends with a newline
+		clear(raw)
+		if g.ClientSecret == "" {
+			errs = append(errs, fmt.Errorf("%s: the file is empty", envGoogleClientSecretFile))
+		}
+	}
+	if hdRaw == "" {
+		errs = append(errs, fmt.Errorf("%s is required when Google login is configured", envAllowedHD))
+	} else {
+		hds, err := parseAllowedHD(hdRaw)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", envAllowedHD, err))
+		}
+		g.AllowedHD = hds
+	}
+	return g, errs
+}
+
+// parseAllowedHD splits the comma-separated hosted-domain list, lowercases it and rejects empty or malformed
+// entries (a typo such as "a.com,,b.com" is reported instead of silently ignored). Duplicates collapse.
+func parseAllowedHD(raw string) ([]string, error) {
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		hd := strings.ToLower(strings.TrimSpace(part))
+		if hd == "" || !strings.Contains(hd, ".") || !hostPattern.MatchString(hd) {
+			return nil, fmt.Errorf("invalid domain %q: want a comma-separated list of domains such as example.com", part)
+		}
+		if !slices.Contains(out, hd) {
+			out = append(out, hd)
+		}
+	}
+	return out, nil
 }

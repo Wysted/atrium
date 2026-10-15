@@ -12,6 +12,7 @@ import (
 	"platform/api/internal/assertion"
 	"platform/api/internal/authhost"
 	"platform/api/internal/forwardauth"
+	"platform/api/internal/googlelogin"
 	"platform/api/internal/health"
 	"platform/api/internal/httpx"
 	"platform/api/internal/jwks"
@@ -28,10 +29,13 @@ type Config struct {
 	AuthHost    string // lowercase host of the auth host, e.g. auth.apps.example.com
 	Issuer      string // exact JWT iss, https://<AuthHost>
 	IdleTimeout time.Duration
-	FakeLogin   bool
-	Pool        *pgxpool.Pool
-	Keyring     *keys.Keyring
-	CacheTTL    time.Duration // decision cache TTL; zero means the contract default
+	// Google enables Google login (and switches FakeLogin off). Flows, RedirectURL and Logger are filled in here;
+	// Issuer is empty in production (GoogleIssuer) and set only by tests.
+	Google    *googlelogin.Config
+	FakeLogin bool
+	Pool      *pgxpool.Pool
+	Keyring   *keys.Keyring
+	CacheTTL  time.Duration // decision cache TTL; zero means the contract default
 	// RequestTimeout is the per-request deadline of ForwardAuth and the auth host; zero means httpx.RequestTimeout.
 	RequestTimeout time.Duration
 	Logger         *slog.Logger
@@ -45,6 +49,9 @@ type App struct {
 	Public http.Handler
 	// Sessions is exposed for the housekeeping job (idle timeout) and tests.
 	Sessions *session.Service
+	// Login is the Google login, nil when it is not configured. The caller must run Login.Run in the background:
+	// until the provider discovery succeeds /login answers 503, and nothing else (/readyz, /forwardauth) waits for it.
+	Login *googlelogin.Login
 	// InvalidateAccess clears the decision cache; call it on NOTIFY access_changed.
 	InvalidateAccess func()
 }
@@ -90,8 +97,20 @@ func New(cfg Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+	var login *googlelogin.Login
+	var loginIface authhost.Login // stays a nil interface when Google is off
+	if cfg.Google != nil {
+		gc := *cfg.Google
+		gc.Flows = postgres.NewFlowRepo(cfg.Pool)
+		gc.RedirectURL = "https://" + cfg.AuthHost + authhost.PathCallback
+		gc.Logger = log
+		if login, err = googlelogin.New(gc); err != nil {
+			return nil, err
+		}
+		loginIface = login
+	}
 	ah, err := authhost.New(authhost.Config{
-		AuthHost: cfg.AuthHost, Sessions: sessions, Apps: deployments, Users: users,
+		AuthHost: cfg.AuthHost, Sessions: sessions, Apps: deployments, Users: users, Login: loginIface,
 		// The limiter lives in this process: with several replicas the effective limit is per replica.
 		Limiter:        ratelimit.New(ratelimit.Config{}),
 		Audit:          auditLog,
@@ -117,6 +136,7 @@ func New(cfg Config) (*App, error) {
 		Internal:         httpx.Recover(log, internal),
 		Public:           httpx.Recover(log, public),
 		Sessions:         sessions,
+		Login:            login,
 		InvalidateAccess: fa.Invalidate,
 	}, nil
 }

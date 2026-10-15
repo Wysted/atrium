@@ -69,6 +69,11 @@ type envOptions struct {
 	noReload    bool      // never load the keyring
 
 	requestTimeout time.Duration // per-request deadline; zero is the default
+
+	// google enables Google login against this fake provider. FakeLogin stays on unless noFakeLogin is set, to
+	// prove that the fake is switched off by the presence of Google. The env does not wait for discovery when
+	// the provider is down at start.
+	google *fakeGoogle
 }
 
 type env struct {
@@ -81,6 +86,7 @@ type env struct {
 	public   *httptest.Server
 	logs     *syncBuffer
 	client   *http.Client
+	google   *fakeGoogle
 
 	initiativeID string
 	roleID       string
@@ -119,14 +125,31 @@ func newEnv(t *testing.T, opts envOptions) *env {
 		_ = ring.Reload(ctx) // a KEK mismatch is reported as an error and is part of the scenario
 	}
 
-	a, err := app.New(app.Config{
+	cfg := app.Config{
 		AuthHost: authHost, Issuer: issuerURL, FakeLogin: !opts.noFakeLogin, Pool: rt, Keyring: ring, Logger: log,
 		RequestTimeout: opts.requestTimeout,
-	})
+	}
+	if opts.google != nil {
+		cfg.Google = opts.google.config()
+	}
+	a, err := app.New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := &env{t: t, pool: pool, rt: rt, ring: ring, app: a, logs: logs}
+	e := &env{t: t, pool: pool, rt: rt, ring: ring, app: a, logs: logs, google: opts.google}
+	if a.Login != nil {
+		loginCtx, stopLogin := context.WithCancel(context.Background())
+		var loginWG sync.WaitGroup
+		loginWG.Add(1)
+		go func() {
+			defer loginWG.Done()
+			a.Login.Run(loginCtx)
+		}()
+		t.Cleanup(func() { stopLogin(); loginWG.Wait() })
+		if !opts.google.down.Load() {
+			waitFor(t, "login provider discovery", a.Login.Ready)
+		}
+	}
 	e.internal = httptest.NewServer(a.Internal)
 	e.public = httptest.NewServer(a.Public)
 	e.client = &http.Client{

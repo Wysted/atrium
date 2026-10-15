@@ -79,7 +79,7 @@ func TestCheckLoginRole(t *testing.T) {
 func TestLoadConfigAllowPrivilegedDBLogin(t *testing.T) {
 	base := map[string]string{
 		envInternalAddr: ":8081", envPublicAddr: ":8080", envAuthHost: "auth.example.test",
-		envIssuer: "https://auth.example.test", envKEKFile: "/tmp/kek",
+		envIssuer: "https://auth.example.test", envKEKFile: "/tmp/kek", envFakeLogin: "true",
 	}
 	load := func(extra string) (config, error) {
 		return loadConfig(func(k string) string {

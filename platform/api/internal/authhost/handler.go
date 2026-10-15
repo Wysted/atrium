@@ -1,6 +1,11 @@
-// Package authhost serves the browser routes of the auth host (public listener): /login, /logout and the
-// signed-out page. Google login arrives in a later part; until then an explicit, off-by-default fake login
-// lets the rest of the flow run end to end.
+// Package authhost serves the browser routes of the auth host (public listener): /login, /oauth2/callback,
+// /logout and the signed-out page.
+//
+// Login providers: Google (Config.Login) is the real one. The fake login (Config.FakeLogin, off by default)
+// trusts a posted email and exists only to run the flow without Google. They never coexist: when Google is
+// configured the fake login is switched off with a WARN, because a forgotten flag next to a real provider
+// would let anyone who can reach the auth host log in as any user. Both producers of a session share
+// establishSession, so fixation protection, audit and the login code hand-off are identical.
 package authhost
 
 import (
@@ -17,6 +22,7 @@ import (
 	"time"
 
 	"platform/api/internal/audit"
+	"platform/api/internal/googlelogin"
 	"platform/api/internal/httpx"
 	"platform/api/internal/ratelimit"
 	"platform/api/internal/session"
@@ -26,21 +32,25 @@ const (
 	// Paths of the auth host.
 	PathLogin     = "/login"
 	PathLogout    = "/logout"
+	PathCallback  = "/oauth2/callback"
 	PathSignedOut = "/signed-out"
 
 	// callbackPath is the reserved path of every app host (contract block 2).
 	callbackPath = "/_platform/callback"
 
-	queryRD   = "rd"
-	queryBind = "bind"
-	fieldMail = "email"
+	queryRD    = "rd"
+	queryBind  = "bind"
+	queryState = "state"
+	queryCode  = "code"
+	queryError = "error"
+	fieldMail  = "email"
 
-	// fakeSubPrefix namespaces the google_sub of fake users so they can never collide with a real one.
-	fakeSubPrefix = "fake:"
 	// maxEmailLength matches the users.email CHECK.
 	maxEmailLength = 254
 	// maxFormBytes bounds the fake login form body.
 	maxFormBytes = 8 << 10
+	// providerRetryAfterSeconds is the Retry-After hint while the login provider is not ready.
+	providerRetryAfterSeconds = 5
 )
 
 // Sessions is the part of session.Service the auth host needs.
@@ -62,6 +72,13 @@ type Users interface {
 	UpsertUser(ctx context.Context, googleSub, email, name string) (id string, active bool, err error)
 }
 
+// Login is the Google flow the auth host drives (implemented by *googlelogin.Login).
+type Login interface {
+	Begin(ctx context.Context, in googlelogin.BeginInput) (cookieValue, authURL string, err error)
+	Complete(ctx context.Context, in googlelogin.CompleteInput) (googlelogin.Result, error)
+	Abandon(ctx context.Context, cookieValue, state string) (burned bool)
+}
+
 // Limiter decides whether a client may call /login now.
 type Limiter interface {
 	Allow(key string) (ok bool, retryAfter time.Duration)
@@ -69,12 +86,14 @@ type Limiter interface {
 
 // Config wires a Handler. RequestTimeout (default httpx.RequestTimeout) and Logger are optional.
 type Config struct {
-	AuthHost       string
-	Sessions       Sessions
-	Apps           Apps
-	Users          Users
-	Limiter        Limiter
-	Audit          audit.Recorder
+	AuthHost string
+	Sessions Sessions
+	Apps     Apps
+	Users    Users
+	Limiter  Limiter
+	Audit    audit.Recorder
+	// Login enables Google login and disables FakeLogin. Nil means no Google.
+	Login          Login
 	FakeLogin      bool
 	RequestTimeout time.Duration
 	Logger         *slog.Logger
@@ -95,10 +114,14 @@ func New(cfg Config) (*Handler, error) {
 	if h.log == nil {
 		h.log = slog.Default()
 	}
+	if cfg.Login != nil && cfg.FakeLogin {
+		h.log.Warn("PLATFORM_FAKE_LOGIN ignored: Google login is configured and the fake login is disabled")
+		h.cfg.FakeLogin = false
+	}
 	return h, nil
 }
 
-// Register adds the routes to mux. /oauth2/callback is intentionally absent (404) until the Google part.
+// Register adds the routes to mux; /oauth2/callback exists only with Google login (404 otherwise).
 // Every route runs under a request deadline, so a hung database ends in the explicit 503 page.
 func (h *Handler) Register(mux *http.ServeMux) {
 	route := func(f http.HandlerFunc) http.Handler {
@@ -108,6 +131,9 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("POST "+PathLogin, route(h.fakeLogin))
 	mux.Handle("POST "+PathLogout, route(h.logout))
 	mux.Handle("GET "+PathSignedOut, route(h.signedOut))
+	if h.cfg.Login != nil {
+		mux.Handle("GET "+PathCallback, route(h.callback))
+	}
 }
 
 // loginParams is a validated login request.
@@ -121,10 +147,7 @@ type loginParams struct {
 var errBadRequest = errors.New("bad login request")
 
 func (h *Handler) parseParams(ctx context.Context, rawRD, rawBind string) (loginParams, error) {
-	rd, err := h.cfg.Sessions.ValidateRD(ctx, rawRD)
-	if errors.Is(err, session.ErrInvalidRD) {
-		return loginParams{}, errBadRequest
-	}
+	rd, appID, err := h.resolveTarget(ctx, rawRD)
 	if err != nil {
 		return loginParams{}, err
 	}
@@ -132,14 +155,26 @@ func (h *Handler) parseParams(ctx context.Context, rawRD, rawBind string) (login
 	if err != nil || len(bind) != session.TokenBytes {
 		return loginParams{}, errBadRequest
 	}
+	return loginParams{rd: rd, appID: appID, bindHash: bind}, nil
+}
+
+// resolveTarget validates the redirect target and finds the app behind its host.
+func (h *Handler) resolveTarget(ctx context.Context, rawRD string) (session.RD, string, error) {
+	rd, err := h.cfg.Sessions.ValidateRD(ctx, rawRD)
+	if errors.Is(err, session.ErrInvalidRD) {
+		return session.RD{}, "", errBadRequest
+	}
+	if err != nil {
+		return session.RD{}, "", err
+	}
 	appID, found, err := h.cfg.Apps.AppForHost(ctx, rd.Host)
 	if err != nil {
-		return loginParams{}, err
+		return session.RD{}, "", err
 	}
 	if !found {
-		return loginParams{}, errBadRequest
+		return session.RD{}, "", errBadRequest
 	}
-	return loginParams{rd: rd, appID: appID, bindHash: bind}, nil
+	return rd, appID, nil
 }
 
 // loginPage handles GET /login?rd=&bind=.
@@ -166,6 +201,10 @@ func (h *Handler) loginPage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if h.cfg.Login != nil {
+		h.startGoogle(w, r, p)
+		return
+	}
 	if !h.cfg.FakeLogin {
 		providerMissing(w)
 		return
@@ -181,6 +220,10 @@ func (h *Handler) loginPage(w http.ResponseWriter, r *http.Request) {
 
 // fakeLogin handles POST /login when PLATFORM_FAKE_LOGIN is on: it trusts the posted email.
 func (h *Handler) fakeLogin(w http.ResponseWriter, r *http.Request) {
+	if h.cfg.Login != nil { // Google login has no POST form
+		httpx.WritePage(w, http.StatusMethodNotAllowed, "Method not allowed", "Use the sign-in link of the application.")
+		return
+	}
 	if !h.cfg.FakeLogin {
 		providerMissing(w)
 		return
@@ -208,7 +251,7 @@ func (h *Handler) fakeLogin(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, err)
 		return
 	}
-	userID, active, err := h.cfg.Users.UpsertUser(ctx, fakeSubPrefix+email, email, localPart(email))
+	userID, active, err := h.cfg.Users.UpsertUser(ctx, googlelogin.FakeSubjectPrefix+email, email, localPart(email))
 	if err != nil {
 		h.fail(w, err)
 		return
@@ -217,12 +260,26 @@ func (h *Handler) fakeLogin(w http.ResponseWriter, r *http.Request) {
 		httpx.WritePage(w, http.StatusForbidden, "Access denied", "This account is disabled.")
 		return
 	}
-	// A new login never keeps the previous central session (no fixation, no leftover app sessions).
+	sess, err := h.establishSession(ctx, w, r, userID, map[string]string{"method": "fake", "host": p.rd.Host})
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	if err := h.redirectWithCode(ctx, w, sess, p); err != nil {
+		h.fail(w, err)
+		return
+	}
+	h.log.Warn("fake login", "user_id", userID, "sid", sess.ID, "host", p.rd.Host)
+}
+
+// establishSession turns a successful login into a central session: the previous session of the browser (if
+// any) is revoked first (no fixation, no leftover app sessions), a new one is created, the login is audited and
+// the cookie is set. loginAudit is the "after" payload of the session.login event; it must carry no secret.
+func (h *Handler) establishSession(ctx context.Context, w http.ResponseWriter, r *http.Request, userID string, loginAudit map[string]string) (session.Session, error) {
 	if old := httpx.CookieValue(r.Header, session.CookieSession); old != "" {
 		prev, err := h.cfg.Sessions.RevokeSession(ctx, old)
 		if err != nil {
-			h.fail(w, err)
-			return
+			return session.Session{}, err
 		}
 		if prev.SessionID != "" {
 			audit.Write(ctx, h.cfg.Audit, h.log, audit.Event{
@@ -235,20 +292,141 @@ func (h *Handler) fakeLogin(w http.ResponseWriter, r *http.Request) {
 		UserID: userID, IP: httpx.ClientIP(r), UserAgent: r.UserAgent(),
 	})
 	if err != nil {
-		h.fail(w, err)
-		return
+		return session.Session{}, err
 	}
 	// The session exists from here on: audit it before anything else can fail.
 	audit.Write(ctx, h.cfg.Audit, h.log, audit.Event{
-		ActorID: userID, Action: audit.ActionLogin, TargetType: audit.TargetSession, TargetID: sess.ID,
-		After: map[string]string{"method": "fake", "host": p.rd.Host},
+		ActorID: userID, Action: audit.ActionLogin, TargetType: audit.TargetSession, TargetID: sess.ID, After: loginAudit,
 	})
 	httpx.SetCookie(w, session.CookieSession, token, time.Until(sess.ExpiresAt))
+	return sess, nil
+}
+
+// startGoogle stores a flow and sends the browser to Google. A second /login in another tab replaces the login
+// cookie, so only the latest flow of a browser can complete: the callback of the older tab arrives with the new
+// cookie and its own state, matches no flow, gets a 400 and burns nothing, leaving the latest flow intact.
+func (h *Handler) startGoogle(w http.ResponseWriter, r *http.Request, p loginParams) {
+	cookie, authURL, err := h.cfg.Login.Begin(r.Context(), googlelogin.BeginInput{RD: p.rd.URL, BindHash: p.bindHash})
+	if errors.Is(err, googlelogin.ErrNotReady) {
+		h.providerUnavailable(w)
+		return
+	}
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	httpx.SetCookie(w, session.CookieLogin, cookie, googlelogin.FlowTTL)
+	w.Header().Set(httpx.HeaderLocation, authURL)
+	w.WriteHeader(http.StatusFound)
+}
+
+// callback handles GET /oauth2/callback?code&state (or ?error= from Google). Nothing of the query is reflected
+// and the redirect target comes from the stored flow, never from the request.
+//
+// The flow is matched by cookie AND state. A request whose state does not match (forged, or from an older tab)
+// burns nothing and leaves the login cookie alone, so it cannot cancel a login in progress. The login cookie is
+// deleted whenever the flow was burned, and only then: not on 429, not on a state mismatch, not while the
+// provider is unavailable before the exchange.
+func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
+	if !h.allow(w, r) {
+		return
+	}
+	ctx := r.Context()
+	cookie := httpx.CookieValue(r.Header, session.CookieLogin)
+	q := r.URL.Query()
+
+	if q.Has(queryError) { // the user refused or Google failed: burn the flow only if the state proves it is ours
+		if cookie != "" && h.cfg.Login.Abandon(ctx, cookie, q.Get(queryState)) {
+			httpx.ClearCookie(w, session.CookieLogin)
+		}
+		h.log.Info("google login refused by the provider")
+		signInFailed(w)
+		return
+	}
+	res, err := h.cfg.Login.Complete(ctx, googlelogin.CompleteInput{
+		CookieValue: cookie, State: q.Get(queryState), Code: q.Get(queryCode),
+	})
+	if flowBurned(err) {
+		httpx.ClearCookie(w, session.CookieLogin)
+	}
+	var rejected *googlelogin.RejectedError
+	switch {
+	case err == nil:
+	case errors.Is(err, googlelogin.ErrNotReady):
+		h.providerUnavailable(w)
+		return
+	case errors.Is(err, googlelogin.ErrProviderUnavailable):
+		// Transient, not a verdict on the user: 503 + Retry-After. The flow is burned, so the user starts again.
+		h.log.Warn("google login: provider unavailable", "error", err.Error())
+		h.providerUnavailable(w)
+		return
+	case errors.As(err, &rejected):
+		// Contract (Open items): rejections log hd and email; the user sees nothing specific.
+		h.log.Warn("google login rejected", "reason", rejected.Reason, "hd", rejected.HD, "email", rejected.Email)
+		accessDenied(w)
+		return
+	case errors.Is(err, googlelogin.ErrInvalidFlow):
+		h.log.Warn("google login failed: no matching flow", "error", err.Error())
+		signInFailed(w)
+		return
+	case errors.Is(err, googlelogin.ErrNoCode), errors.Is(err, googlelogin.ErrExchange), errors.Is(err, googlelogin.ErrIDToken):
+		h.log.Warn("google login failed: rejected", "error", err.Error())
+		signInFailed(w)
+		return
+	default:
+		h.fail(w, err)
+		return
+	}
+
+	rd, appID, err := h.resolveTarget(ctx, res.RD)
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	id := res.Identity
+	userID, active, err := h.cfg.Users.UpsertUser(ctx, id.Subject, id.Email, id.Name)
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	if !active {
+		h.log.Warn("google login refused: user is disabled", "user_id", userID)
+		accessDenied(w)
+		return
+	}
+	p := loginParams{rd: rd, appID: appID, bindHash: res.BindHash}
+	sess, err := h.establishSession(ctx, w, r, userID, map[string]string{"provider": "google", "host": rd.Host})
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
 	if err := h.redirectWithCode(ctx, w, sess, p); err != nil {
 		h.fail(w, err)
 		return
 	}
-	h.log.Warn("fake login", "user_id", userID, "sid", sess.ID, "host", p.rd.Host)
+	h.log.Info("google login", "user_id", userID, "sid", sess.ID, "host", rd.Host)
+}
+
+// flowBurned reports whether the outcome of Complete means the flow was consumed: success, or any failure
+// after the atomic consume. Not-ready, a non-matching flow and store failures consumed nothing.
+func flowBurned(err error) bool {
+	var rejected *googlelogin.RejectedError
+	return err == nil || errors.As(err, &rejected) ||
+		errors.Is(err, googlelogin.ErrNoCode) || errors.Is(err, googlelogin.ErrExchange) ||
+		errors.Is(err, googlelogin.ErrIDToken) || errors.Is(err, googlelogin.ErrProviderUnavailable)
+}
+
+func (h *Handler) providerUnavailable(w http.ResponseWriter) {
+	w.Header().Set("Retry-After", strconv.Itoa(providerRetryAfterSeconds))
+	httpx.WritePage(w, http.StatusServiceUnavailable, "Service unavailable", "login provider unavailable")
+}
+
+func signInFailed(w http.ResponseWriter) {
+	httpx.WritePage(w, http.StatusBadRequest, "Sign-in failed", "The sign-in could not be completed. Go back to the application and try again.")
+}
+
+func accessDenied(w http.ResponseWriter) {
+	httpx.WritePage(w, http.StatusForbidden, "Access denied", "This account cannot sign in.")
 }
 
 // logout handles POST /logout on the auth host.

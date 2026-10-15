@@ -10,8 +10,9 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"io"
 	"os"
+
+	"platform/api/internal/secretfile"
 )
 
 // KEKSize is the key-encryption-key length in bytes (AES-256).
@@ -26,11 +27,6 @@ const kekIDLabel = "platform/kek-id/v1"
 
 // kekIDSize is how many bytes of the HMAC output form the fingerprint.
 const kekIDSize = 16
-
-// maxKEKFileMode is the loosest permission set accepted for the KEK file: owner read/write and group read.
-// In Kubernetes a mounted Secret belongs to root and a non-root pod reads it through its group
-// (fsGroup + defaultMode 0440), so group read must be allowed; group write and any access for others are not.
-const maxKEKFileMode os.FileMode = 0o640
 
 // KEKFileEnv names the environment variable holding the path of the KEK file mounted from the Kubernetes Secret.
 const KEKFileEnv = "PLATFORM_KEK_FILE"
@@ -77,26 +73,11 @@ func NewKEK(raw []byte) (*KEK, error) {
 }
 
 // LoadKEKFile reads a raw 32-byte KEK from path. The file must be a regular file whose permissions are
-// no looser than 0640 (group write and any "other" bit are rejected, not just warned about).
+// no looser than 0640 (see secretfile.Read; group write and any "other" bit are rejected, not just warned about).
 func LoadKEKFile(path string) (*KEK, error) {
-	f, err := os.Open(path)
+	raw, err := secretfile.Read(path, KEKSize)
 	if err != nil {
-		return nil, fmt.Errorf("open KEK file: %w", err)
-	}
-	defer f.Close()
-	info, err := f.Stat() // on the open handle: no check/use race
-	if err != nil {
-		return nil, fmt.Errorf("stat KEK file: %w", err)
-	}
-	if !info.Mode().IsRegular() {
-		return nil, errors.New("KEK file is not a regular file")
-	}
-	if info.Mode().Perm()&^maxKEKFileMode != 0 {
-		return nil, fmt.Errorf("KEK file permissions %#o are too open, want %#o or stricter", info.Mode().Perm(), maxKEKFileMode)
-	}
-	raw, err := io.ReadAll(io.LimitReader(f, KEKSize+1))
-	if err != nil {
-		return nil, fmt.Errorf("read KEK file: %w", err)
+		return nil, fmt.Errorf("KEK file: %w", err)
 	}
 	defer clear(raw)
 	return NewKEK(raw)

@@ -244,6 +244,33 @@ Research notes: Engram `architecture/portal-login-research`.
    - Identity is `sub` (mapped to `users.google_sub`); email is never an identifier.
 4. No Google token is stored (no refresh token, no access token).
 
+### Configuration and availability
+
+| Variable | Meaning |
+|---|---|
+| `PLATFORM_GOOGLE_CLIENT_ID` | OAuth client id (not secret) |
+| `PLATFORM_GOOGLE_CLIENT_SECRET_FILE` | File with the client secret; same permission policy as the KEK (regular file, at most 0640) |
+| `PLATFORM_ALLOWED_HD` | Comma-separated allowlist of `hd` values, lowercase, no empty entries |
+| `PLATFORM_FAKE_LOGIN` | Development only. Ignored (with a warning) when Google is configured: the two never coexist |
+
+- The three Google variables go together; without Google, `PLATFORM_FAKE_LOGIN=true` is required.
+- The Google issuer is fixed to `https://accounts.google.com`; it is never configurable through the environment.
+- Google discovery runs in the background with backoff and never blocks startup. Until it is ready, `/login`
+  without a session and `/oauth2/callback` answer 503 with `Retry-After`. `/readyz` and `/forwardauth` do not
+  depend on Google: users with live sessions keep working during a Google outage.
+- The flow is consumed only when the callback `state` matches it (`UPDATE ... WHERE id AND state`), so a forged
+  callback with a foreign `state`, or `?error=` without the right `state`, never cancels a login in progress.
+  The login cookie is cleared only when the flow was actually burned.
+- Callback outcomes, always with generic pages that never reflect request parameters:
+  - 400: no matching flow, missing code, Google rejected the code (`invalid_grant` and other 4xx), invalid ID token,
+    `?error=` with the right `state`.
+  - 403: `hd` missing or not allowed, `email_verified` not true, `sub` empty or using the reserved `fake:` prefix,
+    disabled user.
+  - 503 with `Retry-After`: Google unreachable, 5xx or 429 from the token endpoint, redirects from Google
+    (never followed, so the client secret is never re-sent), deadline exceeded, or Google keys unavailable.
+- Two tabs: a second `/login` replaces the login cookie, so the latest flow completes and the older tab gets a 400
+  without affecting it.
+
 ### Session tables
 
 | Table | Cookie | Lifetime |
