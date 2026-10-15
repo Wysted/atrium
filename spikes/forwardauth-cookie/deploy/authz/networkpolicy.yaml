@@ -1,0 +1,36 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: default-deny, namespace: spike-authz}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+# Traefik (ForwardAuth + auth host routing) and the apps (JWKS fetch).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: allow-ingress-authz, namespace: spike-authz}
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: authz}}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: traefik}}
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: spike-app1}}
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: spike-app2}}
+      ports:
+        - {protocol: TCP, port: 8080}
+---
+# authz only needs DNS.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: allow-egress-dns, namespace: spike-authz}
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}
+          podSelector: {matchLabels: {k8s-app: kube-dns}}
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}

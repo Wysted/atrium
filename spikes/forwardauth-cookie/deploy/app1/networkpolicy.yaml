@@ -1,0 +1,39 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: default-deny, namespace: spike-app1}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+# Only Traefik may reach the app.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: allow-ingress-traefik, namespace: spike-app1}
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: app}}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: traefik}}
+      ports:
+        - {protocol: TCP, port: 8080}
+---
+# The app only talks to authz (JWKS) and DNS.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: allow-egress-authz-dns, namespace: spike-app1}
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: spike-authz}}
+          podSelector: {matchLabels: {app.kubernetes.io/name: authz}}
+      ports:
+        - {protocol: TCP, port: 8080}
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}
+          podSelector: {matchLabels: {k8s-app: kube-dns}}
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}

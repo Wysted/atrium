@@ -1,0 +1,24 @@
+# Spike namespaces. Pod Security "restricted" is enforced to double-check the securityContext.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: spike-authz
+  labels:
+    app.kubernetes.io/part-of: portal-spike
+    pod-security.kubernetes.io/enforce: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: spike-app1
+  labels:
+    app.kubernetes.io/part-of: portal-spike
+    pod-security.kubernetes.io/enforce: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: spike-app2
+  labels:
+    app.kubernetes.io/part-of: portal-spike
+    pod-security.kubernetes.io/enforce: restricted

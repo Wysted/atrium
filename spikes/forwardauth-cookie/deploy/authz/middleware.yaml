@@ -1,0 +1,26 @@
+# ForwardAuth applied at entrypoint level (see ../traefik-entrypoint-values.yaml), after strip-assertion.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: forwardauth
+  namespace: spike-authz
+  labels: {app.kubernetes.io/name: authz, app.kubernetes.io/part-of: portal-spike}
+spec:
+  forwardAuth:
+    address: http://authz.spike-authz.svc.cluster.local:8080/forwardauth
+    # Deprecated in v3.7 (removal in next major). Kept explicit (false) to silence the startup warning;
+    # the entrypoint has no forwardedHeaders.trustedIPs, so client X-Forwarded-* are never trusted.
+    trustForwardHeader: false
+    # Allowlist of request headers copied to the auth server (X-Forwarded-* are set by Traefik itself).
+    authRequestHeaders:
+      - Cookie
+      - Accept
+      - Sec-Fetch-Mode
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - X-Requested-With
+      - User-Agent
+    # Bytes read from the auth server response; larger -> 401. Default is unlimited.
+    maxResponseBodySize: 4096
+    authResponseHeaders: [X-Portal-Token]

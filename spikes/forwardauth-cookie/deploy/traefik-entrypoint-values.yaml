@@ -1,0 +1,15 @@
+# Extra values layered on local/traefik-values.yaml: ForwardAuth at the websecure entrypoint.
+# The Middlewares (spike-authz/strip-assertion and forwardauth) MUST exist before applying this, or Traefik breaks every route.
+#
+# Apply:
+#   helm upgrade traefik traefik/traefik --version 41.7.1 -n traefik \
+#     -f local/traefik-values.yaml -f spikes/forwardauth-cookie/deploy/traefik-entrypoint-values.yaml
+# Rollback (drops the entrypoint middleware):
+#   helm upgrade traefik traefik/traefik --version 41.7.1 -n traefik -f local/traefik-values.yaml
+ports:
+  websecure:
+    http:
+      middlewares:
+        # Order matters: strip the forged assertion header first, then ForwardAuth.
+        - spike-authz-strip-assertion@kubernetescrd
+        - spike-authz-forwardauth@kubernetescrd

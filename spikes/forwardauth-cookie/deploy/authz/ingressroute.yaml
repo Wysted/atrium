@@ -1,0 +1,14 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: authz
+  namespace: spike-authz
+  labels: {app.kubernetes.io/name: authz, app.kubernetes.io/part-of: portal-spike}
+spec:
+  entryPoints: [websecure]
+  routes:
+    - kind: Rule
+      match: Host(`auth.apps.wysted.dev`)
+      services:
+        - {name: authz, port: 8080}
+  tls: {}

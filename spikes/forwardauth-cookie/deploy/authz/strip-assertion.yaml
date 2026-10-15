@@ -1,0 +1,13 @@
+# Runs BEFORE the ForwardAuth at the websecure entrypoint (see ../traefik-entrypoint-values.yaml).
+# Empty value = delete the header, so a client-forged X-Portal-Token never reaches authz nor the app
+# on paths where authz answers 200 without minting a token (CORS preflight, auth host).
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: strip-assertion
+  namespace: spike-authz
+  labels: {app.kubernetes.io/name: authz, app.kubernetes.io/part-of: portal-spike}
+spec:
+  headers:
+    customRequestHeaders:
+      X-Portal-Token: ""
