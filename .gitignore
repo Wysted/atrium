@@ -1,0 +1,13 @@
+# Local toolbox state: secrets, KEKs, kubeconfig, Go/Helm caches, PostgreSQL data. Never commit it.
+/.tools/
+
+# Generated tooling caches (skill registry)
+/.atl/
+
+# Go build and test outputs
+*.test
+*.out
+/platform/api/platform-api
+/platform/examples/hello/hello
+/spikes/*/authz
+/spikes/*/app

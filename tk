@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Run a command inside the portal toolbox container (no args opens a shell).
+# Examples: ./tk kubectl get nodes | ./tk helm list -A | ./tk
+set -euo pipefail
+
+cd "$(dirname "$0")"
+mkdir -p .tools/home .tools/kube .tools/helm
+
+export LOCAL_UID="$(id -u)"
+export LOCAL_GID="$(id -g)"
+export DOCKER_GID="$(stat -c '%g' /var/run/docker.sock)"
+
+# Network shared with the k3d cluster; must exist before compose attaches to it.
+readonly NETWORK=portal-net
+docker network inspect "$NETWORK" >/dev/null 2>&1 || docker network create "$NETWORK" >/dev/null
+
+exec docker compose run --rm tools "$@"

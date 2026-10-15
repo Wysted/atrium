@@ -1,0 +1,63 @@
+services:
+  tools:
+    build: ./tools
+    image: portal-tools:local
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    group_add:
+      - "${DOCKER_GID:-0}"
+    working_dir: /workspace
+    environment:
+      HOME: /workspace/.tools/home
+      KUBECONFIG: /workspace/.tools/kube/config
+      HELM_CACHE_HOME: /workspace/.tools/helm/cache
+      HELM_CONFIG_HOME: /workspace/.tools/helm/config
+      HELM_DATA_HOME: /workspace/.tools/helm/data
+    volumes:
+      - .:/workspace
+      - /var/run/docker.sock:/var/run/docker.sock
+    # Same network as the k3d cluster: the API is reached at k3d-portal-serverlb:6443.
+    networks:
+      - portal-net
+
+  go:
+    image: golang:1.27.2-trixie@sha256:47667934874913a449b96faa7ef4777fa285d9ec29126ee80ed61c45b7cccf0e
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    working_dir: /workspace
+    environment:
+      HOME: /workspace/.tools/home
+      GOPATH: /workspace/.tools/go/path
+      GOCACHE: /workspace/.tools/go/cache
+      GOMODCACHE: /workspace/.tools/go/mod
+      GOTOOLCHAIN: local
+      # Local database (service postgres); credentials come from the pgpass file, never from env.
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGUSER: platform
+      PGDATABASE: platform
+      PGSSLMODE: disable
+      PGPASSFILE: /workspace/.tools/secrets/pgpass
+    volumes:
+      - .:/workspace
+
+  # Local PostgreSQL for platform-api development and integration tests (start with local/db-up.sh).
+  postgres:
+    image: postgres:18.6-trixie@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    environment:
+      POSTGRES_USER: platform
+      POSTGRES_DB: platform
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres-password
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - ./.tools/postgres:/var/lib/postgresql/data
+      - ./.tools/secrets/postgres-password:/run/secrets/postgres-password:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "platform", "-d", "platform"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+networks:
+  # Created by ./tk and shared with the k3d cluster (local/k3d.yaml).
+  portal-net:
+    external: true
