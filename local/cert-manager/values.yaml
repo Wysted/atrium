@@ -1,0 +1,8 @@
+# cert-manager chart values for the local cluster (chart v1.21.2).
+crds:
+  enabled: true
+
+# Check DNS-01 propagation against public resolvers instead of the cluster
+# DNS, which only sees the local view of the zone.
+dns01RecursiveNameservers: "1.1.1.1:53,8.8.8.8:53"
+dns01RecursiveNameserversOnly: true

@@ -1,0 +1,35 @@
+# Traefik chart values for the local cluster (chart 41.7.1 -> Traefik v3.7.14).
+ports:
+  web:
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+          permanent: true
+  websecure:
+    http:
+      # Drop headers with non-alphanumeric names (e.g. X_Forwarded_Proto) to
+      # avoid aliasing with their dashed versions (CVE-2026-39858 family).
+      aliasHeadersStrategy: delete
+    # Direct exposure: never trust client-sent X-Forwarded-* headers.
+    forwardedHeaders:
+      trustedIPs: []
+      insecure: false
+
+# Wildcard *.apps.wysted.dev issued by cert-manager (local/certs-up.sh).
+tlsStore:
+  default:
+    defaultCertificate:
+      secretName: apps-wildcard-tls
+
+ingressRoute:
+  dashboard:
+    enabled: false
+
+providers:
+  kubernetesCRD:
+    allowCrossNamespace: false
+
+accessLog:
+  enabled: true

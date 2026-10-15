@@ -1,0 +1,17 @@
+# Wildcard certificate for every platform host. Traefik serves it as the
+# default certificate (see tlsStore in local/traefik-values.yaml).
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: apps-wildcard
+  namespace: traefik
+spec:
+  secretName: apps-wildcard-tls
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  dnsNames:
+    - "*.apps.wysted.dev"
+  issuerRef:
+    kind: ClusterIssuer
+    name: ${ISSUER}

@@ -1,0 +1,35 @@
+# Local K3s cluster for the platform (runs as Docker containers via k3d).
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+metadata:
+  name: portal
+servers: 1
+agents: 0
+image: rancher/k3s:v1.37.1-k3s1
+# Shared network so the toolbox reaches the API by container name.
+network: portal-net
+kubeAPI:
+  # Published on loopback only: local DNS already resolves *.apps.wysted.dev to 127.0.0.1.
+  hostIP: "127.0.0.1"
+  hostPort: "6550"
+ports:
+  - port: 127.0.0.1:80:80
+    nodeFilters:
+      - loadbalancer
+  - port: 127.0.0.1:443:443
+    nodeFilters:
+      - loadbalancer
+options:
+  k3s:
+    extraArgs:
+      # Traefik is installed from the official chart to control its version.
+      - arg: --disable=traefik
+        nodeFilters:
+          - server:*
+      # Lets the toolbox container reach the API through the k3d load balancer.
+      - arg: --tls-san=k3d-portal-serverlb
+        nodeFilters:
+          - server:*
+  kubeconfig:
+    updateDefaultKubeconfig: true
+    switchCurrentContext: true
