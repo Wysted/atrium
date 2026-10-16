@@ -43,6 +43,11 @@ services:
   postgres:
     image: postgres:18.6-trixie@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336
     user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    # Throwaway development server: durability is traded for test speed. Every test database is created from a
+    # template and dropped, and DROP DATABASE forces an immediate checkpoint whose fsync phase (hundreds of files per
+    # live database) took tens of seconds on Docker/WSL storage and timed out parallel test binaries. After a crash,
+    # discard .tools/postgres and run local/db-up.sh again; never reuse these flags for anything that keeps data.
+    command: ["postgres", "-c", "fsync=off", "-c", "full_page_writes=off", "-c", "synchronous_commit=off"]
     environment:
       POSTGRES_USER: platform
       POSTGRES_DB: platform

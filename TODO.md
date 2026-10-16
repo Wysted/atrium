@@ -28,14 +28,18 @@ Pending work and open questions for the portal platform. Detailed context lives 
   `cmd/portal` with the embedded Nuxt 4 SPA (`platform/web/`), `/metrics`, the probe, and the audit of
   `RevokeUser` / `RevokeApp`. Create the frontend subagents when the web work starts.
 - [ ] **Non-browser clients for the portal API.** CLI and automation have no way to authenticate yet (block 6 open items).
-- [ ] **Flaky test database cleanup.** Under `go test -race ./...` the `DROP DATABASE ... WITH (FORCE)` in
-  `internal/testdb` exceeded its 30 s timeout in 2 of ~6 full runs on 2026-10-15 (once across every package at
-  the same instant). After the migrated-template change (2026-10-15) 10 consecutive full `-race` runs of
-  `platform/api` did not reproduce it and left no `platform_test_*` databases; stale ones (older than 15 min) are now
-  swept at the start of each test binary. Root cause not proven: PostgreSQL requests an immediate checkpoint on every
-  `DROP DATABASE`, so parallel packages queue on checkpoint I/O (Docker/WSL). Seen again on 2026-10-16 (`TestDecisionTable`
-  failing at 31.9 s in a full `-race` run, passing in isolation and in the next runs), so the template did not fix it.
-  Next step: capture the failing message (`go test -json`) to tell a drop timeout from a create/connect timeout.
+- [x] **Flaky test database cleanup.** Closed 2026-10-16. Root cause: every `DROP DATABASE` makes PostgreSQL run an
+  immediate checkpoint and wait for it, and the checkpoint's fsync phase covers the files of every live test database
+  (hundreds each) across all parallel test binaries. On Docker/WSL storage that phase takes seconds, and a slow one
+  lets databases pile up, which slows the next checkpoint (feedback loop) until a `t.Cleanup` drop hits its 30 s
+  timeout; every binary stalls at once. Evidence: `pg_stat_activity` showed DROPs in `IPC:CheckpointStart/Done`,
+  drops of 7-8 s in normal runs and 16 s under disk load; the same load with `fsync=off` gave checkpoints under 1.6 s.
+  Fix: the dev `postgres` service in `compose.yaml` runs with `fsync=off`, `full_page_writes=off`,
+  `synchronous_commit=off` (full run 35 s -> 15 s, 20/20 clean runs, no leftover databases); `testdb` errors now state
+  step, database and elapsed time. Deferring drops to the end of a binary was tried and is worse (live databases make
+  each checkpoint slower). Related, not fixed: `access_changed`/`signing_keys_changed` triggers use NOTIFY, which
+  serializes commits cluster-wide on one lock; timing-sensitive app tests (`TestGoogleCallbackProviderUnavailable`)
+  can fail when the disk is saturated by other work.
 - [ ] **Reduce `platform_runtime`.** Once the portal owns administration, drop its write access to the authorization
   tables except what ForwardAuth and login need.
 - [ ] **Cookie prefix support in Safari.** `__Host-Http-` is enforced by Chrome 140+ and Firefox 143+; revisit Safari.
