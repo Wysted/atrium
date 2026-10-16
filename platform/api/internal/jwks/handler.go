@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"platform/api/internal/httpx"
 	"platform/api/internal/keys"
 )
 
@@ -38,7 +39,7 @@ func Handler(src Source) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		published := src.PublicKeys()
 		if len(published) == 0 {
-			w.Header().Set("Cache-Control", "no-store")
+			w.Header().Set(httpx.HeaderCacheControl, httpx.CacheNoStore)
 			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 			return
 		}
@@ -54,8 +55,8 @@ func Handler(src Source) http.Handler {
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
-		w.Header().Set("Content-Type", contentType)
-		w.Header().Set("Cache-Control", cacheControl)
+		w.Header().Set(httpx.HeaderContentType, contentType)
+		w.Header().Set(httpx.HeaderCacheControl, cacheControl)
 		w.WriteHeader(http.StatusOK)
 		if r.Method != http.MethodHead {
 			_, _ = w.Write(body)

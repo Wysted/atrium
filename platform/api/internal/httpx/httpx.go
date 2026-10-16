@@ -159,7 +159,7 @@ func Recover(log *slog.Logger, next http.Handler) http.Handler {
 			if rec == nil {
 				return
 			}
-			if rec == http.ErrAbortHandler {
+			if rec == http.ErrAbortHandler { //nolint:errorlint // net/http only silences the exact sentinel value
 				panic(rec)
 			}
 			log.Error("handler panic", "panic", fmt.Sprint(rec), "path", r.URL.Path)

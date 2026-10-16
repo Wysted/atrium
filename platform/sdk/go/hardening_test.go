@@ -282,12 +282,10 @@ func TestStaleWhileRevalidateWithHangingJWKS(t *testing.T) {
 	var wg sync.WaitGroup
 	errs := make(chan error, requests)
 	for range requests {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			_, err := v.Verify(context.Background(), tok())
 			errs <- err
-		}()
+		})
 	}
 	wg.Wait()
 	close(errs)
@@ -372,7 +370,7 @@ func TestMiddlewareAnswers503WhenKeysAreUnavailable(t *testing.T) {
 	h := v.Middleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }))
 
 	do := func(token string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/dashboard", nil)
 		req.Header.Set(platformauth.HeaderName, token)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
@@ -401,7 +399,7 @@ func TestHealthPathStripsClientAssertion(t *testing.T) {
 	h := v.Middleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		seen = r.Header.Get(platformauth.HeaderName)
 	}))
-	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/healthz", nil)
 	req.Header.Set(platformauth.HeaderName, "forged")
 	h.ServeHTTP(httptest.NewRecorder(), req)
 	if seen != "" {

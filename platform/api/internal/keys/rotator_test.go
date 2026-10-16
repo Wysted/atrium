@@ -292,9 +292,7 @@ func TestConcurrentRotatorsAreSafe(t *testing.T) {
 			created int
 		)
 		for _, rot := range rotators {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				<-start
 				res, err := rot.Tick(ctx)
 				if err != nil {
@@ -308,7 +306,7 @@ func TestConcurrentRotatorsAreSafe(t *testing.T) {
 						created++
 					}
 				}
-			}()
+			})
 		}
 		close(start)
 		wg.Wait()
@@ -650,7 +648,7 @@ func TestKeyringSignerAndSecrecy(t *testing.T) {
 		t.Fatal(err)
 	}
 	scalar, _ := s.Key.Bytes()
-	if len(enc) == 0 || containsSub(enc, scalar) {
+	if len(enc) == 0 || bytes.Contains(enc, scalar) {
 		t.Fatal("private key stored in clear")
 	}
 }

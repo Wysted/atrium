@@ -32,7 +32,7 @@ func TestHandlerServesPublicSet(t *testing.T) {
 		{KID: "r", State: keys.StateRetired, JWK: jwk("r")},
 	}
 	rec := httptest.NewRecorder()
-	newMux(src).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, jwks.Path, nil))
+	newMux(src).ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, jwks.Path, nil))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
@@ -65,7 +65,7 @@ func TestHandlerServesPublicSet(t *testing.T) {
 
 func TestHandlerEmptySetIsUnavailableAndUncacheable(t *testing.T) {
 	rec := httptest.NewRecorder()
-	newMux(fakeSource{}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, jwks.Path, nil))
+	newMux(fakeSource{}).ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, jwks.Path, nil))
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d", rec.Code)
 	}
@@ -88,7 +88,7 @@ func TestRouteMethods(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.method, func(t *testing.T) {
 			rec := httptest.NewRecorder()
-			newMux(src).ServeHTTP(rec, httptest.NewRequest(tt.method, jwks.Path, strings.NewReader("")))
+			newMux(src).ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), tt.method, jwks.Path, strings.NewReader("")))
 			if rec.Code != tt.want {
 				t.Errorf("status = %d, want %d", rec.Code, tt.want)
 			}

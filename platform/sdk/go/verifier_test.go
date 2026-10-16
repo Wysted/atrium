@@ -173,7 +173,7 @@ func TestKeyCache(t *testing.T) {
 		return err
 	}
 
-	t.Run("max-age is honoured and capped at five minutes", func(t *testing.T) {
+	t.Run("max-age is honored and capped at five minutes", func(t *testing.T) {
 		tests := []struct {
 			name         string
 			cacheControl string
@@ -307,13 +307,11 @@ func TestKeyCache(t *testing.T) {
 		tok := mint(t, signer, nil, baseClaims(clock.Now()))
 		var wg sync.WaitGroup
 		for range 20 {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				if _, err := v.Verify(context.Background(), tok); err != nil {
 					t.Error(err)
 				}
-			}()
+			})
 		}
 		wg.Wait()
 		if got := srv.hits.Load(); got != 1 {

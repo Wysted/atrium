@@ -188,7 +188,7 @@ func TestHousekeepingRetentionFailureKeepsThePurges(t *testing.T) {
 	if n := scalar[int](t, owner, `SELECT count(*) FROM sessions WHERE id IN ($1, $2)`, f.expiredSession, f.idleSession); n != 0 {
 		t.Fatalf("purges rolled back with the retention failure: %d dead sessions left", n)
 	}
-	holder.Rollback(ctx) //nolint:errcheck // release the lock
+	_ = holder.Rollback(ctx) // release the lock
 	if rep, err := newJob(t, rt, 0).RunOnce(ctx); err != nil || len(rep.PartitionsDropped) != 1 {
 		t.Fatalf("retry = %+v, %v", rep, err)
 	}

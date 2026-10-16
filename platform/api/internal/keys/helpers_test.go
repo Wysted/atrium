@@ -1,7 +1,6 @@
 package keys_test
 
 import (
-	"bytes"
 	"crypto/rand"
 )
 
@@ -9,5 +8,3 @@ import (
 type randReader struct{}
 
 func (randReader) Read(p []byte) (int, error) { return rand.Read(p) }
-
-func containsSub(haystack, needle []byte) bool { return bytes.Contains(haystack, needle) }

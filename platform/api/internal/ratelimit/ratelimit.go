@@ -3,6 +3,7 @@
 package ratelimit
 
 import (
+	"maps"
 	"net/netip"
 	"sync"
 	"time"
@@ -116,9 +117,7 @@ func (l *Limiter) Allow(key string) (ok bool, retryAfter time.Duration) {
 func (l *Limiter) sweep(now time.Time) {
 	l.lastSweep = now
 	l.sweeps++
-	for k, b := range l.buckets {
-		if b.tokens+float64(now.Sub(b.last))/float64(l.refill) >= l.burst {
-			delete(l.buckets, k)
-		}
-	}
+	maps.DeleteFunc(l.buckets, func(_ string, b *bucket) bool {
+		return b.tokens+float64(now.Sub(b.last))/float64(l.refill) >= l.burst
+	})
 }

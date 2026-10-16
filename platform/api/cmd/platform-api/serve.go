@@ -71,7 +71,7 @@ func serve(ctx context.Context, cfg config, log *slog.Logger) error {
 		c := shutdownCtx
 		if c == nil {
 			var cancel context.CancelFunc
-			c, cancel = context.WithTimeout(context.Background(), shutdownTimeout)
+			c, cancel = context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
 			defer cancel()
 		}
 		if !waitBounded(c, pool.Close) {
@@ -113,11 +113,9 @@ func serve(ctx context.Context, cfg config, log *slog.Logger) error {
 	defer stopBackground()
 	var background sync.WaitGroup
 	spawn := func(fn func(context.Context)) {
-		background.Add(1)
-		go func() {
-			defer background.Done()
+		background.Go(func() {
 			fn(bgCtx)
-		}()
+		})
 	}
 	spawn(ring.Run)
 	spawn(func(c context.Context) { rotator.Run(c, 0) })

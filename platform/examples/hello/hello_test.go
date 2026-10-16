@@ -86,9 +86,15 @@ func newApp(t *testing.T, jwksStatus int) (*httptest.Server, *ecdsa.PrivateKey) 
 	return app, key
 }
 
-func get(t *testing.T, url, assertion string) (*http.Response, string) {
+// reply is the part of a response the tests inspect, so the body is closed inside get.
+type reply struct {
+	StatusCode int
+	Header     http.Header
+}
+
+func get(t *testing.T, url, assertion string) (reply, string) {
 	t.Helper()
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, url, nil)
 	if err != nil {
 		t.Fatalf("request: %v", err)
 	}
@@ -99,9 +105,9 @@ func get(t *testing.T, url, assertion string) (*http.Response, string) {
 	if err != nil {
 		t.Fatalf("do: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
-	return resp, string(body)
+	return reply{StatusCode: resp.StatusCode, Header: resp.Header}, string(body)
 }
 
 func TestPageWithValidAssertion(t *testing.T) {

@@ -16,6 +16,9 @@ type RD struct {
 	Host string
 }
 
+// isForbiddenRDRune reports whether r is a control character, a space or a backslash.
+func isForbiddenRDRune(r rune) bool { return r < 0x20 || r == 0x7f || r == ' ' || r == '\\' }
+
 // parseRD applies every redirect rule that needs no registry: absolute https URL, no userinfo, port,
 // backslash, control character, or "//" in the path (raw or percent-decoded). Rejections wrap ErrInvalidRD.
 func parseRD(raw string) (*url.URL, error) {
@@ -24,10 +27,8 @@ func parseRD(raw string) (*url.URL, error) {
 	if raw == "" || len(raw) > MaxRDLength {
 		return reject("empty or too long")
 	}
-	for _, r := range raw {
-		if r < 0x20 || r == 0x7f || r == ' ' || r == '\\' {
-			return reject("forbidden character")
-		}
+	if strings.IndexFunc(raw, isForbiddenRDRune) >= 0 {
+		return reject("forbidden character")
 	}
 	u, err := url.Parse(raw)
 	if err != nil {

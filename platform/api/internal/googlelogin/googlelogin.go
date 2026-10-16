@@ -451,8 +451,7 @@ func providerUnavailable(ctx context.Context, err error) bool {
 // describeExchangeError keeps only the HTTP status and the OAuth error code of a token endpoint refusal; the
 // raw response body is dropped.
 func describeExchangeError(err error) string {
-	var re *oauth2.RetrieveError
-	if errors.As(err, &re) {
+	if re, ok := errors.AsType[*oauth2.RetrieveError](err); ok {
 		return fmt.Sprintf("token endpoint answered %d %s", re.Response.StatusCode, re.ErrorCode)
 	}
 	return "token endpoint unreachable"

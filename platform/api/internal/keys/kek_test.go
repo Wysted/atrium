@@ -137,7 +137,7 @@ func TestLoadKEKFile(t *testing.T) {
 
 func TestKEKIsRedacted(t *testing.T) {
 	kek, raw, _ := keys.GenerateKEK()
-	for _, s := range []string{fmt.Sprintf("%v", kek), fmt.Sprintf("%+v", kek), fmt.Sprintf("%#v", kek), fmt.Sprintf("%s", kek)} {
+	for _, s := range []string{fmt.Sprintf("%v", kek), fmt.Sprintf("%+v", kek), fmt.Sprintf("%#v", kek), fmt.Sprintf("%s", kek)} { //nolint:staticcheck // S1025: %s on purpose, the test asserts that every verb redacts the key
 		if s != "KEK(redacted)" || bytes.Contains([]byte(s), raw) {
 			t.Errorf("KEK formatted as %q", s)
 		}

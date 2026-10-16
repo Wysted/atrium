@@ -21,11 +21,11 @@ var ErrTooLarge = errors.New("secret file too large")
 // whose permissions are no looser than MaxMode: group write and any "other" bit are rejected, not just
 // warned about. The checks run on the open handle, so there is no check/use race.
 func Read(path string, maxBytes int) ([]byte, error) {
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // G304: path is the operator-configured secret location, never request input
 	if err != nil {
 		return nil, fmt.Errorf("open secret file: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // read-only handle: a close error cannot lose data
 	info, err := f.Stat()
 	if err != nil {
 		return nil, fmt.Errorf("stat secret file: %w", err)

@@ -203,9 +203,7 @@ func TestHousekeepingConcurrentReplicasPurgeExactlyOnce(t *testing.T) {
 		wg    sync.WaitGroup
 	)
 	for range 8 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			rep, err := newJob(t, pool, 0).RunOnce(ctx)
 			if err != nil {
 				t.Error(err)
@@ -214,7 +212,7 @@ func TestHousekeepingConcurrentReplicasPurgeExactlyOnce(t *testing.T) {
 			mu.Lock()
 			total += rep.Sessions + rep.LoginCodes + rep.OAuthFlows
 			mu.Unlock()
-		}()
+		})
 	}
 	wg.Wait()
 	if total != 4 { // 2 sessions + 1 code + 1 flow, each deleted by exactly one replica

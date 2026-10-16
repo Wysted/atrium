@@ -219,14 +219,14 @@ func (c *keyCache) runFetch(ctx context.Context, f *flight, now time.Time) {
 func (c *keyCache) fetch(ctx context.Context, now time.Time) (cacheState, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.url, nil)
 	if err != nil {
-		return cacheState{}, fmt.Errorf("%w: %v", ErrKeysUnavailable, err)
+		return cacheState{}, fmt.Errorf("%w: %w", ErrKeysUnavailable, err)
 	}
 	req.Header.Set("Accept", "application/jwk-set+json, application/json")
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return cacheState{}, fmt.Errorf("%w: %v", ErrKeysUnavailable, err)
+		return cacheState{}, fmt.Errorf("%w: %w", ErrKeysUnavailable, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }() // response already read or discarded; a close error cannot lose data
 	if resp.StatusCode != http.StatusOK {
 		// Redirects are never followed (see NewVerifier), so a 3xx lands here too.
 		return cacheState{}, fmt.Errorf("%w: status %d", ErrKeysUnavailable, resp.StatusCode)
@@ -274,7 +274,7 @@ func parseP256(x, y string) (*ecdsa.PublicKey, error) {
 // without a usable max-age, MaxCacheTTL.
 func cacheTTL(header string) time.Duration {
 	ttl := MaxCacheTTL
-	for _, directive := range strings.Split(header, ",") {
+	for directive := range strings.SplitSeq(header, ",") {
 		directive = strings.ToLower(strings.TrimSpace(directive))
 		if directive == "no-store" || directive == "no-cache" {
 			return minCacheTTL

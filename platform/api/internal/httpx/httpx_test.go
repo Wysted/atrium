@@ -43,7 +43,7 @@ func TestClientIP(t *testing.T) {
 		"ipv4 mapped":         {"::ffff:203.0.113.9", "10.0.0.1:1", "203.0.113.9"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			r := httptest.NewRequest(http.MethodGet, "/", nil)
+			r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil)
 			r.RemoteAddr = tc.remote
 			if tc.xff != "" {
 				r.Header.Set("X-Forwarded-For", tc.xff)
@@ -76,7 +76,7 @@ func TestCookies(t *testing.T) {
 func TestRecoverFailsClosed(t *testing.T) {
 	h := Recover(nilLogger(), http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic("boom") }))
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	h.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil))
 	if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("status %d", rec.Code)
 	}

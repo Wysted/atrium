@@ -1,6 +1,7 @@
 package forwardauth
 
 import (
+	"maps"
 	"sync"
 	"time"
 )
@@ -54,11 +55,7 @@ func (c *ttlCache[K, V]) put(k K, v V, gen uint64) {
 	}
 	now := c.now()
 	if len(c.m) >= maxCacheEntries {
-		for key, e := range c.m {
-			if !now.Before(e.expires) {
-				delete(c.m, key)
-			}
-		}
+		maps.DeleteFunc(c.m, func(_ K, e cacheEntry[V]) bool { return !now.Before(e.expires) })
 		if len(c.m) >= maxCacheEntries {
 			return
 		}

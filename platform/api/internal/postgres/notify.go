@@ -25,7 +25,7 @@ type closer interface {
 }
 
 // closeBounded closes c, giving up after timeout. It runs with a fresh context because the caller's is
-// usually already cancelled (that is why we are closing).
+// usually already canceled (that is why we are closing).
 func closeBounded(ctx context.Context, c closer, timeout time.Duration) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
 	defer cancel()

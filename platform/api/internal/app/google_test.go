@@ -65,11 +65,15 @@ func (f *gflow) provider() {
 		f.t.Fatalf("GET /login: %d %q", f.login.status, f.login.body)
 	}
 	f.cookie = f.b.cookie(authHost, session.CookieLogin)
-	resp, err := f.e.client.Get(f.login.location())
+	req, err := http.NewRequestWithContext(f.t.Context(), http.MethodGet, f.login.location(), nil)
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	resp.Body.Close()
+	resp, err := f.e.client.Do(req)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusFound {
 		f.t.Fatalf("provider authorize: %d", resp.StatusCode)
 	}
@@ -115,7 +119,7 @@ func (e *env) grantUser(userID string) {
 // logRecords returns the parsed log lines whose msg is msg.
 func (e *env) logRecords(msg string) []map[string]any {
 	var out []map[string]any
-	for _, line := range strings.Split(e.logs.String(), "\n") {
+	for line := range strings.SplitSeq(e.logs.String(), "\n") {
 		var rec map[string]any
 		if json.Unmarshal([]byte(line), &rec) == nil && rec["msg"] == msg {
 			out = append(out, rec)
@@ -592,7 +596,7 @@ func TestGoogleProviderOutage(t *testing.T) {
 	if cb.status != http.StatusServiceUnavailable || !strings.Contains(cb.body, "login provider unavailable") {
 		t.Fatalf("callback while down: %d %q", cb.status, cb.body)
 	}
-	req, _ := http.NewRequest(http.MethodGet, e.internal.URL+"/readyz", nil)
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, e.internal.URL+"/readyz", nil)
 	if r := existing.do(req); r.status != http.StatusOK {
 		t.Fatalf("/readyz while Google is down: %d", r.status)
 	}

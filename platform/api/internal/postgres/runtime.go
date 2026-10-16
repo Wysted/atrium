@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -44,9 +45,7 @@ func NewRuntimePool(ctx context.Context) (*pgxpool.Pool, RuntimeIdentity, error)
 func OpenRuntimePool(ctx context.Context, cfg *pgxpool.Config) (*pgxpool.Pool, RuntimeIdentity, error) {
 	cfg = cfg.Copy()
 	params := make(map[string]string, len(cfg.ConnConfig.RuntimeParams)+1)
-	for k, v := range cfg.ConnConfig.RuntimeParams {
-		params[k] = v
-	}
+	maps.Copy(params, cfg.ConnConfig.RuntimeParams)
 	params["role"] = RuntimeRole
 	cfg.ConnConfig.RuntimeParams = params
 

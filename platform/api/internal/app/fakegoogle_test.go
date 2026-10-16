@@ -192,7 +192,8 @@ func (fg *fakeGoogle) authorize(w http.ResponseWriter, r *http.Request) {
 	fg.secrets = append(fg.secrets, code)
 	fg.mu.Unlock()
 	loc := url.Values{"code": {code}, "state": {q.Get("state")}}
-	http.Redirect(w, r, q.Get("redirect_uri")+"?"+loc.Encode(), http.StatusFound)
+	// The fake IdP redirects to whatever redirect_uri the code under test registered; that is the contract it simulates.
+	http.Redirect(w, r, q.Get("redirect_uri")+"?"+loc.Encode(), http.StatusFound) //nolint:gosec // G710: test fake, input comes from the test itself
 }
 
 func (fg *fakeGoogle) token(w http.ResponseWriter, r *http.Request) {

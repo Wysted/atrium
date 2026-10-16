@@ -189,7 +189,7 @@ func loadGoogleConfig(getenv func(string) string) (*googleConfig, []error) {
 // entries (a typo such as "a.com,,b.com" is reported instead of silently ignored). Duplicates collapse.
 func parseAllowedHD(raw string) ([]string, error) {
 	var out []string
-	for _, part := range strings.Split(raw, ",") {
+	for part := range strings.SplitSeq(raw, ",") {
 		hd := strings.ToLower(strings.TrimSpace(part))
 		if hd == "" || !strings.Contains(hd, ".") || !hostPattern.MatchString(hd) {
 			return nil, fmt.Errorf("invalid domain %q: want a comma-separated list of domains such as example.com", part)

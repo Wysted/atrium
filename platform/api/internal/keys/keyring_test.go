@@ -102,13 +102,11 @@ func TestKeyringConcurrentReloadsKeepTheNewestSnapshot(t *testing.T) {
 
 	var wg sync.WaitGroup
 	reload := func() {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			if err := ring.Reload(ctx); err != nil {
 				t.Errorf("Reload: %v", err)
 			}
-		}()
+		})
 	}
 	reload() // A: reads the database (old key active), then stalls before storing its snapshot
 	<-store.read

@@ -59,7 +59,7 @@ func TestReadPermissions(t *testing.T) {
 
 func TestReadRejectsNonRegular(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.Chmod(dir, 0o700); err != nil {
+	if err := os.Chmod(dir, 0o700); err != nil { //nolint:gosec // G302: a directory needs the owner x bit; 0o700 is the strictest usable mode
 		t.Fatal(err)
 	}
 	if _, err := Read(dir, 1024); err == nil {

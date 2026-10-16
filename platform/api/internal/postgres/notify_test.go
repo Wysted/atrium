@@ -20,10 +20,10 @@ func (c *hungConn) Close(ctx context.Context) error {
 }
 
 // Shutdown must not wait forever for a LISTEN connection to close, even when the caller's context is
-// already cancelled (it always is at that point).
+// already canceled (it always is at that point).
 func TestCloseBoundedGivesUp(t *testing.T) {
 	t.Parallel()
-	cancelled, cancel := context.WithCancel(context.Background())
+	canceled, cancel := context.WithCancel(context.Background())
 	cancel()
 	c := &hungConn{}
 	const timeout = 100 * time.Millisecond
@@ -31,7 +31,7 @@ func TestCloseBoundedGivesUp(t *testing.T) {
 	done := make(chan time.Duration)
 	go func() {
 		start := time.Now()
-		postgres.CloseBounded(cancelled, c, timeout)
+		postgres.CloseBounded(canceled, c, timeout)
 		done <- time.Since(start)
 	}()
 	select {

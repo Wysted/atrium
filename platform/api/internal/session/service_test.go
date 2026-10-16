@@ -242,13 +242,11 @@ func TestTouchIsThrottled(t *testing.T) {
 	r.exec(t, `DELETE FROM touch_log`)
 	var wg sync.WaitGroup
 	for range 16 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			if _, err := r.svc.ValidateSession(ctx, tok); err != nil {
 				t.Error(err)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	if n := count(t, r, `SELECT count(*) FROM touch_log`); n != 1 {
@@ -549,9 +547,7 @@ func TestLoginCodes(t *testing.T) {
 		var wg sync.WaitGroup
 		start := make(chan struct{})
 		for range 32 {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				<-start
 				switch _, err := r.svc.ConsumeLoginCode(ctx, code, hostA, bind); {
 				case err == nil:
@@ -561,7 +557,7 @@ func TestLoginCodes(t *testing.T) {
 				default:
 					t.Error(err)
 				}
-			}()
+			})
 		}
 		close(start)
 		wg.Wait()

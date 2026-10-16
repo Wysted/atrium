@@ -38,7 +38,7 @@ func TestMiddleware(t *testing.T) {
 		}))
 
 		token := mint(t, signer, nil, baseClaims(clock.Now()))
-		req := httptest.NewRequest(method, path, nil)
+		req := httptest.NewRequestWithContext(t.Context(), method, path, nil)
 		if mutate != nil {
 			mutate(req, token)
 		}

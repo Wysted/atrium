@@ -3,6 +3,7 @@ package app_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -108,7 +109,7 @@ func TestAuditEvents(t *testing.T) {
 		t.Fatal("a cookie value reached the logs")
 	}
 	var logoutLogged bool
-	for _, line := range strings.Split(logs, "\n") {
+	for line := range strings.SplitSeq(logs, "\n") {
 		var rec map[string]any
 		if json.Unmarshal([]byte(line), &rec) != nil || rec["msg"] != "logout" {
 			continue
@@ -123,7 +124,8 @@ func TestAuditEvents(t *testing.T) {
 
 	// The runtime role the server runs as cannot rewrite history.
 	_, err := e.rt.Exec(context.Background(), `UPDATE audit_events SET action = 'tampered'`)
-	if pe, ok := err.(*pgconn.PgError); !ok || pe.Code != sqlstateInsufficientPrivilege {
+	var pe *pgconn.PgError
+	if !errors.As(err, &pe) || pe.Code != sqlstateInsufficientPrivilege {
 		t.Fatalf("UPDATE audit_events as runtime: %v", err)
 	}
 	if got := e.scalar(`SELECT current_user::text`); got == postgres.RuntimeRole {
@@ -199,18 +201,18 @@ func TestLoginRateLimitGroupsIPv6By64(t *testing.T) {
 // With the database accepting connections and never answering, ForwardAuth and the auth host end in the
 // explicit 503 at the request deadline, well before the server WriteTimeout would drop the connection.
 func TestHungDatabaseEndsIn503(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { ln.Close() })
+	t.Cleanup(func() { _ = ln.Close() })
 	go func() { // accept and stay silent
 		for {
 			c, err := ln.Accept()
 			if err != nil {
 				return
 			}
-			t.Cleanup(func() { c.Close() })
+			t.Cleanup(func() { _ = c.Close() })
 		}
 	}()
 	host, port, _ := net.SplitHostPort(ln.Addr().String())
@@ -250,19 +252,19 @@ func TestHungDatabaseEndsIn503(t *testing.T) {
 
 	for name, mk := range map[string]func() *http.Request{
 		"forwardauth navigation": func() *http.Request {
-			r, _ := http.NewRequest(http.MethodGet, internal.URL+"/forwardauth", nil)
+			r, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, internal.URL+"/forwardauth", nil)
 			r.Header.Set("X-Forwarded-Host", hostA)
 			r.Header.Set("Accept", "text/html")
 			return r
 		},
 		"forwardauth api": func() *http.Request {
-			r, _ := http.NewRequest(http.MethodGet, internal.URL+"/forwardauth", nil)
+			r, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, internal.URL+"/forwardauth", nil)
 			r.Header.Set("X-Forwarded-Host", hostA)
 			return r
 		},
 		"auth host login": func() *http.Request {
 			q := url.Values{"rd": {"https://" + hostA + "/"}, "bind": {strings.Repeat("A", 43)}}
-			r, _ := http.NewRequest(http.MethodGet, public.URL+"/login?"+q.Encode(), nil)
+			r, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, public.URL+"/login?"+q.Encode(), nil)
 			return r
 		},
 	} {
@@ -272,7 +274,7 @@ func TestHungDatabaseEndsIn503(t *testing.T) {
 			if err != nil {
 				t.Fatalf("no response (connection dropped?): %v", err)
 			}
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			if resp.StatusCode != http.StatusServiceUnavailable {
 				t.Fatalf("status %d, want 503", resp.StatusCode)
 			}

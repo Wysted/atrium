@@ -63,11 +63,8 @@ func Plan(now time.Time, recs []Record) []Action {
 	slices.SortFunc(nexts, func(a, b Record) int { return cmp.Or(a.CreatedAt.Compare(b.CreatedAt), cmp.Compare(a.KID, b.KID)) })
 
 	var ready *Record
-	for i := range nexts {
-		if !now.Before(nexts[i].CreatedAt.Add(PrepublishDuration)) {
-			ready = &nexts[i]
-			break
-		}
+	if i := slices.IndexFunc(nexts, func(r Record) bool { return !now.Before(r.CreatedAt.Add(PrepublishDuration)) }); i >= 0 {
+		ready = &nexts[i]
 	}
 
 	remainingNexts := len(nexts)

@@ -218,7 +218,7 @@ func TestFullFlowAndLogs(t *testing.T) {
 		}
 	}
 	var found bool
-	for _, line := range strings.Split(logs, "\n") {
+	for line := range strings.SplitSeq(logs, "\n") {
 		var rec map[string]any
 		if json.Unmarshal([]byte(line), &rec) != nil || rec["msg"] != "forwardauth decision" || rec["decision"] != "allow" {
 			continue
@@ -239,7 +239,7 @@ func TestFullFlowAndLogs(t *testing.T) {
 func decisionLines(t *testing.T, logs string) []map[string]any {
 	t.Helper()
 	var out []map[string]any
-	for _, line := range strings.Split(logs, "\n") {
+	for line := range strings.SplitSeq(logs, "\n") {
 		var rec map[string]any
 		if json.Unmarshal([]byte(line), &rec) == nil && rec["msg"] == "forwardauth decision" {
 			out = append(out, rec)
@@ -478,7 +478,7 @@ func TestAuthHostPages(t *testing.T) {
 		if r := b.auth(http.MethodGet, "/.well-known/jwks.json", nil, nil); r.status != http.StatusOK {
 			t.Fatalf("public JWKS: %d", r.status)
 		}
-		req, _ := http.NewRequest(http.MethodGet, e.internal.URL+"/.well-known/jwks.json", nil)
+		req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, e.internal.URL+"/.well-known/jwks.json", nil)
 		if r := b.do(req); r.status != http.StatusOK || !strings.Contains(r.body, `"keys"`) {
 			t.Fatalf("internal JWKS: %d", r.status)
 		}
@@ -644,11 +644,11 @@ func TestFailClosed(t *testing.T) {
 		if r := e.newBrowser().forward(fwd{host: "never-seen.apps.example.test", headers: apiHeaders}); r.status != http.StatusServiceUnavailable {
 			t.Fatalf("uncached host: %d", r.status)
 		}
-		req, _ := http.NewRequest(http.MethodGet, e.internal.URL+"/readyz", nil)
+		req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, e.internal.URL+"/readyz", nil)
 		if r := b.do(req); r.status != http.StatusServiceUnavailable {
 			t.Fatalf("/readyz: %d", r.status)
 		}
-		req, _ = http.NewRequest(http.MethodGet, e.internal.URL+"/healthz", nil)
+		req, _ = http.NewRequestWithContext(t.Context(), http.MethodGet, e.internal.URL+"/healthz", nil)
 		if r := b.do(req); r.status != http.StatusOK {
 			t.Fatalf("/healthz: %d", r.status)
 		}
@@ -675,7 +675,7 @@ func TestFailClosed(t *testing.T) {
 		if r.status != http.StatusServiceUnavailable {
 			t.Fatalf("authorized request with a KEK mismatch: %d", r.status)
 		}
-		req, _ := http.NewRequest(http.MethodGet, e.internal.URL+"/readyz", nil)
+		req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, e.internal.URL+"/readyz", nil)
 		if r := b.do(req); r.status != http.StatusServiceUnavailable {
 			t.Fatalf("/readyz: %d", r.status)
 		}
@@ -684,7 +684,7 @@ func TestFailClosed(t *testing.T) {
 	t.Run("no signer loaded", func(t *testing.T) {
 		e := newEnv(t, envOptions{noReload: true})
 		b := e.newBrowser()
-		req, _ := http.NewRequest(http.MethodGet, e.internal.URL+"/readyz", nil)
+		req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, e.internal.URL+"/readyz", nil)
 		if r := b.do(req); r.status != http.StatusServiceUnavailable {
 			t.Fatalf("/readyz: %d", r.status)
 		}
@@ -693,7 +693,7 @@ func TestFailClosed(t *testing.T) {
 
 func TestReadyz(t *testing.T) {
 	e := newEnv(t, envOptions{})
-	req, _ := http.NewRequest(http.MethodGet, e.internal.URL+"/readyz", nil)
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, e.internal.URL+"/readyz", nil)
 	if r := e.newBrowser().do(req); r.status != http.StatusOK || r.header.Get("Cache-Control") != "no-store" {
 		t.Fatalf("/readyz: %d", r.status)
 	}

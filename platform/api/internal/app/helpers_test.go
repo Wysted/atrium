@@ -140,11 +140,9 @@ func newEnv(t *testing.T, opts envOptions) *env {
 	if a.Login != nil {
 		loginCtx, stopLogin := context.WithCancel(context.Background())
 		var loginWG sync.WaitGroup
-		loginWG.Add(1)
-		go func() {
-			defer loginWG.Done()
+		loginWG.Go(func() {
 			a.Login.Run(loginCtx)
-		}()
+		})
 		t.Cleanup(func() { stopLogin(); loginWG.Wait() })
 		if !opts.google.down.Load() {
 			waitFor(t, "login provider discovery", a.Login.Ready)
@@ -161,11 +159,9 @@ func newEnv(t *testing.T, opts envOptions) *env {
 
 	listenCtx, stop := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		postgres.Listen(listenCtx, rt, access.NotifyChannel, a.InvalidateAccess, log)
-	}()
+	})
 	t.Cleanup(func() { stop(); wg.Wait() })
 
 	e.seed()
@@ -302,7 +298,7 @@ func (b *browser) do(req *http.Request) result {
 	if err != nil {
 		b.t.Fatalf("%s %s: %v", req.Method, req.URL, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		b.t.Fatal(err)
@@ -325,7 +321,7 @@ func (b *browser) forward(f fwd) result {
 	if f.uri == "" {
 		f.uri = "/"
 	}
-	req, _ := http.NewRequest(http.MethodGet, b.env.internal.URL+"/forwardauth", nil) // Traefik always uses GET
+	req, _ := http.NewRequestWithContext(b.t.Context(), http.MethodGet, b.env.internal.URL+"/forwardauth", nil) // Traefik always uses GET
 	req.Header.Set("X-Forwarded-Host", f.host)
 	req.Header.Set("X-Forwarded-Method", f.method)
 	req.Header.Set("X-Forwarded-Uri", f.uri)
@@ -358,7 +354,7 @@ func (b *browser) auth(method, target string, form url.Values, headers map[strin
 	if form != nil {
 		body = strings.NewReader(form.Encode())
 	}
-	req, _ := http.NewRequest(method, b.env.public.URL+target, body)
+	req, _ := http.NewRequestWithContext(b.t.Context(), method, b.env.public.URL+target, body)
 	if form != nil {
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	}

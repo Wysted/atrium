@@ -148,11 +148,15 @@ func (s *stack) activeKID() string {
 // jwksKIDs fetches the JWKS over HTTP and returns its kids in served order.
 func (s *stack) jwksKIDs() []string {
 	s.t.Helper()
-	resp, err := http.Get(s.server.URL + jwks.Path)
+	req, err := http.NewRequestWithContext(s.t.Context(), http.MethodGet, s.server.URL+jwks.Path, nil)
 	if err != nil {
 		s.t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	resp, err := s.server.Client().Do(req)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
 	var doc struct {
 		Keys []struct {
 			Kid string `json:"kid"`
