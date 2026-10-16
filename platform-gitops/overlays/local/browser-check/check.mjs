@@ -22,6 +22,27 @@ const SMOKE_ROLE = 'smoke-role' // created and deleted on demo by the roles scen
 const LAST_MANAGER_COPY = 'This is the last active manager of the initiative. Grant another manager first.'
 const SMOKE_HOST_INPUT = 'Smoke-Host.apps.wysted.dev' // mixed case on purpose: the UI trims and lowercases it
 const SMOKE_HOST = 'smoke-host.apps.wysted.dev'
+// Fixed copy of the health findings, kept here on purpose (an independent expectation, not imported from the web app): label + explanation.
+const PROBLEM_COPY = {
+  app_disabled: ['App disabled', 'The app is disabled, so access is denied to everyone. A platform administrator can enable it.'],
+  initiative_inactive: ['Initiative inactive', 'The initiative is inactive, so access to all its apps is denied to everyone. A platform administrator can activate it.'],
+  no_grants: ['No grants', 'Nobody holds an unexpired grant in this initiative, so no one can reach the app. An initiative manager or a platform administrator can grant access to a user or a group.'],
+  no_manager: ['No manager', 'No active user manages access in this initiative, directly or through a group. An initiative manager or a platform administrator can grant a role that manages access.'],
+  unprotected: ['Unprotected', 'The last probe was served without a redirect to sign in, so the host may be reachable without ForwardAuth. Check that the route for this host uses the ForwardAuth middleware. If the host was never seen either, the route may be missing or wrong.'],
+  unexpected_redirect: ['Unexpected redirect', 'The last probe was redirected somewhere other than the sign-in page (for example a permanent redirect or another host). Check the redirects configured for this host.'],
+  unreachable: ['Unreachable', 'The last probe could not connect to the host (DNS, TCP, TLS or timeout). Check that the host resolves, its certificate is valid and the route is up.'],
+  never_probed: ['Not probed yet', 'The host has not been probed yet. Probes run periodically: check again after the next round.'],
+  probe_stale: ['Probe result is old', 'The last probe result is older than three probe intervals, so probe rounds are not completing. A platform administrator can check the portal probe.'],
+  probe_disabled: ['Probe disabled', 'The portal does not probe hosts, so protection by ForwardAuth is not being checked. Any probe result shown may be old.'],
+  never_seen: ['Never seen', 'No authorized request has ever reached this host through ForwardAuth. Check that the route sends traffic through the ForwardAuth middleware and that the host is the one users open.'],
+  not_seen_recently: ['Not seen recently', 'No authorized request in the last 24 hours. This can be normal for a rarely used app; otherwise check the route and DNS of this host.'],
+}
+const PROBE_LABEL = { ok: 'Redirects to sign-in', unprotected: 'Unprotected', unexpected: 'Unexpected redirect', unreachable: 'Unreachable' } // null -> 'Not probed'
+const probeLabel = (status) => (status === null ? 'Not probed' : PROBE_LABEL[status] ?? 'Unknown result')
+const ORPHAN_HOST = process.env.ORPHAN_HOST // unique per run, routed by overlays/local/smoke-orphan.yaml (rendered and applied by browser-check.sh)
+if (!ORPHAN_HOST) { console.log('  FAIL: ORPHAN_HOST is not set (browser-check.sh generates it)'); process.exit(1) }
+const ORPHAN_EMPTY_COPY = 'No orphan hosts in the last 7 days.'
+const squash = (t) => t.replace(/\s+/g, ' ').trim()
 const MARKER_APP = 'hello-a (browser check)'
 const RESERVED_COPY = 'This host is reserved for the sign-in service.'
 const TAKEN_COPY = 'This host is already used by another app.'
@@ -716,13 +737,13 @@ try {
   check('demo and platform apps/deployments (API) equal the starting set', appsEnd === appsStart, `${appsStart} != ${appsEnd}`)
   // ---- 5d-3: groups and members, users, audit. Idempotent: leftovers of an interrupted run (smoke-group, carol disabled) are
   // cleaned first; the groups, the members of demo-editors and carol's status are compared (through the API) before and after.
-  console.log('  -- admin: Nav (Initiatives, Groups, Users, Audit); Groups list; leftovers of an interrupted run removed')
+  console.log('  -- admin: Nav (Initiatives, Groups, Users, Health, Audit); Groups list; leftovers of an interrupted run removed')
   await login(ADMIN.email)
   await page.goto(`${BASE}/admin/initiatives`)
   await page.getByRole('table').getByRole('row').nth(1).waitFor({ timeout: DATA_TIMEOUT })
   const adminNav = () => page.getByRole('navigation', { name: 'Administration', exact: true }) // a function: the page changes with each login
   const navLinks = async () => (await adminNav().getByRole('link').allInnerTexts()).map((t) => t.trim())
-  check('admin Nav: Initiatives, Groups, Users, Audit', JSON.stringify(await navLinks()) === '["Initiatives","Groups","Users","Audit"]', JSON.stringify(await navLinks()))
+  check('admin Nav: Initiatives, Groups, Users, Health, Audit', JSON.stringify(await navLinks()) === '["Initiatives","Groups","Users","Health","Audit"]', JSON.stringify(await navLinks()))
 
   const groupsApi = () => apiAll('/groups', 'groups')
   const membersApi = (id) => apiAll(`/groups/${id}/members`, 'members')
@@ -1030,6 +1051,148 @@ try {
   await page.getByRole('table').getByRole('row').nth(1).waitFor({ timeout: DATA_TIMEOUT })
   const groupsEnd = await groupsSnapshot()
   check('groups, demo-editors members and carol (API) equal the starting set', groupsEnd === groupsStart, `${groupsStart} != ${groupsEnd}`)
+  // ---- 5e: integration health. Read-only. The UI must show exactly what GET /apps/{id}/health and GET /health/orphan-hosts return.
+  console.log('  -- admin: demo Apps health link, app health page (UI == API), probe badge in the Apps table')
+  await login(ADMIN.email)
+  reset()
+  await page.goto(`${BASE}/admin/initiatives/${demoId}/apps`)
+  await appRow(helloA).waitFor({ timeout: DATA_TIMEOUT })
+  const apiHealth = async () => (await apiCall('GET', `/apps/${helloA.id}/health`)).body
+  let hh = await apiHealth()
+  check('apps table: hello-a host shows the probe badge of the API', (await appRow(helloA).innerText()).includes(probeLabel(hh.app.deployments.find((d) => d.host === ALICE.apps[0].host)?.last_probe_status ?? null)), `${probeLabel(hh.app.deployments[0]?.last_probe_status ?? null)} not in ${squash(await appRow(helloA).innerText())}`)
+  const probeOf = (hh0) => hh0.app.deployments.find((d) => d.host === ALICE.apps[0].host)?.last_probe_status
+  if (probeOf(hh) === 'ok') check('apps table: an ok probe reads "Redirects to sign-in"', (await appRow(helloA).innerText()).includes('Redirects to sign-in'))
+  await report('apps table (probe badge)')
+  reset()
+  const healthLink = appRow(helloA).getByRole('link', { name: /^Health of app hello-a/ })
+  check('apps table: hello-a has a "Health" link', (await healthLink.count()) === 1 && squash(await healthLink.innerText()) === 'Health')
+  await healthLink.click()
+  const healthUrl = `${BASE}/admin/initiatives/${demoId}/apps/${helloA.id}/health`
+  await page.waitForURL(healthUrl, { timeout: DATA_TIMEOUT })
+  await page.getByRole("heading", { level: 2 }).filter({ hasText: "Health of " }).first().waitFor({ timeout: DATA_TIMEOUT })
+  hh = await apiHealth() // the page and this read are a moment apart: compare against the same snapshot below
+  const checkedAt = await page.locator('section[aria-labelledby=health-summary]').innerText()
+  check('health page: heading names the app (hello-a)', (await page.getByRole("heading", { level: 2 }).filter({ hasText: "Health of " }).first().innerText()).includes('hello-a'))
+  check('health page: "Back to apps" link goes to the Apps list', (await page.getByRole('link', { name: 'Back to apps', exact: true }).first().getAttribute('href')) === `/admin/initiatives/${demoId}/apps`)
+  check('health page: summary shows the app and initiative status and the grant counts of the API', ['Active'].every((t) => checkedAt.includes(t)) && checkedAt.includes(String(hh.grant_count)) && checkedAt.includes(String(hh.effective_manager_grants)), squash(checkedAt))
+  const findings = page.locator('section[aria-labelledby=health-findings]')
+  const hostRows = page.locator('section[aria-labelledby=health-hosts] tbody tr')
+  const apiAppProblems = hh.problems.filter((p) => p.host === null)
+  const apiHostProblems = (host) => hh.problems.filter((p) => p.host === host)
+  const expectedItems = (list) => list.map((p) => squash(`${PROBLEM_COPY[p.code]?.[0] ?? '?'} ${PROBLEM_COPY[p.code]?.[1] ?? '?'}`))
+  check(`health page: API codes are all known to the check (${JSON.stringify(hh.problems.map((p) => p.code))})`, hh.problems.every((p) => p.code in PROBLEM_COPY))
+  if (hh.problems.length === 0) {
+    check('health page: API has no problems -> "No findings" in Findings', (await findings.innerText()).includes('No findings'))
+  }
+  const uiAppItems = (await findings.locator('li').allInnerTexts()).map(squash)
+  check('health page: Findings lists exactly the app-level problems of the API, as their fixed sentences, in order', JSON.stringify(uiAppItems) === JSON.stringify(expectedItems(apiAppProblems)), `${JSON.stringify(uiAppItems)} vs ${JSON.stringify(expectedItems(apiAppProblems))}`)
+  const apiHostLevel = hh.problems.filter((p) => p.host !== null)
+  if (apiHostLevel.length) check('health page: Findings says how many host findings are listed below', (await findings.innerText()).includes(apiHostLevel.length === 1 ? '1 finding about hosts' : `${apiHostLevel.length} findings about hosts`), squash(await findings.innerText()))
+  else check('health page: no "findings about hosts" line when the API has none', !(await findings.innerText()).includes('about hosts'))
+  check('health page: hosts table has one row per host of the API', (await hostRows.count()) === hh.app.deployments.length, `${await hostRows.count()} vs ${hh.app.deployments.length}`)
+  for (const d of hh.app.deployments) {
+    const row = hostRows.filter({ hasText: d.host })
+    check(`health page: host ${d.host} row exists once`, (await row.count()) === 1)
+    const cells = await row.locator('td, th').allInnerTexts().then((c) => c.map(squash))
+    check(`health page: ${d.host} Last seen ${d.last_seen_at ? 'is a time' : 'is "Never"'} (as the API)`, d.last_seen_at ? (await row.locator('td, th').nth(1).locator('time').getAttribute('datetime')) === d.last_seen_at : cells[1] === 'Never', JSON.stringify(cells))
+    check(`health page: ${d.host} probe badge reads "${probeLabel(d.last_probe_status)}" (API ${d.last_probe_status})`, cells[2]?.startsWith(probeLabel(d.last_probe_status)), JSON.stringify(cells))
+    check(`health page: ${d.host} Last probe ${d.last_probe_at ? 'has a time' : 'says "No probe yet"'}`, d.last_probe_at ? (await row.locator('td, th').nth(2).locator('time').getAttribute('datetime')) === d.last_probe_at : cells[2].includes('No probe yet'), JSON.stringify(cells))
+    const items = (await row.locator('td, th').nth(3).locator('li').allInnerTexts()).map(squash)
+    const mine = apiHostProblems(d.host)
+    check(`health page: ${d.host} findings == the API's (${mine.map((p) => p.code).join(', ') || 'none'}), as sentences`, JSON.stringify(items) === JSON.stringify(expectedItems(mine)) && (mine.length > 0 || cells[3] === 'No findings'), `${JSON.stringify(items)} / ${cells[3]}`)
+  }
+  check('health page: the hosts shown include hello-a\'s host', (await hostRows.filter({ hasText: ALICE.apps[0].host }).count()) === 1)
+  const totalShown = uiAppItems.length + (await hostRows.locator('li').count())
+  check(`health page: total findings shown (${totalShown}) == total returned by the API (${hh.problems.length}); none extra`, totalShown === hh.problems.length)
+  check('health page: host names are text, not links', (await page.locator('section[aria-labelledby=health-hosts] a').count()) === 0)
+  await page.screenshot({ path: `${OUT}/app-health.png`, fullPage: true })
+  await checkStyled('app health (admin)')
+  await report('app health (admin)')
+  const stableCheck = await apiHealth()
+  if (JSON.stringify(stableCheck.problems) !== JSON.stringify(hh.problems)) console.log('  NOTE: the API problems changed while the page was being checked')
+
+  // Not-found: an app id that does not exist, and the right app under another initiative (route mismatch).
+  reset()
+  await page.goto(`${BASE}/admin/initiatives/${demoId}/apps/app_00000000000000000000000000/health`)
+  await page.getByText('App not found').first().waitFor({ timeout: DATA_TIMEOUT })
+  check('health page: unknown app -> "App not found"', await page.getByText('App not found').first().isVisible())
+  await report('app health (unknown app)', { tolerated: ['status of 404', 'status of 400'], toleratedRequests: failedRequests.filter((r) => r.includes('/api/v1/apps/')) })
+
+  console.log('  -- orphan hosts: a host no app declares is refused as unknown_host; /admin/health lists it (UI == API)')
+  // Traffic through Traefik for a host with a route (smoke-orphan.yaml) and no deployment: ForwardAuth answers 403 and queues an
+  // unknown_host denial (contract block 2: written by a background goroutine, at most one row per host per 10 minutes per replica).
+  // The host is unique per run, so it must be ABSENT from the API before the denial and PRESENT after: a new denial was recorded.
+  const orphanApi = async () => (await apiCall('GET', '/health/orphan-hosts')).body?.hosts ?? null
+  const before = await orphanApi()
+  check(`orphan: ${ORPHAN_HOST} is not listed by the API before the denial`, Array.isArray(before) && !before.some((h) => h.host === ORPHAN_HOST), JSON.stringify(before?.map((h) => h.host)))
+  let orphanStatus = 0
+  for (let i = 0; i < 30 && orphanStatus !== 403; i++) {
+    orphanStatus = await fetch(`https://${ORPHAN_HOST}/`, { redirect: 'manual', signal: AbortSignal.timeout(5000) }).then((r) => r.status).catch(() => 0)
+    if (orphanStatus !== 403) await new Promise((r) => setTimeout(r, 1000))
+  }
+  check(`orphan: ${ORPHAN_HOST} through Traefik is refused by ForwardAuth (403)`, orphanStatus === 403, String(orphanStatus))
+  let apiHosts = null
+  for (let i = 0; i < 20; i++) {
+    apiHosts = await orphanApi()
+    if (apiHosts?.some((h) => h.host === ORPHAN_HOST)) break
+    await new Promise((r) => setTimeout(r, 1000))
+  }
+  check(`orphan: the API lists ${ORPHAN_HOST} (within 20 s)`, !!apiHosts?.some((h) => h.host === ORPHAN_HOST), JSON.stringify(apiHosts?.map((h) => h.host)))
+  reset()
+  await page.goto(`${BASE}/admin/initiatives`)
+  await page.getByRole('table').getByRole('row').nth(1).waitFor({ timeout: DATA_TIMEOUT })
+  await adminNav().getByRole('link', { name: 'Health', exact: true }).click()
+  await page.waitForURL(`${BASE}/admin/health`, { timeout: DATA_TIMEOUT })
+  await page.getByRole('heading', { level: 1, name: 'Health' }).waitFor({ timeout: DATA_TIMEOUT })
+  await page.getByRole('table').waitFor({ timeout: DATA_TIMEOUT })
+  check('health: Nav current is Health', JSON.stringify(await adminNav().locator('[aria-current=page]').allInnerTexts()) === '["Health"]')
+  apiHosts = await orphanApi()
+  const orphanRows = page.getByRole('table').locator('tbody tr')
+  const uiOrphans = await Promise.all((await orphanRows.all()).map(async (r) => {
+    const c = (await r.locator('td, th').allInnerTexts()).map(squash)
+    return { host: c[0], count: Number(c[1]), tags: await r.locator('td, th').first().locator('a').count() }
+  }))
+  if (apiHosts.length === 0) check('orphan: API empty -> the empty state copy', (await bodyText()).includes(ORPHAN_EMPTY_COPY))
+  check(`orphan: UI hosts == API hosts, same order (${apiHosts.length})`, JSON.stringify(uiOrphans.map((o) => o.host)) === JSON.stringify(apiHosts.map((h) => h.host)), `${JSON.stringify(uiOrphans.map((o) => o.host))} vs ${JSON.stringify(apiHosts.map((h) => h.host))}`)
+  check('orphan: UI counts == API counts', JSON.stringify(uiOrphans.map((o) => o.count)) === JSON.stringify(apiHosts.map((h) => h.count)))
+  const mine = apiHosts.find((h) => h.host === ORPHAN_HOST)
+  check(`orphan: ${ORPHAN_HOST} shows in the table with count >= 1 and a last denied time`, !!mine && mine.count >= 1 && (await orphanRows.filter({ hasText: ORPHAN_HOST }).locator('time').first().getAttribute('datetime')) === mine.last_denied_at)
+  check('orphan: hosts are rendered as text (no links anywhere in the table or in the host cells)', (await page.getByRole('table').locator('a').count()) === 0 && uiOrphans.every((o) => o.tags === 0))
+  check(`orphan: ${ORPHAN_HOST} is listed as text in the UI`, (await page.getByRole('table').getByText(ORPHAN_HOST, { exact: true }).count()) === 1)
+  check('orphan: no link to the orphan host anywhere on the page', (await page.locator(`a[href*="${ORPHAN_HOST}"]`).count()) === 0)
+  await page.screenshot({ path: `${OUT}/orphan-hosts.png`, fullPage: true })
+  await checkStyled('health (admin)')
+  await report('health (admin)')
+
+  console.log('  -- dave (manager of demo): app health page of hello-a is accessible; /admin/health is for platform admins; Nav has no Health')
+  await login(DAVE.email)
+  reset()
+  await page.goto(`${BASE}/admin/initiatives/${demoId}/apps`)
+  await appRow(helloA).waitFor({ timeout: DATA_TIMEOUT })
+  check('dave apps: hello-a has the Health link', (await appRow(helloA).getByRole('link', { name: /^Health of app hello-a/ }).count()) === 1)
+  await appRow(helloA).getByRole('link', { name: /^Health of app hello-a/ }).click()
+  await page.waitForURL(healthUrl, { timeout: DATA_TIMEOUT })
+  await page.getByRole("heading", { level: 2 }).filter({ hasText: "Health of " }).first().waitFor({ timeout: DATA_TIMEOUT })
+  const daveHealth = await apiHealth()
+  const dFindings = page.locator('section[aria-labelledby=health-findings]') // the page changes with each login: locators are rebuilt
+  const dHostRows = page.locator('section[aria-labelledby=health-hosts] tbody tr')
+  const daveItems = (await dFindings.locator('li').allInnerTexts()).map(squash)
+  check('dave health page: renders hello-a with its hosts table', (await dHostRows.count()) === daveHealth.app.deployments.length && (await dHostRows.filter({ hasText: ALICE.apps[0].host }).count()) === 1)
+  check('dave health page: findings == the API\'s app-level problems', JSON.stringify(daveItems) === JSON.stringify(expectedItems(daveHealth.problems.filter((p) => p.host === null))))
+  check('dave nav: Initiatives and Audit only (no Health)', JSON.stringify(await navLinks()) === '["Initiatives","Audit"]', JSON.stringify(await navLinks()))
+  await page.screenshot({ path: `${OUT}/app-health-manager.png`, fullPage: true })
+  await report('app health (dave)')
+  reset()
+  await page.goto(`${BASE}/admin/health`)
+  await page.getByText('Platform administrators only').first().waitFor({ timeout: DATA_TIMEOUT })
+  check('dave /admin/health: "Platform administrators only"', true)
+  check('dave /admin/health: no table and no orphan host in the page', (await page.getByRole('table').count()) === 0 && !(await bodyText()).includes(ORPHAN_HOST))
+  check('dave /admin/health: nav has no Health', !(await navLinks()).includes('Health'), JSON.stringify(await navLinks()))
+  await page.screenshot({ path: `${OUT}/health-manager.png`, fullPage: true })
+  await report('/admin/health (dave)')
+  const daveOrphans = await apiCall('GET', '/health/orphan-hosts')
+  check('dave: GET /health/orphan-hosts is refused by the API (403)', daveOrphans.status === 403, String(daveOrphans.status))
+  reset()
 } catch (e) {
   fail(`browser scenario aborted: ${e.message.split('\n')[0]} (url ${page.url().split('?')[0]})`)
   await page.screenshot({ path: `${OUT}/aborted.png` }).catch(() => {})
