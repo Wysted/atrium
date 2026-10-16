@@ -1,0 +1,33 @@
+{
+  "name": "portal-web",
+  "private": true,
+  "type": "module",
+  "version": "0.0.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "packageManager": "npm@11.19.1",
+  "scripts": {
+    "postinstall": "nuxt prepare",
+    "dev": "nuxt dev",
+    "generate": "nuxt generate",
+    "check:csp": "node scripts/check-csp.mjs",
+    "lint": "eslint .",
+    "typecheck": "nuxt typecheck"
+  },
+  "dependencies": {
+    "nuxt": "4.6.1",
+    "vue": "3.5.44",
+    "vue-router": "5.4.0"
+  },
+  "devDependencies": {
+    "@nuxt/eslint": "1.17.0",
+    "@tailwindcss/vite": "4.3.3",
+    "acorn": "8.19.0",
+    "eslint": "10.13.0",
+    "parse5": "8.0.1",
+    "tailwindcss": "4.3.3",
+    "typescript": "6.0.3",
+    "vue-tsc": "3.3.13"
+  }
+}

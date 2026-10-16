@@ -1,0 +1,88 @@
+/*
+ * Design tokens. This is the ONLY file an adopter overrides to re-theme the portal.
+ *
+ * Rules:
+ * - Components use semantic utilities (bg-surface, text-text-muted, border-border, rounded-md, shadow-sm...),
+ *   never raw palette values or arbitrary values such as bg-[#fff] or p-[13px].
+ * - Spacing uses Tailwind's numeric scale, which derives from --spacing (1 unit = --spacing).
+ * - `static` makes Tailwind emit every variable, so they are also usable as var(--color-...) in plain CSS.
+ * - System font stack only: web fonts would need an external origin or extra self-hosted files.
+ * - The dark theme reuses the same semantic names; remove the media block to ship light only.
+ */
+@theme static {
+  /* Colors */
+  --color-surface: #ffffff;
+  --color-surface-raised: #f4f5f7;
+  --color-text: #1b1f24;
+  --color-text-muted: #596270;
+  --color-border: #d3d8df;
+  --color-primary: #1f4fd8;
+  --color-primary-hover: #1a43b8;
+  --color-primary-contrast: #ffffff;
+  --color-danger: #c62828;
+  --color-danger-hover: #a81f1f;
+  --color-danger-contrast: #ffffff;
+  --color-warning: #8a5a00;
+  --color-success: #1b7a3d;
+  --color-focus: #1f4fd8;
+
+  /* Spacing: base unit; p-4 = 4 * --spacing */
+  --spacing: 0.25rem;
+  --spacing-gutter: 1rem;
+
+  /* Container widths */
+  --container-page: 72rem;
+  --container-reading: 44rem;
+  --container-grid-sm: 16rem;
+  --container-grid-md: 18rem;
+  --container-grid-lg: 20rem;
+
+  /* Radius */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+
+  /* Typography */
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --text-xs: 0.75rem;
+  --text-xs--line-height: 1.25;
+  --text-sm: 0.875rem;
+  --text-sm--line-height: 1.4286;
+  --text-base: 1rem;
+  --text-base--line-height: 1.5;
+  --text-lg: 1.125rem;
+  --text-lg--line-height: 1.5556;
+  --text-xl: 1.25rem;
+  --text-xl--line-height: 1.4;
+  --text-2xl: 1.5rem;
+  --text-2xl--line-height: 1.3333;
+  --text-3xl: 1.875rem;
+  --text-3xl--line-height: 1.2;
+  --text-4xl: 2.25rem;
+  --text-4xl--line-height: 1.1111;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.08);
+  --shadow-md: 0 4px 12px -2px rgb(0 0 0 / 0.14);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-surface: #111418;
+    --color-surface-raised: #1b2027;
+    --color-text: #e8ebef;
+    --color-text-muted: #9aa4b2;
+    --color-border: #333b46;
+    --color-primary: #6e92ff;
+    --color-primary-hover: #8aa7ff;
+    --color-primary-contrast: #0b1020;
+    --color-danger: #ef6b6b;
+    --color-danger-hover: #f48a8a;
+    --color-danger-contrast: #1a0808;
+    --color-warning: #e0a63a;
+    --color-success: #4fc27a;
+    --color-focus: #8aa7ff;
+    color-scheme: dark;
+  }
+}
