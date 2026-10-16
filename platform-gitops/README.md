@@ -121,9 +121,11 @@ Assumptions for adopters:
 - Reload latency: with `reloadStrategy: ProcessSignal` the config-reloader's first reload check after a Prometheus pod start
   can time out (~3 min) before it starts watching the rule files, so rules applied just after a restart load late; later changes
   take ~40 s. The alternative is the HTTP reload, which needs `--web.enable-lifecycle` (open `/-/quit` and `/-/reload`).
-- `ProbeNotWriting` assumes the default probe interval (5 minutes) against a 30 minute window; widen it if you raise
-  `PORTAL_PROBE_INTERVAL`. After changing
-the plain rules run `monitoring/gen-prometheusrule.sh`; `test-rules.sh` fails if the generated file is stale.
+- `ProbeNotWriting` fires when `time() - max(portal_probe_last_write_timestamp_seconds)` exceeds 3 x
+  `portal_probe_interval_seconds` (0 = probe disabled, never fires; missing gauges = silent), for 10 minutes. A restart
+  resets the timestamp to the process start time, so detection can be delayed by up to 3 intervals (accepted). The portal
+  rules assume one portal release per Prometheus (`job="portal"`): two releases sharing one would mask each other.
+- After changing the plain rules run `monitoring/gen-prometheusrule.sh`; `test-rules.sh` fails if the generated file is stale.
 
 ## Notes
 

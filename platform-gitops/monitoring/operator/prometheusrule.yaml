@@ -46,18 +46,31 @@ spec:
         # advisory lock never released): no `written` round for 30 minutes while a portal replica is up. Both cases leave
         # deployment statuses frozen, so UnprotectedDeployment keeps reporting an old state. `idle` rounds (nothing due)
         # do not count as written, but with the default 5 minute interval something is always due within 30 minutes
-        # (the portal's own deployment at least). If you raise PORTAL_PROBE_INTERVAL, widen the window.
+        # (the portal's own deployment at least).
+        #
+        # The rule compares the age of the last written round with three probe intervals, exactly:
+        #   - portal_probe_last_write_timestamp_seconds is the Unix time of the last round with result "written"; only one
+        #     replica writes per round (the others skip), so max() over replicas is the last write of the whole portal;
+        #   - portal_probe_interval_seconds is the configured interval, 0 = probe disabled: a disabled probe never fires;
+        #   - a missing gauge (portal without them) makes the rule silent.
+        # A restart resets the timestamp of that replica to its start time, so after a restart of every replica a stall is
+        # detected up to 3 intervals later than otherwise (the age counts from the start). Acceptable: `for:` and the
+        # probe cadence are of the same order. Both gauges are aggregated with max() and joined with `on()` because every
+        # replica has the same configuration and the alert is one per portal, not one per replica.
         - alert: ProbeNotWriting
-          expr: sum(increase(portal_probe_rounds_total{result="written"}[30m])) == 0 and sum(up{job="portal"}) > 0
+          expr: |
+            sum(up{job="portal"}) > 0
+            and on() (time() - max(portal_probe_last_write_timestamp_seconds)) > 3 * max(portal_probe_interval_seconds)
+            and on() max(portal_probe_interval_seconds) > 0
           for: 10m
           labels:
             severity: warning
           annotations:
-            summary: "The integration probe has not written a result for 40 minutes"
+            summary: "The integration probe is enabled but has not written a result for more than three intervals"
             description: >-
-              No probe round wrote deployment statuses although the portal is up: rounds are failing (result="error"),
-              skipped by every replica or not running. Statuses are frozen, so UnprotectedDeployment reflects an old
-              state. Check the portal logs and portal_probe_rounds_total by result.
+              No probe round wrote deployment statuses over at least three probe intervals although the portal is up:
+              rounds are failing (result="error"), skipped by every replica or not running. Statuses are frozen, so
+              UnprotectedDeployment reflects an old state. Check the portal logs and portal_probe_rounds_total by result.
 
         # The gauge is absent for the scrape in which the count fails (a stale value would hide the problem), so a
         # failing count also silences UnprotectedDeployment: this alert is what tells you.

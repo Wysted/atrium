@@ -60,9 +60,9 @@ Pending work and open questions for the portal platform. Detailed context lives 
   and a NetworkPolicy filters by port, not path, so they also reach `/forwardauth` and `/readyz`. Not exploitable
   today (an app holds no valid cookies for other hosts and app sessions are host-bound), but serving the JWKS on its
   own port would keep `/forwardauth` reachable only from Traefik.
-- [ ] **Probe interval gauge for alert rules.** `ProbeNotWriting` fires forever when the probe is disabled
-  (`PORTAL_PROBE_INTERVAL=0`) because the round counters are initialized at 0. Expose the configured interval as a
-  gauge (e.g. `portal_probe_interval_seconds`) and gate the rule on it (and scale its window to the interval).
+- [x] **Probe interval gauge for alert rules.** Closed 2026-10-16. The portal exposes `portal_probe_interval_seconds`
+  (0 = disabled) and `portal_probe_last_write_timestamp_seconds`; `ProbeNotWriting` fires when the last write is older
+  than 3 intervals and never when the probe is disabled.
 - [ ] **Reduce `platform_runtime`.** Once the portal owns administration, drop its write access to the authorization
   tables except what ForwardAuth and login need.
 - [ ] **Cookie prefix support in Safari.** `__Host-Http-` is enforced by Chrome 140+ and Firefox 143+; revisit Safari.

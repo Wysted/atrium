@@ -102,18 +102,143 @@ tests:
         alertname: ProbeInconclusive
         exp_alerts: []
 
-  # ---- ProbeNotWriting (input every 5 minutes) -------------------------------------------------------------------
-  - name: ProbeNotWriting fires when every round ends in error
+  # ---- ProbeNotWriting (input every 5 minutes; the rule is time() - last write timestamp > 3 x interval, for 10m) ---
+  # Series values are Unix seconds and the test clock starts at 0, so '0+300x30' is a replica that writes every round
+  # (timestamp = now). Stall: age > 900 s with a 300 s interval, then 10 minutes of `for:`.
+  - name: ProbeNotWriting stays quiet while rounds are written
     interval: 5m
     input_series:
-      - series: 'portal_probe_rounds_total{result="written", pod="portal-a", job="portal"}'
-        values: '0+1x4 4x20'
-      - series: 'portal_probe_rounds_total{result="error", pod="portal-a", job="portal"}'
-        values: '0x4 0+1x20'
+      - series: 'portal_probe_last_write_timestamp_seconds{pod="portal-a", job="portal"}'
+        values: '0+300x30'
+      - series: 'portal_probe_interval_seconds{pod="portal-a", job="portal"}'
+        values: '300x30'
       - series: 'up{job="portal", pod="portal-a"}'
-        values: '1x25'
+        values: '1x30'
     alert_rule_test:
-      - eval_time: 40m # last write at minute 20: the 30 minute window is not empty yet
+      - eval_time: 150m
+        alertname: ProbeNotWriting
+        exp_alerts: []
+
+  - name: ProbeNotWriting stays quiet when one replica writes and the others skip
+    interval: 5m
+    input_series:
+      - series: 'portal_probe_last_write_timestamp_seconds{pod="portal-a", job="portal"}'
+        values: '0+300x30'
+      - series: 'portal_probe_last_write_timestamp_seconds{pod="portal-b", job="portal"}'
+        values: '0x30' # skips every round: stays at its start time
+      - series: 'portal_probe_interval_seconds{pod="portal-a", job="portal"}'
+        values: '300x30'
+      - series: 'portal_probe_interval_seconds{pod="portal-b", job="portal"}'
+        values: '300x30'
+      - series: 'up{job="portal", pod="portal-a"}'
+        values: '1x30'
+      - series: 'up{job="portal", pod="portal-b"}'
+        values: '1x30'
+    alert_rule_test:
+      - eval_time: 150m
+        alertname: ProbeNotWriting
+        exp_alerts: []
+
+  - name: ProbeNotWriting fires after 3 intervals without a write plus for
+    interval: 5m
+    input_series:
+      - series: 'portal_probe_last_write_timestamp_seconds{pod="portal-a", job="portal"}'
+        values: '0+300x5 1500x60' # last write at 25 minutes
+      - series: 'portal_probe_interval_seconds{pod="portal-a", job="portal"}'
+        values: '300x65'
+      - series: 'up{job="portal", pod="portal-a"}'
+        values: '1x65'
+    alert_rule_test:
+      - eval_time: 40m # age 15 minutes = 3 intervals, not above yet
+        alertname: ProbeNotWriting
+        exp_alerts: []
+      - eval_time: 45m # condition true since minute 41: inside `for: 10m`
+        alertname: ProbeNotWriting
+        exp_alerts: []
+      - eval_time: 60m
+        alertname: ProbeNotWriting
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: "The integration probe is enabled but has not written a result for more than three intervals"
+              description: "No probe round wrote deployment statuses over at least three probe intervals although the portal is up: rounds are failing (result=\"error\"), skipped by every replica or not running. Statuses are frozen, so UnprotectedDeployment reflects an old state. Check the portal logs and portal_probe_rounds_total by result."
+
+  - name: ProbeNotWriting never fires when the probe is disabled (interval 0)
+    interval: 5m
+    input_series:
+      - series: 'portal_probe_last_write_timestamp_seconds{pod="portal-a", job="portal"}'
+        values: '0x60' # stays at the start time forever
+      - series: 'portal_probe_interval_seconds{pod="portal-a", job="portal"}'
+        values: '0x60'
+      - series: 'up{job="portal", pod="portal-a"}'
+        values: '1x60'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: ProbeNotWriting
+        exp_alerts: []
+      - eval_time: 290m
+        alertname: ProbeNotWriting
+        exp_alerts: []
+
+  - name: ProbeNotWriting respects the configured interval (30 minutes)
+    interval: 5m
+    input_series:
+      - series: 'portal_probe_last_write_timestamp_seconds{pod="portal-a", job="portal"}'
+        values: '0+300x5 1500x70'
+      - series: 'portal_probe_interval_seconds{pod="portal-a", job="portal"}'
+        values: '1800x75'
+      - series: 'up{job="portal", pod="portal-a"}'
+        values: '1x75'
+    alert_rule_test:
+      - eval_time: 100m # age 75 minutes < 3 x 30 minutes
+        alertname: ProbeNotWriting
+        exp_alerts: []
+      - eval_time: 130m # age above 90 minutes since minute 116, plus for
+        alertname: ProbeNotWriting
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: "The integration probe is enabled but has not written a result for more than three intervals"
+              description: "No probe round wrote deployment statuses over at least three probe intervals although the portal is up: rounds are failing (result=\"error\"), skipped by every replica or not running. Statuses are frozen, so UnprotectedDeployment reflects an old state. Check the portal logs and portal_probe_rounds_total by result."
+
+  - name: ProbeNotWriting follows an interval change (300 s raised to 1800 s before the stall is detected)
+    interval: 5m
+    input_series:
+      - series: 'portal_probe_last_write_timestamp_seconds{pod="portal-a", job="portal"}'
+        values: '0+300x5 1500x70'
+      - series: 'portal_probe_interval_seconds{pod="portal-a", job="portal"}'
+        values: '300x6 1800x70' # raised at minute 35, before the 300 s threshold (minute 40) is crossed
+      - series: 'up{job="portal", pod="portal-a"}'
+        values: '1x75'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: ProbeNotWriting
+        exp_alerts: []
+      - eval_time: 100m
+        alertname: ProbeNotWriting
+        exp_alerts: []
+      - eval_time: 140m
+        alertname: ProbeNotWriting
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: "The integration probe is enabled but has not written a result for more than three intervals"
+              description: "No probe round wrote deployment statuses over at least three probe intervals although the portal is up: rounds are failing (result=\"error\"), skipped by every replica or not running. Statuses are frozen, so UnprotectedDeployment reflects an old state. Check the portal logs and portal_probe_rounds_total by result."
+
+  - name: ProbeNotWriting follows the gauge when the probe goes from disabled to enabled
+    interval: 5m
+    input_series:
+      - series: 'portal_probe_last_write_timestamp_seconds{pod="portal-a", job="portal"}'
+        values: '0x60' # started at 0 and never wrote
+      - series: 'portal_probe_interval_seconds{pod="portal-a", job="portal"}'
+        values: '0x12 300x50'
+      - series: 'up{job="portal", pod="portal-a"}'
+        values: '1x65'
+    alert_rule_test:
+      - eval_time: 55m # still disabled
+        alertname: ProbeNotWriting
+        exp_alerts: []
+      - eval_time: 65m # enabled 5 minutes ago: inside `for: 10m`
         alertname: ProbeNotWriting
         exp_alerts: []
       - eval_time: 80m
@@ -121,68 +246,80 @@ tests:
         exp_alerts:
           - exp_labels: {severity: warning}
             exp_annotations:
-              summary: "The integration probe has not written a result for 40 minutes"
-              description: "No probe round wrote deployment statuses although the portal is up: rounds are failing (result=\"error\"), skipped by every replica or not running. Statuses are frozen, so UnprotectedDeployment reflects an old state. Check the portal logs and portal_probe_rounds_total by result."
-
-  - name: ProbeNotWriting fires when no round runs at all
-    interval: 5m
-    input_series:
-      - series: 'portal_probe_rounds_total{result="written", pod="portal-a", job="portal"}'
-        values: '5x25'
-      - series: 'portal_probe_rounds_total{result="idle", pod="portal-a", job="portal"}'
-        values: '9x25'
-      - series: 'up{job="portal", pod="portal-a"}'
-        values: '1x25'
-    alert_rule_test:
-      - eval_time: 60m
-        alertname: ProbeNotWriting
-        exp_alerts:
-          - exp_labels: {severity: warning}
-            exp_annotations:
-              summary: "The integration probe has not written a result for 40 minutes"
-              description: "No probe round wrote deployment statuses although the portal is up: rounds are failing (result=\"error\"), skipped by every replica or not running. Statuses are frozen, so UnprotectedDeployment reflects an old state. Check the portal logs and portal_probe_rounds_total by result."
-
-  - name: ProbeNotWriting stays quiet while rounds are written, even if another replica skips
-    interval: 5m
-    input_series:
-      - series: 'portal_probe_rounds_total{result="written", pod="portal-a", job="portal"}'
-        values: '0+1x25'
-      - series: 'portal_probe_rounds_total{result="skipped", pod="portal-b", job="portal"}'
-        values: '0+1x25'
-      - series: 'portal_probe_rounds_total{result="written", pod="portal-b", job="portal"}'
-        values: '0x25'
-      - series: 'up{job="portal", pod="portal-a"}'
-        values: '1x25'
-    alert_rule_test:
-      - eval_time: 100m
-        alertname: ProbeNotWriting
-        exp_alerts: []
-
-  - name: ProbeNotWriting ignores a pause shorter than the window, and stays silent when the portal is down
-    interval: 5m
-    input_series:
-      - series: 'portal_probe_rounds_total{result="written", pod="portal-a", job="portal"}'
-        values: '0+1x6 6x4 6+1x14'
-      - series: 'up{job="portal", pod="portal-a"}'
-        values: '1x25'
-      - series: 'portal_probe_rounds_total{result="written", pod="portal-z", job="portal"}'
-        values: '3x25'
-    alert_rule_test:
-      - eval_time: 85m
-        alertname: ProbeNotWriting
-        exp_alerts: []
+              summary: "The integration probe is enabled but has not written a result for more than three intervals"
+              description: "No probe round wrote deployment statuses over at least three probe intervals although the portal is up: rounds are failing (result=\"error\"), skipped by every replica or not running. Statuses are frozen, so UnprotectedDeployment reflects an old state. Check the portal logs and portal_probe_rounds_total by result."
 
   - name: ProbeNotWriting is silent when the portal is down (PortalDown covers that)
     interval: 5m
     input_series:
-      - series: 'portal_probe_rounds_total{result="written", pod="portal-a", job="portal"}'
-        values: '5x25'
+      - series: 'portal_probe_last_write_timestamp_seconds{pod="portal-a", job="portal"}'
+        values: '0x25'
+      - series: 'portal_probe_interval_seconds{pod="portal-a", job="portal"}'
+        values: '300x25'
       - series: 'up{job="portal", pod="portal-a"}'
         values: '0x25'
     alert_rule_test:
       - eval_time: 100m
         alertname: ProbeNotWriting
         exp_alerts: []
+
+  - name: ProbeNotWriting stays silent when the portal does not expose the interval gauge
+    interval: 5m
+    input_series:
+      - series: 'portal_probe_last_write_timestamp_seconds{pod="portal-a", job="portal"}'
+        values: '0x25'
+      - series: 'up{job="portal", pod="portal-a"}'
+        values: '1x25'
+    alert_rule_test:
+      - eval_time: 100m
+        alertname: ProbeNotWriting
+        exp_alerts: []
+
+  - name: ProbeNotWriting stays silent when the portal does not expose the timestamp gauge
+    interval: 5m
+    input_series:
+      - series: 'portal_probe_interval_seconds{pod="portal-a", job="portal"}'
+        values: '300x25'
+      - series: 'up{job="portal", pod="portal-a"}'
+        values: '1x25'
+    alert_rule_test:
+      - eval_time: 100m
+        alertname: ProbeNotWriting
+        exp_alerts: []
+
+  # A restart resets the timestamp to the process start time (documented: detection is delayed by up to 3 intervals).
+  # Here the probe stalls after minute 55 and would fire at minute ~81; the restart at minute 90 sets the timestamp to
+  # now (5400 s), which clears the alert and restarts the clock: it fires again only 3 intervals + for later.
+  - name: ProbeNotWriting restart resets the timestamp and delays detection
+    interval: 5m
+    input_series:
+      - series: 'portal_probe_last_write_timestamp_seconds{pod="portal-a", job="portal"}'
+        values: '0+300x11 3300x5 5400x50' # writes until 55 min, stalls, restarts at 90 min
+      - series: 'portal_probe_interval_seconds{pod="portal-a", job="portal"}'
+        values: '300x70'
+      - series: 'up{job="portal", pod="portal-a"}'
+        values: '1x70'
+    alert_rule_test:
+      - eval_time: 85m # stalled and past for: fires
+        alertname: ProbeNotWriting
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: "The integration probe is enabled but has not written a result for more than three intervals"
+              description: "No probe round wrote deployment statuses over at least three probe intervals although the portal is up: rounds are failing (result=\"error\"), skipped by every replica or not running. Statuses are frozen, so UnprotectedDeployment reflects an old state. Check the portal logs and portal_probe_rounds_total by result."
+      - eval_time: 100m # restarted: age is counted from the start time
+        alertname: ProbeNotWriting
+        exp_alerts: []
+      - eval_time: 110m # age above 3 intervals since minute 106: inside `for: 10m`
+        alertname: ProbeNotWriting
+        exp_alerts: []
+      - eval_time: 125m
+        alertname: ProbeNotWriting
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: "The integration probe is enabled but has not written a result for more than three intervals"
+              description: "No probe round wrote deployment statuses over at least three probe intervals although the portal is up: rounds are failing (result=\"error\"), skipped by every replica or not running. Statuses are frozen, so UnprotectedDeployment reflects an old state. Check the portal logs and portal_probe_rounds_total by result."
 
   # ---- ProbeStatusCountErrors --------------------------------------------------------------------------------------
   - name: ProbeStatusCountErrors fires while the count keeps failing
