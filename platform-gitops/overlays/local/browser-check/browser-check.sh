@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Real-browser check of the portal web app (Chromium via Playwright, in Docker): fake login, / renders, a client route
+# Real-browser check of the portal web app (Chromium via Playwright, in Docker): fake login (alice/carol/admin), the home with its data, the Administration button, a client route
 # without a page renders the error page; zero CSP violations, failed requests and (tolerated: NUXT_E1005) console errors.
 # Called as the last section of smoke.sh; also runnable alone. Needs the host docker (the mechanism for images, see
 # _shared/k8s.md), the cluster up and *.apps.wysted.dev -> 127.0.0.1 (the container instead resolves the two hosts to the
