@@ -40,5 +40,9 @@ kc -n platform wait --for=condition=complete job/migrate --timeout=180s
 echo "==> platform-api (Google login)"
 kc apply --dry-run=server -k "$REL/platform" >/dev/null
 kc apply -k "$REL/platform"
+if [[ "${BUILD:-0}" == 1 ]]; then
+  # The tag does not change on rebuild, so the Deployment spec is identical and nothing rolls out by itself.
+  kc -n platform rollout restart deploy/platform-api
+fi
 kc -n platform rollout status deploy/platform-api --timeout="$ROLLOUT_TIMEOUT"
 echo "==> done. Users are created on first login; grant access with $REL/grant.sh"
