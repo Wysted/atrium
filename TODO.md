@@ -18,6 +18,10 @@ Pending work and open questions for the portal platform. Detailed context lives 
   FQDN-level filtering (Google endpoints only) needs an egress proxy or a CNI with L7 policies.
 - [ ] **Internal TLS for the JWKS.** Apps fetch the JWKS over in-cluster HTTP; integrity relies on NetworkPolicy.
 - [ ] **`client_secret` rotation runbook.** Google allows two active secrets: add, deploy, disable the old one, delete.
+- [ ] **NOTIFY commit serialization.** The `access_changed` and `signing_keys_changed` triggers use NOTIFY, and
+  PostgreSQL serializes the commit of every notifying transaction on one cluster-wide lock (waits of up to ~3 s were
+  seen under disk load in tests). Admin changes are rare today; measure under the production write rate before
+  adding notifying triggers to hot tables.
 - [ ] **Git remote.** The repository only exists on the local disk.
 
 ## Next features
