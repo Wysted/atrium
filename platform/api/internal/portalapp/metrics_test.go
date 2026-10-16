@@ -11,6 +11,7 @@ import (
 
 	dto "github.com/prometheus/client_model/go"
 
+	"platform/api/internal/portalapp"
 	"platform/api/internal/probe"
 )
 
@@ -117,22 +118,39 @@ func TestMetricsHaveTheirOwnListener(t *testing.T) {
 	if w := s.internal(http.MethodGet, "/metrics"); w.Code != http.StatusNotFound || strings.Contains(w.Body.String(), "portal_") {
 		t.Errorf("internal /metrics = %d, want 404", w.Code)
 	}
-	// Public: with a valid assertion the router has no such route (the web handler is absent), and without one
-	// the assertion check stops it. Neither leaks anything.
-	for name, c := range map[string]call{
-		"with a valid assertion": {method: http.MethodGet, path: "/metrics", assertion: valid},
-		"without an assertion":   {method: http.MethodGet, path: "/metrics"},
-	} {
-		w := s.public(c)
-		if w.Code != http.StatusNotFound && w.Code != http.StatusUnauthorized {
-			t.Errorf("public /metrics %s = %d, want 404 or 401", name, w.Code)
-		}
-		if strings.Contains(w.Body.String(), "portal_") || strings.Contains(w.Body.String(), "go_goroutines") {
-			t.Errorf("public /metrics %s leaked metrics", name)
-		}
+	// Public, with a catch-all web handler set (as in production): the reserved paths stay 404 problem documents,
+	// with a valid assertion and without one (then the assertion check answers 401). Nothing leaks.
+	web, err := portalapp.New(portalapp.Config{
+		AppID: portalAppID, Issuer: testIssuer, JWKSURL: s.jwks.URL, Pool: s.portal, Logger: discardLog,
+		Web: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/html")
+			_, _ = w.Write([]byte("<html>spa</html>"))
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if w := s.public(call{method: http.MethodGet, path: "/metrics", assertion: valid}); w.Code != http.StatusNotFound {
-		t.Errorf("public /metrics with a valid assertion = %d, want 404", w.Code)
+	for _, path := range []string{
+		"/metrics", "/metrics/", "/healthz", "/healthz/", "/readyz", "/readyz/", "/_platform/logout", "/_platform/",
+	} {
+		for name, assertion := range map[string]string{"with a valid assertion": valid, "without an assertion": ""} {
+			r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "https://"+portalHost+path, nil)
+			r.Host = portalHost
+			if assertion != "" {
+				r.Header.Set("Platform-Assertion", assertion)
+			}
+			w := httptest.NewRecorder()
+			web.Public.ServeHTTP(w, r)
+			switch {
+			case w.Code != http.StatusNotFound && w.Code != http.StatusUnauthorized:
+				t.Errorf("public %s %s = %d, want 404 or 401", path, name, w.Code)
+			case assertion != "" && (w.Code != http.StatusNotFound || !strings.HasPrefix(w.Header().Get("Content-Type"), "application/problem+json")):
+				t.Errorf("public %s %s = %d %q, want 404 problem+json", path, name, w.Code, w.Header().Get("Content-Type"))
+			}
+			if body := w.Body.String(); strings.Contains(body, "portal_") || strings.Contains(body, "go_goroutines") || strings.Contains(body, "spa") {
+				t.Errorf("public %s %s leaked: %q", path, name, body)
+			}
+		}
 	}
 }
 

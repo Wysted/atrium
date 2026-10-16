@@ -348,8 +348,8 @@ func TestPublicListenerHasNoUnauthenticatedPath(t *testing.T) {
 				t.Errorf("GET %s without assertion = %d, want 401 or 404", path, w.Code)
 			case path == portalapp.ExemptPath && w.Code != http.StatusNotFound:
 				t.Errorf("GET %s = %d, want 404 with or without assertion", path, w.Code)
-			case assertion != "" && path == "/healthz" && w.Code != http.StatusOK:
-				t.Errorf("GET /healthz with a valid assertion = %d (validated like any path)", w.Code)
+			case assertion != "" && (path == "/healthz" || path == "/readyz") && w.Code != http.StatusNotFound:
+				t.Errorf("GET %s with a valid assertion = %d, want 404 (probes are internal-only)", path, w.Code)
 			}
 		}
 	}

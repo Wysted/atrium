@@ -20,6 +20,19 @@ const (
 	PathMeApps = "/api/v1/me/apps"
 )
 
+// Paths the web handler must never answer (contract blocks 1 and 6): the metrics live on a listener of their own,
+// the probes on the internal one, and the /_platform/ prefix is reserved on every app host.
+const (
+	pathMetrics  = "/metrics"
+	pathHealthz  = "/healthz"
+	pathReadyz   = "/readyz"
+	pathPlatform = "/_platform"
+)
+
+// reservedPaths are answered 404 on any method, with and without the trailing slash (the slashed pattern also
+// covers the subtree).
+var reservedPaths = []string{pathMetrics, pathHealthz, pathReadyz, pathPlatform}
+
 // uuidPattern matches the internal user id carried in the assertion's sub. An id that does not parse is
 // rejected before it reaches SQL.
 var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
@@ -93,6 +106,10 @@ func New(cfg Config) (http.Handler, error) {
 	mux.HandleFunc("GET "+PathMeApps, a.apps)
 	a.adminRoutes(mux)
 	mux.HandleFunc(apiPrefix, notFound) // unknown API routes and methods: JSON, never the web UI
+	for _, p := range reservedPaths {
+		mux.HandleFunc(p, notFound)
+		mux.HandleFunc(p+"/", notFound)
+	}
 	web := cfg.Web
 	if web == nil {
 		web = http.HandlerFunc(notFound)
