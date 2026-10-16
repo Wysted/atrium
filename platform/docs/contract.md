@@ -313,6 +313,8 @@ Research notes: Engram `architecture/portal-login-research`.
 
 ### Open items
 
+- Verified live (2026-10-16, Cloud Identity Free on `wysted.dev`): a primary-domain user signs in with `hd = wysted.dev`,
+  is created just in time, gets 403 without grants and 200 right after a grant (no restart).
 - `hd` for alias and secondary domains is undocumented by Google: the allowlist is a configurable list of `hd`
   values, rejections log `hd` and email, and it must be tested with real alias and secondary-domain accounts before production.
 - Suspended Workspace users: v1 relies on the local `disabled` flag plus the 8 h session cap. A faster cutoff needs the
