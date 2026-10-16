@@ -24,6 +24,8 @@ const (
 	envKEKFile      = keys.KEKFileEnv // PLATFORM_KEK_FILE
 	envIdleTimeout  = "PLATFORM_IDLE_TIMEOUT"
 	envFakeLogin    = "PLATFORM_FAKE_LOGIN"
+	// envPortalAppID is the optional id of the portal app, the one app any active user may open (block 6).
+	envPortalAppID = "PLATFORM_PORTAL_APP_ID"
 	// Google login. All three are set together or none is (see loadConfig).
 	envGoogleClientID         = "PLATFORM_GOOGLE_CLIENT_ID"
 	envGoogleClientSecretFile = "PLATFORM_GOOGLE_CLIENT_SECRET_FILE"
@@ -39,6 +41,9 @@ const (
 // maxClientSecretBytes bounds the Google client secret file (real secrets are about 35 bytes).
 const maxClientSecretBytes = 4 << 10
 
+// appIDPattern matches apps.id (the CHECK of migration 0001).
+var appIDPattern = regexp.MustCompile(`^app_[0-9A-HJKMNP-TV-Z]{26}$`)
+
 // hostPattern matches the host form stored in deployments.host (lowercase, no port).
 var hostPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`)
 
@@ -52,6 +57,8 @@ type config struct {
 	IdleTimeout  time.Duration
 	// FakeLogin is the parsed PLATFORM_FAKE_LOGIN. It is only honored without Google (see googleConfig).
 	FakeLogin bool
+	// PortalAppID is PLATFORM_PORTAL_APP_ID; empty means there is no portal app.
+	PortalAppID string
 	// Google is nil when no Google variable is set (only valid with FakeLogin). When present, the fake login is
 	// switched off by the auth host with a WARN: the two never coexist.
 	Google *googleConfig
@@ -119,6 +126,12 @@ func loadConfig(getenv func(string) string) (config, error) {
 			errs = append(errs, fmt.Errorf("%s: %w", envAllowPrivilegedDBLogin, err))
 		}
 		c.AllowPrivilegedDBLogin = b
+	}
+	if v := strings.TrimSpace(getenv(envPortalAppID)); v != "" {
+		if !appIDPattern.MatchString(v) {
+			errs = append(errs, fmt.Errorf("%s must match %s", envPortalAppID, appIDPattern))
+		}
+		c.PortalAppID = v
 	}
 	g, gerrs := loadGoogleConfig(getenv)
 	errs = append(errs, gerrs...)

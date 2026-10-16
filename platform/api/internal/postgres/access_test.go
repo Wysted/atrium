@@ -13,7 +13,6 @@ func TestEvaluate(t *testing.T) {
 	t.Parallel()
 	pool := newTestDB(t)
 	w := world{pool: pool}
-	ev := access.NewEvaluator(postgres.NewAccessRepository(pool))
 
 	// Initiative "alpha": two roles, host alpha.example.test.
 	alpha := w.initiative(t, "alpha", "active")
@@ -29,6 +28,17 @@ func TestEvaluate(t *testing.T) {
 	dead := w.initiative(t, "dead", "inactive")
 	deadRole := w.role(t, dead, "editor")
 	w.app(t, dead, "dead.example.test")
+
+	// Disabled app in an active initiative, and the portal app.
+	offApp := w.app(t, alpha, "off.example.test")
+	mustExec(t, pool, `UPDATE apps SET status = 'disabled' WHERE id = $1`, offApp)
+	portalHost := "portal.example.test"
+	platform := w.initiative(t, access.PlatformInitiativeKey, "active")
+	portalApp := w.app(t, platform, portalHost)
+	// An app configured as portal but owned by another initiative: the exception must not apply.
+	strayPortal := w.app(t, alpha, "stray-portal.example.test")
+	ev := access.NewEvaluator(postgres.NewAccessRepository(pool), access.WithPortalApp(portalApp))
+	evStray := access.NewEvaluator(postgres.NewAccessRepository(pool), access.WithPortalApp(strayPortal))
 
 	ops := w.group(t, "ops")
 
@@ -88,6 +98,12 @@ func TestEvaluate(t *testing.T) {
 		{"no grants", noGrants, "alpha.example.test", false, access.ReasonNoGrant, nil, alphaApp},
 		{"grant on another initiative gives no access", onlyBeta, "alpha.example.test", false, access.ReasonNoGrant, nil, alphaApp},
 		{"roles are not mixed across initiatives", onlyBeta, "beta.example.test", true, access.ReasonGranted, []string{"admin"}, ""},
+		{"disabled app", direct, "off.example.test", false, access.ReasonAppDisabled, nil, offApp},
+		{"disabled app, disabled user keeps user_disabled", disabled, "off.example.test", false, access.ReasonUserDisabled, nil, offApp},
+		{"other app of the initiative stays reachable", direct, "alpha.example.test", true, access.ReasonGranted, []string{"editor"}, alphaApp},
+		{"portal app, active user without grants", noGrants, portalHost, true, access.ReasonGranted, []string{}, portalApp},
+		{"portal app, disabled user", disabled, portalHost, false, access.ReasonUserDisabled, nil, portalApp},
+		{"portal app, unknown user", missingUser, portalHost, false, access.ReasonUnknownUser, nil, portalApp},
 		{"platform admin without grant is denied", admin, "alpha.example.test", false, access.ReasonNoGrant, nil, alphaApp},
 	}
 	for _, tt := range tests {
@@ -104,12 +120,58 @@ func TestEvaluate(t *testing.T) {
 			if got.Allow != tt.allow || got.Reason != tt.reason {
 				t.Fatalf("allow=%v reason=%q, want allow=%v reason=%q", got.Allow, got.Reason, tt.allow, tt.reason)
 			}
-			if !slices.Equal(got.Roles, tt.roles) {
+			if !slices.Equal(got.Roles, tt.roles) || (tt.allow && got.Roles == nil) {
 				t.Fatalf("roles = %v, want %v", got.Roles, tt.roles)
 			}
 			if tt.appID != "" && got.AppID != tt.appID {
 				t.Fatalf("app id = %q, want %q", got.AppID, tt.appID)
 			}
 		})
+	}
+	t.Run("portal app id pointing to a non-platform initiative follows the grant rules", func(t *testing.T) {
+		t.Parallel()
+		got, err := evStray.Evaluate(context.Background(), access.Request{
+			Subject:  access.Subject{ID: noGrants},
+			Resource: access.Resource{Type: access.ResourceTypeApp, ID: "stray-portal.example.test"},
+			Action:   access.Action{Name: access.ActionAccess},
+		})
+		if err != nil || got.Allow || got.Reason != access.ReasonNoGrant {
+			t.Fatalf("got %+v, err %v; want no_grant", got, err)
+		}
+	})
+}
+
+func TestEvaluatePortalAppStates(t *testing.T) {
+	t.Parallel()
+	pool := newTestDB(t)
+	w := world{pool: pool}
+	init := w.initiative(t, "platform", "active")
+	portalApp := w.app(t, init, "portal.example.test")
+	ev := access.NewEvaluator(postgres.NewAccessRepository(pool), access.WithPortalApp(portalApp))
+	user := w.user(t, "active")
+
+	evaluate := func() access.Decision {
+		t.Helper()
+		got, err := ev.Evaluate(context.Background(), access.Request{
+			Subject:  access.Subject{ID: user},
+			Resource: access.Resource{Type: access.ResourceTypeApp, ID: "portal.example.test"},
+			Action:   access.Action{Name: access.ActionAccess},
+		})
+		if err != nil {
+			t.Fatalf("Evaluate: %v", err)
+		}
+		return got
+	}
+	if got := evaluate(); !got.Allow {
+		t.Fatalf("active portal app: %+v", got)
+	}
+	mustExec(t, pool, `UPDATE apps SET status = 'disabled' WHERE id = $1`, portalApp)
+	if got := evaluate(); got.Allow || got.Reason != access.ReasonAppDisabled {
+		t.Fatalf("disabled portal app: %+v", got)
+	}
+	mustExec(t, pool, `UPDATE apps SET status = 'active' WHERE id = $1`, portalApp)
+	mustExec(t, pool, `UPDATE initiatives SET status = 'inactive' WHERE id = $1`, init)
+	if got := evaluate(); got.Allow || got.Reason != access.ReasonInitiativeInactive {
+		t.Fatalf("inactive initiative: %+v", got)
 	}
 }

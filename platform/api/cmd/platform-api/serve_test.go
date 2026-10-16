@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"strings"
@@ -97,5 +99,45 @@ func TestLoadConfigAllowPrivilegedDBLogin(t *testing.T) {
 	}
 	if _, err := load("maybe"); err == nil {
 		t.Fatal("invalid value accepted")
+	}
+}
+
+type fakePortalLookup struct {
+	key   string
+	found bool
+	err   error
+	calls int
+}
+
+func (f *fakePortalLookup) PortalAppInitiativeKey(context.Context, string) (string, bool, error) {
+	f.calls++
+	return f.key, f.found, f.err
+}
+
+func TestCheckPortalApp(t *testing.T) {
+	tests := []struct {
+		name      string
+		appID     string
+		lookup    fakePortalLookup
+		wantCalls int
+		wantLog   string
+	}{
+		{"unset does nothing", "", fakePortalLookup{}, 0, ""},
+		{"platform initiative", "app_X", fakePortalLookup{key: "platform", found: true}, 1, "level=INFO"},
+		{"other initiative warns", "app_X", fakePortalLookup{key: "alpha", found: true}, 1, "level=WARN"},
+		{"missing app warns", "app_X", fakePortalLookup{}, 1, "level=WARN"},
+		{"database error warns and continues", "app_X", fakePortalLookup{err: errors.New("down")}, 1, "level=WARN"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			checkPortalApp(context.Background(), &tt.lookup, tt.appID, slog.New(slog.NewTextHandler(&buf, nil)))
+			if tt.lookup.calls != tt.wantCalls {
+				t.Fatalf("lookups = %d, want %d", tt.lookup.calls, tt.wantCalls)
+			}
+			if tt.wantLog == "" && buf.Len() != 0 || tt.wantLog != "" && !strings.Contains(buf.String(), tt.wantLog) {
+				t.Fatalf("log = %q, want %q", buf.String(), tt.wantLog)
+			}
+		})
 	}
 }

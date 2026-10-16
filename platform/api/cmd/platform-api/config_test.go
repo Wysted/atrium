@@ -72,6 +72,23 @@ func TestLoadConfig(t *testing.T) {
 			}
 		})
 	}
+	t.Run("portal app id", func(t *testing.T) {
+		const id = "app_01ARZ3NDEKTSV4RRFFQ69G5FAV"
+		env := validEnv()
+		if c, err := loadConfig(lookup(env)); err != nil || c.PortalAppID != "" {
+			t.Fatalf("unset: %+v, %v", c, err)
+		}
+		env[envPortalAppID] = " " + id + " "
+		if c, err := loadConfig(lookup(env)); err != nil || c.PortalAppID != id {
+			t.Fatalf("valid: %+v, %v", c, err)
+		}
+		for _, bad := range []string{"app_01arz3ndektsv4rrffq69g5fav", "app_01ARZ3NDEKTSV4RRFFQ69G5FA", "app_01ARZ3NDEKTSV4RRFFQ69G5FAU", "01ARZ3NDEKTSV4RRFFQ69G5FAV", "app_01ARZ3NDEKTSV4RRFFQ69G5FAVX"} {
+			env[envPortalAppID] = bad
+			if _, err := loadConfig(lookup(env)); err == nil || !strings.Contains(err.Error(), envPortalAppID) {
+				t.Fatalf("%q: err = %v, want a rejection", bad, err)
+			}
+		}
+	})
 	t.Run("reports every problem at once", func(t *testing.T) {
 		_, err := loadConfig(lookup(nil))
 		for _, name := range []string{envInternalAddr, envPublicAddr, envAuthHost, envIssuer, envKEKFile} {

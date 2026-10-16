@@ -29,7 +29,9 @@ var _ access.FactsReader = (*AccessRepository)(nil)
 const accessFactsSQL = `
 SELECT a.id,
        i.id::text,
+       i.key,
        i.status,
+       a.status,
        u.status,
        ARRAY(
            SELECT DISTINCT ir.key
@@ -54,7 +56,7 @@ func (r *AccessRepository) AccessFacts(ctx context.Context, userID, host string)
 		userStatus *string
 	)
 	err := r.pool.QueryRow(ctx, accessFactsSQL, userID, host).
-		Scan(&f.AppID, &f.InitiativeID, &f.InitiativeStatus, &userStatus, &f.Roles)
+		Scan(&f.AppID, &f.InitiativeID, &f.InitiativeKey, &f.InitiativeStatus, &f.AppStatus, &userStatus, &f.Roles)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return access.Facts{}, nil
 	}
@@ -67,4 +69,18 @@ func (r *AccessRepository) AccessFacts(ctx context.Context, userID, host string)
 		f.UserStatus = *userStatus
 	}
 	return f, nil
+}
+
+// PortalAppInitiativeKey returns the key of the initiative that owns appID. found is false when the app does
+// not exist. It is a read-only lookup for the start-up sanity check of PLATFORM_PORTAL_APP_ID.
+func (r *AccessRepository) PortalAppInitiativeKey(ctx context.Context, appID string) (key string, found bool, err error) {
+	err = r.pool.QueryRow(ctx,
+		`SELECT i.key FROM apps a JOIN initiatives i ON i.id = a.initiative_id WHERE a.id = $1`, appID).Scan(&key)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("query portal app initiative: %w", err)
+	}
+	return key, true, nil
 }

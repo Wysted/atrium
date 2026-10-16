@@ -91,7 +91,7 @@ func serve(ctx context.Context, cfg config, log *slog.Logger) error {
 	}
 	acfg := app.Config{
 		AuthHost: cfg.AuthHost, Issuer: cfg.Issuer, IdleTimeout: cfg.IdleTimeout, FakeLogin: cfg.FakeLogin,
-		Pool: pool, Keyring: ring, Logger: log,
+		PortalAppID: cfg.PortalAppID, Pool: pool, Keyring: ring, Logger: log,
 	}
 	if g := cfg.Google; g != nil {
 		// Issuer stays empty: googlelogin.GoogleIssuer. It is never read from the environment.
@@ -101,6 +101,7 @@ func serve(ctx context.Context, cfg config, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	checkPortalApp(ctx, postgres.NewAccessRepository(pool), cfg.PortalAppID, log)
 	job, err := housekeeping.NewJob(housekeeping.Config{
 		Store: postgres.NewHousekeepingRepo(pool), IdleTimeout: a.Sessions.IdleTimeout(), Logger: log,
 	})
@@ -211,5 +212,36 @@ func waitBounded(ctx context.Context, wait func()) bool {
 		return true
 	case <-ctx.Done():
 		return false
+	}
+}
+
+// portalAppLookup is the read-only port used by checkPortalApp.
+type portalAppLookup interface {
+	PortalAppInitiativeKey(ctx context.Context, appID string) (key string, found bool, err error)
+}
+
+// portalCheckTimeout bounds the start-up sanity check of PLATFORM_PORTAL_APP_ID.
+const portalCheckTimeout = 5 * time.Second
+
+// checkPortalApp warns when PLATFORM_PORTAL_APP_ID does not point to an app of the reserved initiative. It
+// never fails start-up (the database may be unavailable or the seed not applied yet); the decision itself
+// is fail closed because access.Evaluator re-checks the initiative key on every decision.
+func checkPortalApp(ctx context.Context, repo portalAppLookup, appID string, log *slog.Logger) {
+	if appID == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, portalCheckTimeout)
+	defer cancel()
+	key, found, err := repo.PortalAppInitiativeKey(ctx, appID)
+	switch {
+	case err != nil:
+		log.Warn("cannot verify the portal app at start-up", "app_id", appID, "error", err.Error())
+	case !found:
+		log.Warn("PLATFORM_PORTAL_APP_ID does not match any app: the portal exception is inactive", "app_id", appID)
+	case key != access.PlatformInitiativeKey:
+		log.Warn("PLATFORM_PORTAL_APP_ID belongs to another initiative: the portal exception is inactive",
+			"app_id", appID, "initiative_key", key, "required", access.PlatformInitiativeKey)
+	default:
+		log.Info("portal app verified", "app_id", appID)
 	}
 }

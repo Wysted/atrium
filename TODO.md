@@ -28,6 +28,10 @@ Pending work and open questions for the portal platform. Detailed context lives 
   `cmd/portal` with the embedded Nuxt 4 SPA (`platform/web/`), `/metrics`, the probe, and the audit of
   `RevokeUser` / `RevokeApp`. Create the frontend subagents when the web work starts.
 - [ ] **Non-browser clients for the portal API.** CLI and automation have no way to authenticate yet (block 6 open items).
+- [ ] **Flaky test database cleanup.** Under `go test -race ./...` the `DROP DATABASE ... WITH (FORCE)` in
+  `internal/testdb` sometimes exceeds its 30 s timeout (seen 2 of ~6 full runs on 2026-10-15, once across every
+  package at the same instant), failing the test and leaving `platform_test_*` databases behind. Investigate
+  (PostgreSQL I/O stalls under Docker/WSL, checkpoint on drop) before it hides a real failure.
 - [ ] **Reduce `platform_runtime`.** Once the portal owns administration, drop its write access to the authorization
   tables except what ForwardAuth and login need.
 - [ ] **Cookie prefix support in Safari.** `__Host-Http-` is enforced by Chrome 140+ and Firefox 143+; revisit Safari.

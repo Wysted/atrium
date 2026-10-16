@@ -3,6 +3,7 @@ package postgres_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -326,5 +327,204 @@ func TestRuntimeRoleSigningKeysUpdateIsColumnScoped(t *testing.T) {
 		if got := pgErrCode(err); got != tt.want {
 			t.Errorf("%s: code = %q (%v), want %q", tt.name, got, err, tt.want)
 		}
+	}
+}
+
+func TestPortalRolePrivileges(t *testing.T) {
+	t.Parallel()
+	pool := newTestDB(t)
+	w := world{pool: pool}
+	init := w.initiative(t, "platform", "active")
+	w.app(t, init, "portal.example.test")
+	mustExec(t, pool, `INSERT INTO signing_keys (kid, public_jwk, private_enc, kek_id, state)
+		VALUES (repeat('a', 43), '{}', '\x01', repeat('k', 22), 'next')`)
+
+	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
+	defer cancel()
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Release()
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(context.WithoutCancel(ctx)) //nolint:errcheck // best effort
+	if _, err := tx.Exec(ctx, "SET LOCAL ROLE platform_portal"); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name string
+		sql  string
+		want string
+	}{
+		{"select users", `SELECT count(*) FROM users`, ""},
+		{"update user status", `UPDATE users SET status = 'disabled'`, ""},
+		{"update user updated_at", `UPDATE users SET updated_at = now()`, ""},
+		{"update user google_sub", `UPDATE users SET google_sub = 'forged'`, codeInsufficientPrivs},
+		{"update user email", `UPDATE users SET email = 'x@example.com'`, codeInsufficientPrivs},
+		{"insert user", `INSERT INTO users (google_sub, email, name) VALUES ('s', 'e@example.com', 'n')`, codeInsufficientPrivs},
+		{"delete users", `DELETE FROM users`, codeInsufficientPrivs},
+		{"insert group", `INSERT INTO groups (key) VALUES ('g')`, ""},
+		{"update initiative", `UPDATE initiatives SET status = 'inactive'`, ""},
+		{"update apps status", `UPDATE apps SET status = 'disabled'`, ""},
+		{"update deployments probe", `UPDATE deployments SET last_probe_status = 'ok', last_probe_at = now(), last_seen_at = now()`, ""},
+		{"delete deployments", `DELETE FROM deployments`, ""},
+		{"select platform_admins", `SELECT count(*) FROM platform_admins`, ""},
+		{"insert platform_admins", `INSERT INTO platform_admins (user_id) VALUES (uuidv7())`, codeInsufficientPrivs},
+		{"insert audit", `INSERT INTO audit_events (action, target_type, target_id, initiative_id) VALUES ('x', 'y', 'z', uuidv7())`, ""},
+		{"select audit", `SELECT count(*) FROM audit_events`, ""},
+		{"update audit", `UPDATE audit_events SET action = 'tampered'`, codeInsufficientPrivs},
+		{"delete audit", `DELETE FROM audit_events`, codeInsufficientPrivs},
+		{"truncate audit", `TRUNCATE audit_events`, codeInsufficientPrivs},
+		{"select denials", `SELECT count(*) FROM access_denials`, ""},
+		{"insert denials", `INSERT INTO access_denials (host, reason) VALUES ('h', 'r')`, codeInsufficientPrivs},
+		{"select sessions", `SELECT id, user_id, created_at, last_seen_at, expires_at, ip, user_agent FROM sessions`, ""},
+		{"select sessions token_hash", `SELECT token_hash FROM sessions`, codeInsufficientPrivs},
+		{"select sessions star", `SELECT * FROM sessions`, codeInsufficientPrivs},
+		{"delete sessions by id", `DELETE FROM sessions WHERE id = uuidv7()`, ""},
+		{"delete sessions by user", `DELETE FROM sessions WHERE user_id = uuidv7() RETURNING id`, ""},
+		{"delete sessions by token_hash", `DELETE FROM sessions WHERE token_hash = '\x00'`, codeInsufficientPrivs},
+		{"select app_sessions", `SELECT id, session_id, app_id, host, created_at, expires_at FROM app_sessions`, ""},
+		{"select app_sessions token_hash", `SELECT token_hash FROM app_sessions`, codeInsufficientPrivs},
+		{"delete app_sessions by app", `DELETE FROM app_sessions WHERE app_id = 'app_X'`, ""},
+		{"delete app_sessions by session", `DELETE FROM app_sessions WHERE session_id = uuidv7()`, ""},
+		{"update sessions", `UPDATE sessions SET last_seen_at = now()`, codeInsufficientPrivs},
+		{"select signing_keys", `SELECT count(*) FROM signing_keys`, codeInsufficientPrivs},
+		{"update signing_keys", `UPDATE signing_keys SET state = 'active'`, codeInsufficientPrivs},
+		{"select oauth_flows", `SELECT count(*) FROM oauth_flows`, codeInsufficientPrivs},
+		{"select login_codes", `SELECT count(*) FROM login_codes`, codeInsufficientPrivs},
+		{"select schema_migrations", `SELECT count(*) FROM schema_migrations`, codeInsufficientPrivs},
+		{"create table", `CREATE TABLE rogue (x int)`, codeInsufficientPrivs},
+	}
+	for _, tt := range tests {
+		sp, err := tx.Begin(ctx) // a failed statement aborts the transaction: use savepoints
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = sp.Exec(ctx, tt.sql)
+		_ = sp.Rollback(ctx)
+		if got := pgErrCode(err); got != tt.want {
+			t.Errorf("%s: code = %q (%v), want %q", tt.name, got, err, tt.want)
+		}
+	}
+}
+
+func TestPortalSchemaChanges(t *testing.T) {
+	t.Parallel()
+	pool := newTestDB(t)
+	w := world{pool: pool}
+	init := w.initiative(t, "platform", "active")
+	app := w.app(t, init, "portal.example.test")
+
+	if got := scalar[string](t, pool, `SELECT status FROM apps WHERE id = $1`, app); got != "active" {
+		t.Fatalf("default app status = %q", got)
+	}
+	if err := exec(pool, `UPDATE apps SET status = 'deleted' WHERE id = $1`, app); pgErrCode(err) != "23514" {
+		t.Fatalf("invalid app status: err = %v, want check_violation", err)
+	}
+	for _, status := range []string{"ok", "unprotected", "unexpected", "unreachable"} {
+		mustExec(t, pool, `UPDATE deployments SET last_probe_status = $1, last_probe_at = now()`, status)
+	}
+	mustExec(t, pool, `UPDATE deployments SET last_probe_status = NULL`)
+	if err := exec(pool, `UPDATE deployments SET last_probe_status = 'weird'`); pgErrCode(err) != "23514" {
+		t.Fatalf("invalid probe status: err = %v, want check_violation", err)
+	}
+}
+
+// Every table the portal role is not meant to touch is denied by default, so a future table is covered
+// until someone grants it explicitly. PUBLIC has no table privileges and no function can be executed.
+func TestPortalRoleDeniedByDefault(t *testing.T) {
+	t.Parallel()
+	pool := newTestDB(t)
+	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
+	defer cancel()
+
+	// Tables with any grant to the portal, and the privileges it may hold on each table-wide.
+	allowed := map[string][]string{
+		"groups": {"SELECT", "INSERT", "UPDATE", "DELETE"}, "group_members": {"SELECT", "INSERT", "UPDATE", "DELETE"},
+		"initiatives": {"SELECT", "INSERT", "UPDATE", "DELETE"}, "initiative_roles": {"SELECT", "INSERT", "UPDATE", "DELETE"},
+		"apps": {"SELECT", "INSERT", "UPDATE", "DELETE"}, "deployments": {"SELECT", "INSERT", "UPDATE", "DELETE"},
+		"initiative_access": {"SELECT", "INSERT", "UPDATE", "DELETE"},
+		"users":             {"SELECT"}, "platform_admins": {"SELECT"}, "audit_events": {"SELECT", "INSERT"},
+		"access_denials": {"SELECT"}, "sessions": {"DELETE"}, "app_sessions": {"DELETE"},
+	}
+	rows, err := pool.Query(ctx, `SELECT tablename FROM pg_tables WHERE schemaname = 'public'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tables []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		tables = append(tables, name)
+	}
+	rows.Close()
+	if len(tables) == 0 {
+		t.Fatal("no tables found")
+	}
+	for _, tbl := range tables {
+		for _, priv := range []string{"SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"} {
+			got := scalar[bool](t, pool, `SELECT has_table_privilege('platform_portal', $1, $2)`, tbl, priv)
+			want := slices.Contains(allowed[tbl], priv)
+			if got != want {
+				t.Errorf("platform_portal %s on %s = %v, want %v", priv, tbl, got, want)
+			}
+			// PUBLIC (a role that is a member of nothing) has no table privileges either.
+			if pub := scalar[bool](t, pool,
+				`SELECT EXISTS (SELECT 1 FROM pg_class c, aclexplode(c.relacl) a
+				   WHERE c.oid = $1::regclass AND a.grantee = 0 AND a.privilege_type = $2)`, tbl, priv); pub {
+				t.Errorf("PUBLIC has %s on %s", priv, tbl)
+			}
+		}
+	}
+	for _, fn := range []string{"create_access_denials_partition(date)", "drop_expired_access_denials_partitions(integer)"} {
+		if scalar[bool](t, pool, `SELECT has_function_privilege('platform_portal', $1, 'EXECUTE')`, fn) {
+			t.Errorf("platform_portal can EXECUTE %s", fn)
+		}
+	}
+}
+
+// Telemetry columns of deployments must not flush the ForwardAuth caches; decision-relevant changes must.
+func TestDeploymentsNotifyOnlyOnDecisionChanges(t *testing.T) {
+	t.Parallel()
+	pool := newTestDB(t)
+	w := world{pool: pool}
+	in := w.initiative(t, "i", "active")
+	w.app(t, in, "a.example.test")
+	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
+	defer cancel()
+
+	listener, err := pool.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	defer listener.Release()
+	if _, err := listener.Exec(ctx, "LISTEN access_changed"); err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	// Notifications arrive in commit order and carry the table name. A sentinel on apps after the telemetry
+	// update makes the negative check deterministic: the first notification must be the sentinel's.
+	next := func() string {
+		wctx, wcancel := context.WithTimeout(ctx, 5*time.Second)
+		defer wcancel()
+		n, err := listener.Conn().WaitForNotification(wctx)
+		if err != nil {
+			t.Fatalf("no notification: %v", err)
+		}
+		return n.Payload
+	}
+	mustExec(t, pool, `UPDATE deployments SET last_seen_at = now(), last_probe_at = now(), last_probe_status = 'ok'`)
+	mustExec(t, pool, `UPDATE apps SET name = name`)
+	if got := next(); got != "apps" {
+		t.Fatalf("first notification payload = %q, want apps: telemetry update notified", got)
+	}
+	mustExec(t, pool, `UPDATE deployments SET host = 'b.example.test'`)
+	if got := next(); got != "deployments" {
+		t.Fatalf("host change payload = %q, want deployments", got)
 	}
 }

@@ -20,14 +20,16 @@ const (
 const WriteTimeout = 2 * time.Second
 
 // Event is one audit row. ActorID is the user id (empty: unknown); TargetID is the session id for
-// session events. Before and After are marshaled to jsonb (nil: NULL).
+// session events. InitiativeID scopes the event to an initiative (empty: NULL, a global target). Before and
+// After are marshaled to jsonb (nil: NULL).
 type Event struct {
-	ActorID    string
-	Action     string
-	TargetType string
-	TargetID   string
-	Before     any
-	After      any
+	ActorID      string
+	InitiativeID string
+	Action       string
+	TargetType   string
+	TargetID     string
+	Before       any
+	After        any
 }
 
 // Recorder appends events to the audit log.

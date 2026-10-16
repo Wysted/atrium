@@ -21,6 +21,7 @@ const (
 	ReasonUnknownUser        = "unknown_user"
 	ReasonUserDisabled       = "user_disabled"
 	ReasonInitiativeInactive = "initiative_inactive"
+	ReasonAppDisabled        = "app_disabled"
 	ReasonNoGrant            = "no_grant"
 	ReasonUnsupportedAction  = "unsupported_action"
 )
@@ -29,7 +30,12 @@ const (
 const (
 	UserStatusActive       = "active"
 	InitiativeStatusActive = "active"
+	AppStatusActive        = "active"
 )
+
+// PlatformInitiativeKey is the reserved initiative that owns the portal app. The portal exception only applies
+// to an app of this initiative, so a mistyped PLATFORM_PORTAL_APP_ID cannot open another initiative's app.
+const PlatformInitiativeKey = "platform"
 
 // Subject is the user asking for access. ID is the internal user UUID.
 type Subject struct {
@@ -70,10 +76,15 @@ type Facts struct {
 	HostKnown        bool
 	AppID            string
 	InitiativeID     string
+	InitiativeKey    string
 	InitiativeStatus string
-	UserFound        bool
-	UserStatus       string
-	Roles            []string // distinct role keys of the initiative that owns the app, sorted
+	AppStatus        string
+	// PortalApp is set by the Evaluator when the resolved app is the portal app (block 6). It is a fact, not
+	// configuration, so Decide stays a pure function of its arguments.
+	PortalApp  bool
+	UserFound  bool
+	UserStatus string
+	Roles      []string // distinct role keys of the initiative that owns the app, sorted
 }
 
 // FactsReader is the consumer-side port implemented by the storage adapter.
@@ -87,6 +98,9 @@ func NormalizeHost(host string) string {
 }
 
 // Decide is the pure decision function. It fails closed: anything not explicitly granted is a deny.
+// Precedence of deny reasons (first match wins): unknown_host, unknown_user, user_disabled,
+// initiative_inactive, app_disabled, then no_grant. The portal app (Facts.PortalApp) skips the grant check:
+// any active user gets an allow with empty roles, provided the app and its initiative are active.
 // Platform administrators get no special treatment here; admin does not imply app access.
 func Decide(req Request, f Facts) Decision {
 	if req.Action.Name != ActionAccess {
@@ -103,6 +117,12 @@ func Decide(req Request, f Facts) Decision {
 		d.Reason = ReasonUserDisabled
 	case f.InitiativeStatus != InitiativeStatusActive:
 		d.Reason = ReasonInitiativeInactive
+	case f.AppStatus != AppStatusActive:
+		d.Reason = ReasonAppDisabled
+	case f.PortalApp:
+		d.Allow = true
+		d.Reason = ReasonGranted
+		d.Roles = []string{}
 	case len(f.Roles) == 0:
 		d.Reason = ReasonNoGrant
 	default:
@@ -115,12 +135,25 @@ func Decide(req Request, f Facts) Decision {
 
 // Evaluator loads facts and applies Decide.
 type Evaluator struct {
-	facts FactsReader
+	facts       FactsReader
+	portalAppID string
+}
+
+// EvaluatorOption customizes an Evaluator.
+type EvaluatorOption func(*Evaluator)
+
+// WithPortalApp marks appID as the portal app (PLATFORM_PORTAL_APP_ID); empty means there is none.
+func WithPortalApp(appID string) EvaluatorOption {
+	return func(e *Evaluator) { e.portalAppID = appID }
 }
 
 // NewEvaluator builds an Evaluator over a FactsReader.
-func NewEvaluator(facts FactsReader) *Evaluator {
-	return &Evaluator{facts: facts}
+func NewEvaluator(facts FactsReader, opts ...EvaluatorOption) *Evaluator {
+	e := &Evaluator{facts: facts}
+	for _, o := range opts {
+		o(e)
+	}
+	return e
 }
 
 // Evaluate decides a request. A storage error is returned as an error, never as an allow;
@@ -134,5 +167,7 @@ func (e *Evaluator) Evaluate(ctx context.Context, req Request) (Decision, error)
 	if err != nil {
 		return Decision{}, fmt.Errorf("load access facts: %w", err)
 	}
+	facts.PortalApp = e.portalAppID != "" && facts.HostKnown && facts.AppID == e.portalAppID &&
+		facts.InitiativeKey == PlatformInitiativeKey
 	return Decide(req, facts), nil
 }

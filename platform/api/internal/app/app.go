@@ -33,9 +33,11 @@ type Config struct {
 	// Issuer is empty in production (GoogleIssuer) and set only by tests.
 	Google    *googlelogin.Config
 	FakeLogin bool
-	Pool      *pgxpool.Pool
-	Keyring   *keys.Keyring
-	CacheTTL  time.Duration // decision cache TTL; zero means the contract default
+	// PortalAppID is the id of the portal app (PLATFORM_PORTAL_APP_ID, block 6); empty means there is none.
+	PortalAppID string
+	Pool        *pgxpool.Pool
+	Keyring     *keys.Keyring
+	CacheTTL    time.Duration // decision cache TTL; zero means the contract default
 	// RequestTimeout is the per-request deadline of ForwardAuth and the auth host; zero means httpx.RequestTimeout.
 	RequestTimeout time.Duration
 	Logger         *slog.Logger
@@ -85,7 +87,7 @@ func New(cfg Config) (*App, error) {
 		AuthHost:       cfg.AuthHost,
 		Apps:           deployments,
 		Sessions:       sessions,
-		Evaluator:      access.NewEvaluator(postgres.NewAccessRepository(cfg.Pool)),
+		Evaluator:      access.NewEvaluator(postgres.NewAccessRepository(cfg.Pool), access.WithPortalApp(cfg.PortalAppID)),
 		Profiles:       users,
 		Denials:        postgres.NewDenialRepo(cfg.Pool),
 		Issuer:         issuer,

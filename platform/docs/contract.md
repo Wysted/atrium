@@ -340,6 +340,9 @@ Research notes: Engram `architecture/portal-web-stack-research`, `architecture/p
 - It is an app like any other: registered in `apps`/`deployments` under the reserved initiative `platform`, and it
   validates the assertion with `sdk/go` (`aud` = its app id). `PLATFORM_PORTAL_APP_ID` tells platform-api which app
   gets the "any active user" rule (block 2); the id is used instead of a host because hosts can change and be several.
+  The rule applies only to an app of the reserved initiative `platform`: the decision checks it every time (fail
+  closed), and platform-api logs a WARN at start-up if the id points elsewhere. `access_changed` is emitted by
+  `deployments` only on INSERT, DELETE or a change of host or app_id; telemetry columns do not emit it.
 - JSON API first (`/api/v1/*`, `application/problem+json` errors), web UI on top. The API also replaces
   `grant.sh`/`revoke.sh`. Permissions are always resolved by the API; the UI only hides what the caller cannot do.
 - Web UI in `platform/web/`: Nuxt 4 with `ssr: false` + `nuxi generate` (and `experimental.entryImportMap: false`),
@@ -436,7 +439,7 @@ Required tests: POST with `Sec-Fetch-Site: same-site` or `cross-site` -> 403; PO
 | `audit_events.initiative_id uuid NULL` (no FK, like the rest of the table) + index `(initiative_id, occurred_at)` | Managers filter by column instead of parsing jsonb |
 | `apps.status` active/disabled; new decision reason `app_disabled` | Deactivate instead of delete |
 | `deployments.last_seen_at`, `last_probe_at`, `last_probe_status` | Integration health |
-| Role `platform_portal`: CRUD on authorization tables, SELECT+INSERT on `audit_events`, SELECT on `access_denials`, SELECT+DELETE on `sessions` and `app_sessions`; nothing on `signing_keys`, `oauth_flows` or `login_codes` | Least privilege for the admin process |
+| Role `platform_portal`: CRUD on authorization tables except `users` (SELECT + `UPDATE (status, updated_at)` only: users are created just-in-time by platform-api and `google_sub` is never writable), SELECT+INSERT on `audit_events`, SELECT on `access_denials`, DELETE plus SELECT without the token hashes on `sessions` and `app_sessions`; nothing on `signing_keys`, `oauth_flows` or `login_codes` | Least privilege for the admin process |
 
 Deactivate instead of delete: initiatives through `status` (already exists); apps through `status`; a deployment is
 deleted (nothing references it, the audit keeps it); a role is deleted only without grants (the FK already blocks
