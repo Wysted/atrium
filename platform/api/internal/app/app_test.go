@@ -474,13 +474,17 @@ func TestAuthHostPages(t *testing.T) {
 			t.Fatal("session survived logout")
 		}
 	})
-	t.Run("JWKS is public on both listeners", func(t *testing.T) {
+	t.Run("JWKS is public on the auth host and on its own listener", func(t *testing.T) {
 		if r := b.auth(http.MethodGet, "/.well-known/jwks.json", nil, nil); r.status != http.StatusOK {
 			t.Fatalf("public JWKS: %d", r.status)
 		}
-		req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, e.internal.URL+"/.well-known/jwks.json", nil)
+		req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, e.jwks.URL+"/.well-known/jwks.json", nil)
 		if r := b.do(req); r.status != http.StatusOK || !strings.Contains(r.body, `"keys"`) {
-			t.Fatalf("internal JWKS: %d", r.status)
+			t.Fatalf("jwks listener JWKS: %d", r.status)
+		}
+		req, _ = http.NewRequestWithContext(t.Context(), http.MethodGet, e.internal.URL+"/.well-known/jwks.json", nil)
+		if r := b.do(req); r.status != http.StatusNotFound {
+			t.Fatalf("internal JWKS: %d, want 404", r.status)
 		}
 	})
 	t.Run("/forwardauth is not on the public listener", func(t *testing.T) {

@@ -14,6 +14,7 @@ func validEnv() map[string]string {
 		envInternalAddr: ":8081",
 		envPublicAddr:   ":8080",
 		envMetricsAddr:  ":9090",
+		envJWKSAddr:     ":8083",
 		envAuthHost:     "auth.apps.example.test",
 		envIssuer:       "https://auth.apps.example.test",
 		envKEKFile:      "/run/secrets/kek",
@@ -48,12 +49,16 @@ func TestLoadConfig(t *testing.T) {
 		"missing internal addr":        {func(m map[string]string) { delete(m, envInternalAddr) }, envInternalAddr},
 		"missing public addr":          {func(m map[string]string) { delete(m, envPublicAddr) }, envPublicAddr},
 		"missing metrics addr":         {func(m map[string]string) { delete(m, envMetricsAddr) }, envMetricsAddr},
-		"metrics on the internal addr": {func(m map[string]string) { m[envMetricsAddr] = m[envInternalAddr] }, "must differ"},
-		"metrics on the public addr":   {func(m map[string]string) { m[envMetricsAddr] = m[envPublicAddr] }, "must differ"},
+		"metrics on the internal addr": {func(m map[string]string) { m[envMetricsAddr] = m[envInternalAddr] }, "different ports"},
+		"metrics on the public addr":   {func(m map[string]string) { m[envMetricsAddr] = m[envPublicAddr] }, "different ports"},
+		"missing jwks addr":            {func(m map[string]string) { delete(m, envJWKSAddr) }, envJWKSAddr},
+		"jwks on the internal addr":    {func(m map[string]string) { m[envJWKSAddr] = m[envInternalAddr] }, "different ports"},
+		"jwks on the public addr":      {func(m map[string]string) { m[envJWKSAddr] = m[envPublicAddr] }, "different ports"},
+		"jwks on the metrics addr":     {func(m map[string]string) { m[envJWKSAddr] = m[envMetricsAddr] }, "different ports"},
 		"missing auth host":            {func(m map[string]string) { delete(m, envAuthHost) }, envAuthHost},
 		"missing issuer":               {func(m map[string]string) { delete(m, envIssuer) }, envIssuer},
 		"missing KEK file":             {func(m map[string]string) { delete(m, envKEKFile) }, envKEKFile},
-		"same addr":                    {func(m map[string]string) { m[envPublicAddr] = m[envInternalAddr] }, "must differ"},
+		"same addr":                    {func(m map[string]string) { m[envPublicAddr] = m[envInternalAddr] }, "different ports"},
 		"auth host with scheme":        {func(m map[string]string) { m[envAuthHost] = "https://auth.apps.example.test" }, envAuthHost},
 		"auth host uppercase":          {func(m map[string]string) { m[envAuthHost] = "Auth.Apps.Example.Test" }, envAuthHost},
 		"auth host with port":          {func(m map[string]string) { m[envAuthHost] = "auth.apps.example.test:443" }, envAuthHost},
@@ -95,7 +100,7 @@ func TestLoadConfig(t *testing.T) {
 	})
 	t.Run("reports every problem at once", func(t *testing.T) {
 		_, err := loadConfig(lookup(nil))
-		for _, name := range []string{envInternalAddr, envPublicAddr, envMetricsAddr, envAuthHost, envIssuer, envKEKFile} {
+		for _, name := range []string{envInternalAddr, envPublicAddr, envMetricsAddr, envJWKSAddr, envAuthHost, envIssuer, envKEKFile} {
 			if err == nil || !strings.Contains(err.Error(), name) {
 				t.Fatalf("err = %v, missing %s", err, name)
 			}

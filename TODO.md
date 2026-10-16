@@ -57,7 +57,7 @@ Pending work and open questions for the portal platform. Detailed context lives 
   with `deployments_host_valid` (anchored label regex, no all-digit last label, `octet_length <= 253`), added NOT VALID
   and validated in the same transaction so existing bad rows fail the migration loudly (remediation query in the
   migration). `TestDeploymentsHostCheckMatchesHostnameValid` runs a shared case list through both, as owner and portal.
-- [ ] **Separate JWKS listener for platform-api.** App namespaces reach platform-api's internal port 8081 for the JWKS,
+- [x] **Separate JWKS listener for platform-api.** Closed 2026-10-16. `PLATFORM_JWKS_ADDR` (required) serves only the JWKS; the internal listener answers 404 for it, so `/forwardauth` and `/readyz` stay off the port app namespaces reach. Original note: App namespaces reach platform-api's internal port 8081 for the JWKS,
   and a NetworkPolicy filters by port, not path, so they also reach `/forwardauth` and `/readyz`. Not exploitable
   today (an app holds no valid cookies for other hosts and app sessions are host-bound), but serving the JWKS on its
   own port would keep `/forwardauth` reachable only from Traefik.

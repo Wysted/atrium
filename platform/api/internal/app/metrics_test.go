@@ -89,7 +89,7 @@ func (e *env) get(base, path string) result {
 	return e.newBrowser().do(req)
 }
 
-// /metrics has a listener of its own: the internal one (ForwardAuth, JWKS) and the public one answer 404.
+// /metrics has a listener of its own: the internal one (ForwardAuth, probes), the JWKS one and the public one answer 404.
 func TestMetricsHaveTheirOwnListener(t *testing.T) {
 	e := newEnv(t, envOptions{})
 	e.newBrowser().forward(fwd{host: hostA, headers: navHeaders})
@@ -116,7 +116,7 @@ func TestMetricsHaveTheirOwnListener(t *testing.T) {
 		}
 	}
 
-	for name, base := range map[string]string{"internal": e.internal.URL, "public": e.public.URL} {
+	for name, base := range map[string]string{"internal": e.internal.URL, "public": e.public.URL, "jwks": e.jwks.URL} {
 		for _, path := range []string{"/metrics", "/metrics/", "/metrics?x=1"} {
 			r := e.get(base, path)
 			if r.status != http.StatusNotFound && r.status != http.StatusMovedPermanently {
@@ -131,6 +131,44 @@ func TestMetricsHaveTheirOwnListener(t *testing.T) {
 	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, e.metrics.URL+"/metrics", nil)
 	if r := e.newBrowser().do(req); r.status != http.StatusMethodNotAllowed {
 		t.Errorf("POST /metrics = %d, want 405", r.status)
+	}
+}
+
+// The JWKS has a listener of its own, the only port app namespaces reach: it serves nothing else, and neither
+// the internal listener nor the metrics one serves the JWKS.
+func TestJWKSHasItsOwnListener(t *testing.T) {
+	e := newEnv(t, envOptions{})
+
+	r := e.get(e.jwks.URL, jwks.Path)
+	if r.status != http.StatusOK || !strings.Contains(r.body, `"keys"`) {
+		t.Fatalf("jwks listener: status %d", r.status)
+	}
+	if got := r.header.Get("Content-Type"); got != "application/jwk-set+json" {
+		t.Errorf("Content-Type = %q", got)
+	}
+	if got := r.header.Get("Cache-Control"); got != "public, max-age=300" {
+		t.Errorf("Cache-Control = %q", got)
+	}
+	for _, path := range []string{"/forwardauth", "/healthz", "/readyz", "/metrics", "/", "/login"} {
+		if r := e.get(e.jwks.URL, path); r.status != http.StatusNotFound {
+			t.Errorf("jwks listener %s = %d, want 404", path, r.status)
+		}
+	}
+	for name, base := range map[string]string{"internal": e.internal.URL, "metrics": e.metrics.URL} {
+		if r := e.get(base, jwks.Path); r.status != http.StatusNotFound || strings.Contains(r.body, `"keys"`) {
+			t.Errorf("%s %s = %d, want 404", name, jwks.Path, r.status)
+		}
+	}
+	// The internal listener keeps ForwardAuth and the probes.
+	for _, path := range []string{"/healthz", "/readyz"} {
+		if r := e.get(e.internal.URL, path); r.status != http.StatusOK {
+			t.Errorf("internal %s = %d, want 200", path, r.status)
+		}
+	}
+	// Only GET is routed.
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, e.jwks.URL+jwks.Path, nil)
+	if r := e.newBrowser().do(req); r.status != http.StatusMethodNotAllowed {
+		t.Errorf("POST JWKS = %d, want 405", r.status)
 	}
 }
 
@@ -226,10 +264,10 @@ func TestMetricsCountDecisionsCachesLoginsAndLogouts(t *testing.T) {
 	}
 
 	// JWKS, per listener.
-	e.get(e.internal.URL, jwks.Path)
+	e.get(e.jwks.URL, jwks.Path)
 	e.get(e.public.URL, jwks.Path)
 	e.get(e.public.URL, jwks.Path)
-	for listener, want := range map[string]float64{"internal": 1, "public": 2} {
+	for listener, want := range map[string]float64{"jwks": 1, "public": 2} {
 		if got := e.metric("platform_jwks_requests_total", map[string]string{"listener": listener, "status_class": "2xx"}); got != want {
 			t.Errorf("JWKS requests on %s = %v, want %v", listener, got, want)
 		}
@@ -350,7 +388,7 @@ func TestMetricsCardinalityDoesNotGrowWithHostileInput(t *testing.T) {
 		case 5: // a random callback code
 			anon.forward(fwd{host: hostC, uri: "/_platform/callback?code=" + sentinel + hex(r), headers: navHeaders})
 		case 6: // random paths, methods and queries on every route of both listeners
-			for _, base := range []string{e.internal.URL, e.public.URL} {
+			for _, base := range []string{e.internal.URL, e.public.URL, e.jwks.URL} {
 				req, _ := http.NewRequestWithContext(t.Context(), "X"+strings.ToUpper(hex(r)), base+"/"+sentinel+hex(r)+"?"+sentinel+hex(r)+"=1", nil)
 				req.Host = sentinel + hex(r) + ".example.test"
 				anon.do(req)

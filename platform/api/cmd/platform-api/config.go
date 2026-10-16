@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"platform/api/internal/httpx"
 	"platform/api/internal/keys"
 	"platform/api/internal/secretfile"
 	"platform/api/internal/session"
@@ -22,6 +23,8 @@ const (
 	// envMetricsAddr is the listener of /metrics alone: a NetworkPolicy filters by port, so it cannot share one
 	// with ForwardAuth or the JWKS.
 	envMetricsAddr = "PLATFORM_METRICS_ADDR"
+	// envJWKSAddr is the listener of the JWKS alone, the only port app namespaces may reach.
+	envJWKSAddr    = "PLATFORM_JWKS_ADDR"
 	envAuthHost    = "PLATFORM_AUTH_HOST"
 	envIssuer      = "PLATFORM_ISSUER"
 	envKEKFile     = keys.KEKFileEnv // PLATFORM_KEK_FILE
@@ -55,6 +58,7 @@ type config struct {
 	InternalAddr string
 	PublicAddr   string
 	MetricsAddr  string
+	JWKSAddr     string
 	AuthHost     string
 	Issuer       string
 	KEKFile      string
@@ -91,19 +95,18 @@ func loadConfig(getenv func(string) string) (config, error) {
 		InternalAddr: required(envInternalAddr),
 		PublicAddr:   required(envPublicAddr),
 		MetricsAddr:  required(envMetricsAddr),
+		JWKSAddr:     required(envJWKSAddr),
 		AuthHost:     required(envAuthHost),
 		Issuer:       required(envIssuer),
 		KEKFile:      required(envKEKFile),
 		IdleTimeout:  session.DefaultIdleTimeout,
 	}
-	if c.InternalAddr != "" && c.InternalAddr == c.PublicAddr {
-		errs = append(errs, fmt.Errorf("%s and %s must differ: /forwardauth must never share a listener with the public routes", envInternalAddr, envPublicAddr))
-	}
-	for _, other := range []struct{ name, addr string }{{envInternalAddr, c.InternalAddr}, {envPublicAddr, c.PublicAddr}} {
-		if c.MetricsAddr != "" && c.MetricsAddr == other.addr {
-			errs = append(errs, fmt.Errorf("%s and %s must differ: /metrics must have a listener of its own", envMetricsAddr, other.name))
-		}
-	}
+	errs = append(errs, httpx.ListenerConflicts([]httpx.NamedAddr{
+		{Name: envInternalAddr, Addr: c.InternalAddr},
+		{Name: envPublicAddr, Addr: c.PublicAddr},
+		{Name: envMetricsAddr, Addr: c.MetricsAddr},
+		{Name: envJWKSAddr, Addr: c.JWKSAddr},
+	})...)
 	if c.AuthHost != "" && !hostPattern.MatchString(c.AuthHost) {
 		errs = append(errs, fmt.Errorf("%s must be a lowercase host without scheme, port or path", envAuthHost))
 	}

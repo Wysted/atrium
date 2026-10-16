@@ -19,7 +19,7 @@ import (
 	"platform/api/internal/postgres"
 )
 
-// shutdownTimeout is the single budget for the whole shutdown (both listeners, background jobs and the pool),
+// shutdownTimeout is the single budget for the whole shutdown (all listeners, background jobs and the pool),
 // kept under the 30 s terminationGracePeriodSeconds default of Kubernetes with margin.
 const shutdownTimeout = 20 * time.Second
 
@@ -113,6 +113,7 @@ func serve(ctx context.Context, cfg config, log *slog.Logger) error {
 		"internal": httpx.NewServer(cfg.InternalAddr, a.Internal),
 		"public":   httpx.NewServer(cfg.PublicAddr, a.Public),
 		"metrics":  httpx.NewServer(cfg.MetricsAddr, a.MetricsHandler),
+		"jwks":     httpx.NewServer(cfg.JWKSAddr, a.JWKSHandler),
 	}
 	failed := make(chan error, len(servers))
 	for name, srv := range servers {
@@ -131,7 +132,7 @@ func serve(ctx context.Context, cfg config, log *slog.Logger) error {
 	case runErr = <-failed:
 	}
 
-	// One context for both servers and the jobs: the budget is total, not per step.
+	// One context for all servers and the jobs: the budget is total, not per step.
 	var cancel context.CancelFunc
 	shutdownCtx, cancel = context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
 	defer cancel()

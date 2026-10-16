@@ -83,15 +83,16 @@ Traefik always calls `/forwardauth` with GET; the original method arrives only i
 
 ### Listeners
 
-platform-api serves two listeners so that `/forwardauth` is never reachable through a public route:
+platform-api serves four listeners so that `/forwardauth` is never reachable through a public route or from app namespaces:
 
 | Listener | Routes | Reachable from |
 |---|---|---|
-| internal | `/forwardauth`, `/.well-known/jwks.json`, `/healthz`, `/readyz` | Traefik (ForwardAuth) and app namespaces (JWKS) via NetworkPolicy |
+| internal | `/forwardauth`, `/healthz`, `/readyz` (answers 404 for the JWKS) | Traefik (ForwardAuth) and kubelet (probes) via NetworkPolicy; app namespaces cannot reach it |
+| jwks | `GET /.well-known/jwks.json` only (`PLATFORM_JWKS_ADDR`, required) | app namespaces and the portal namespace via NetworkPolicy |
 | public | auth host browser routes: `/login`, `/oauth2/callback`, `/logout`, signed-out page, `/.well-known/jwks.json` | Traefik IngressRoute for the auth host only |
 | metrics | `/metrics` only (`PLATFORM_METRICS_ADDR`, required) | the monitoring namespace only, via NetworkPolicy |
 
-A NetworkPolicy filters by port, never by path, so `/metrics` has a listener of its own: it cannot share one that Traefik or the app namespaces reach.
+A NetworkPolicy filters by port, never by path, so `/metrics` and the JWKS each have a listener of their own: neither can share one that Traefik or the app namespaces reach, and the app namespaces reach a port that serves nothing but the JWKS. The four addresses (`PLATFORM_INTERNAL_ADDR`, `PLATFORM_PUBLIC_ADDR`, `PLATFORM_METRICS_ADDR`, `PLATFORM_JWKS_ADDR`) are required and must use different ports (a wildcard host conflicts with any host on the same port).
 
 `/readyz` fails when the database is unreachable, when no signer is loaded, or on `KEKMismatch`.
 
@@ -204,7 +205,7 @@ The app is resolved only from `X-Forwarded-Host` (exact, lowercase) against `dep
 ### JWKS endpoint
 
 - `GET /.well-known/jwks.json` with `Cache-Control: max-age=300`; public keys only.
-- Apps fetch it through the in-cluster service URL, never through the public route, and refetch on unknown `kid` (rate limited, see block 1).
+- Apps fetch it from the JWKS listener (`PLATFORM_JWKS_ADDR`) through the in-cluster service URL, never through the public route, and refetch on unknown `kid` (rate limited, see block 1).
 
 ## 4. PostgreSQL data model (authorization)
 
@@ -609,9 +610,9 @@ Everything critical works inside the portal, with no external tool; standard out
 #### Metrics
 
 Both processes (`platform-api` and `portal`) serve `GET /metrics` in the Prometheus text format on a **dedicated
-metrics listener** (`PLATFORM_METRICS_ADDR`, `PORTAL_METRICS_ADDR`; both required and different from the other
-addresses of the process; same server timeouts). One rule for both: `/metrics` is never served on the public or the
-internal listener, which answer 404 (tests per process enforce it), because a NetworkPolicy cannot filter by path.
+metrics listener** (`PLATFORM_METRICS_ADDR`, `PORTAL_METRICS_ADDR`; both required and on a different port from the other
+addresses of the process; same server timeouts). One rule for both: `/metrics` is never served on the public, the
+internal or the JWKS listener, which answer 404 (tests per process enforce it), because a NetworkPolicy cannot filter by path.
 There is no authentication: the NetworkPolicy must allow only the monitoring namespace to reach the metrics port, and
 no IngressRoute may route to it. Each process uses its own registry (never the global default one) with the Go runtime and process
 collectors, built with `github.com/prometheus/client_golang` (pinned in `go.mod`).
@@ -634,7 +635,7 @@ platform-api (`platform_`):
 | `platform_forwardauth_cache_lookups_total` | counter | `cache` (`decision`, `host`, `negative_host`), `result` (`hit`, `miss`) |
 | `platform_logins_total` | counter | `outcome` (a fake login, development only, counts as `success`): `success`, `provider_refused`, `rejected`, `invalid_flow`, `failed`, `provider_unavailable`, `user_disabled`, `rate_limited`, `invalid_request`, `error` |
 | `platform_logouts_total` | counter | `via` (`app`, `auth_host`); only logouts that revoked a session |
-| `platform_jwks_requests_total` | counter | `listener` (`internal`, `public`), `status_class` |
+| `platform_jwks_requests_total` | counter | `listener` (`jwks`, `public`), `status_class` |
 | `platform_signing_key_loaded` | gauge | none; 1 when this replica can sign |
 | `platform_signing_key_active_age_seconds` | gauge | none; absent while no signer is loaded |
 | `platform_signing_key_kek_mismatch` | gauge | none; 1 when the KEK does not match the active or next keys |

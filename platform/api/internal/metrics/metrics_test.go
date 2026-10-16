@@ -174,7 +174,7 @@ func TestPlatformExposesTheCatalogWithItsTypes(t *testing.T) {
 	p.AuthHostLogout()
 	p.FlushFailed()
 	rec := httptest.NewRecorder()
-	p.CountJWKS(ListenerInternal, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })).
+	p.CountJWKS(ListenerJWKS, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })).
 		ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil))
 
 	want := map[string]dto.MetricType{
@@ -225,7 +225,7 @@ func TestPlatformExposesTheCatalogWithItsTypes(t *testing.T) {
 		{"platform_logins_total", map[string]string{"outcome": "rejected"}, 0},
 		{"platform_logouts_total", map[string]string{"via": "app"}, 1},
 		{"platform_logouts_total", map[string]string{"via": "auth_host"}, 1},
-		{"platform_jwks_requests_total", map[string]string{"listener": "internal", "status_class": "2xx"}, 1},
+		{"platform_jwks_requests_total", map[string]string{"listener": "jwks", "status_class": "2xx"}, 1},
 		{"platform_lastseen_flush_errors_total", map[string]string{}, 1},
 		{"platform_lastseen_pending_hosts", map[string]string{}, 3},
 		{"platform_unknown_host_drops_total", map[string]string{"reason": "invalid"}, 1},

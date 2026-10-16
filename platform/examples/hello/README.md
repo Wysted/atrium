@@ -19,7 +19,7 @@ Behavior: invalid or missing assertion gives 401, unavailable signing keys give 
 ## Run
 
     HELLO_LISTEN_ADDR=:8080 HELLO_APP_ID=app_... HELLO_ISSUER=https://auth.apps.example.com \
-    HELLO_JWKS_URL=http://platform-api.platform.svc:8080/.well-known/jwks.json ./hello
+    HELLO_JWKS_URL=http://platform-api-jwks.platform.svc.cluster.local:8083/.well-known/jwks.json ./hello
 
 Docker build (context is `platform/` because of `go.work`):
 

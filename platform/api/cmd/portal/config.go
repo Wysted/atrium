@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"platform/api/internal/httpx"
 	"platform/api/internal/webui"
 )
 
@@ -37,7 +38,7 @@ type config struct {
 	MetricsAddr  string
 	AppID        string // the portal's own app id: the aud of its assertions
 	Issuer       string // https://<auth host>, exact match on iss
-	JWKSURL      string // in-cluster URL of platform-api's JWKS (internal listener)
+	JWKSURL      string // in-cluster URL of platform-api's JWKS (JWKS listener of platform-api)
 	// AllowPrivilegedDBLogin is the value of PORTAL_ALLOW_PRIVILEGED_DB_LOGIN (development only).
 	AllowPrivilegedDBLogin bool
 	// Probe configures the integration probe (PORTAL_PROBE_*); Probe.Interval 0 disables it.
@@ -62,14 +63,11 @@ func loadConfig(getenv func(string) string) (config, error) {
 		Issuer:       required(envIssuer),
 		JWKSURL:      required(envJWKSURL),
 	}
-	if c.PublicAddr != "" && c.PublicAddr == c.InternalAddr {
-		errs = append(errs, fmt.Errorf("%s and %s must differ: the probes must never share a listener with the public routes", envPublicAddr, envInternalAddr))
-	}
-	for _, other := range []struct{ name, addr string }{{envPublicAddr, c.PublicAddr}, {envInternalAddr, c.InternalAddr}} {
-		if c.MetricsAddr != "" && c.MetricsAddr == other.addr {
-			errs = append(errs, fmt.Errorf("%s and %s must differ: /metrics must have a listener of its own", envMetricsAddr, other.name))
-		}
-	}
+	errs = append(errs, httpx.ListenerConflicts([]httpx.NamedAddr{
+		{Name: envPublicAddr, Addr: c.PublicAddr},
+		{Name: envInternalAddr, Addr: c.InternalAddr},
+		{Name: envMetricsAddr, Addr: c.MetricsAddr},
+	})...)
 	if c.AppID != "" && !appIDPattern.MatchString(c.AppID) {
 		errs = append(errs, fmt.Errorf("%s must match %s", envAppID, appIDPattern))
 	}

@@ -49,8 +49,11 @@ type Config struct {
 
 // App holds the handlers of both listeners and the hooks the binary wires to background work.
 type App struct {
-	// Internal serves /forwardauth, JWKS and probes (Traefik and app namespaces only).
+	// Internal serves /forwardauth and the probes (Traefik and kubelet only; no JWKS).
 	Internal http.Handler
+	// JWKSHandler serves the JWKS alone on its own listener (PLATFORM_JWKS_ADDR): the NetworkPolicy filters by port,
+	// not by path, so app namespaces get a port that cannot reach /forwardauth or /readyz.
+	JWKSHandler http.Handler
 	// Public serves the auth host browser routes through the IngressRoute.
 	Public http.Handler
 	// Sessions is exposed for the housekeeping job (idle timeout) and tests.
@@ -163,9 +166,10 @@ func New(cfg Config) (*App, error) {
 
 	internal := http.NewServeMux()
 	internal.Handle("/forwardauth", fa) // Traefik always uses GET, but any method must reach the decision code
-	internal.Handle(jwks.Route, pm.CountJWKS(metrics.ListenerInternal, jwks.Handler(cfg.Keyring)))
 	internal.Handle("GET "+health.PathLive, health.Live())
 	internal.Handle("GET "+health.PathReady, health.Ready(cfg.Pool, cfg.Keyring, log))
+	jwksMux := http.NewServeMux()
+	jwksMux.Handle(jwks.Route, pm.CountJWKS(metrics.ListenerJWKS, jwks.Handler(cfg.Keyring)))
 	mux := http.NewServeMux()
 	mux.Handle(metrics.Route, metrics.Handler(reg))
 
@@ -176,6 +180,7 @@ func New(cfg Config) (*App, error) {
 	return &App{
 		Internal:         httpx.Recover(log, internal),
 		Public:           httpx.Recover(log, public),
+		JWKSHandler:      httpx.Recover(log, jwksMux),
 		Sessions:         sessions,
 		Login:            login,
 		InvalidateAccess: fa.Invalidate,

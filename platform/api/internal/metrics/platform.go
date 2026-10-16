@@ -16,8 +16,8 @@ import (
 
 // Listeners of platform-api, the label of the JWKS counter.
 const (
-	ListenerInternal = "internal"
-	ListenerPublic   = "public"
+	ListenerJWKS   = "jwks"
+	ListenerPublic = "public"
 )
 
 // Closed sets of the platform-api labels. The constants are the ones the producing packages use.
@@ -40,7 +40,7 @@ var (
 		authhost.LoginInvalidRequest, authhost.LoginError,
 	}
 	loginOutcomes = newSet(logins...)
-	listeners     = newSet(ListenerInternal, ListenerPublic)
+	listeners     = newSet(ListenerJWKS, ListenerPublic)
 )
 
 // Values of the logout "via" label.

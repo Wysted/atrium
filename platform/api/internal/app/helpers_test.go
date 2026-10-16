@@ -85,6 +85,7 @@ type env struct {
 	internal *httptest.Server
 	public   *httptest.Server
 	metrics  *httptest.Server
+	jwks     *httptest.Server
 	logs     *syncBuffer
 	client   *http.Client
 	google   *fakeGoogle
@@ -152,6 +153,7 @@ func newEnv(t *testing.T, opts envOptions) *env {
 	e.internal = httptest.NewServer(a.Internal)
 	e.public = httptest.NewServer(a.Public)
 	e.metrics = httptest.NewServer(a.MetricsHandler)
+	e.jwks = httptest.NewServer(a.JWKSHandler)
 	e.client = &http.Client{
 		Timeout:       testTO,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
@@ -159,6 +161,7 @@ func newEnv(t *testing.T, opts envOptions) *env {
 	t.Cleanup(e.internal.Close)
 	t.Cleanup(e.public.Close)
 	t.Cleanup(e.metrics.Close)
+	t.Cleanup(e.jwks.Close)
 
 	listenCtx, stop := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
@@ -235,7 +238,7 @@ func (e *env) count(sql string, args ...any) int {
 
 func (e *env) verifier(audience string) *platformauth.Verifier {
 	e.t.Helper()
-	v, err := platformauth.NewVerifier(platformauth.Config{Issuer: issuerURL, Audience: audience, JWKSURL: e.internal.URL + jwks.Path})
+	v, err := platformauth.NewVerifier(platformauth.Config{Issuer: issuerURL, Audience: audience, JWKSURL: e.jwks.URL + jwks.Path})
 	if err != nil {
 		e.t.Fatal(err)
 	}
