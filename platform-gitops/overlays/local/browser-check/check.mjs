@@ -20,6 +20,13 @@ const MARKER = 'Demo (browser check)'
 const DAVE = { email: 'dave@example.com', name: 'dave' }
 const SMOKE_ROLE = 'smoke-role' // created and deleted on demo by the roles scenario
 const LAST_MANAGER_COPY = 'This is the last active manager of the initiative. Grant another manager first.'
+const SMOKE_HOST_INPUT = 'Smoke-Host.apps.wysted.dev' // mixed case on purpose: the UI trims and lowercases it
+const SMOKE_HOST = 'smoke-host.apps.wysted.dev'
+const MARKER_APP = 'hello-a (browser check)'
+const RESERVED_COPY = 'This host is reserved for the sign-in service.'
+const TAKEN_COPY = 'This host is already used by another app.'
+const PORTAL_DISABLE_COPY = 'The portal app cannot be disabled.'
+const PORTAL_LAST_HOST_COPY = 'The portal app needs at least one host.'
 const NOT_FOUND_TEXT ='Page not found' // app/error.vue for a client route without a page
 
 // Console errors tolerated, by substring, ONLY in the unknown-route scenario. NUXT_E1005 ("Error caught during app
@@ -361,7 +368,7 @@ try {
   docs.length = 0
   const subnav = page.getByRole('navigation', { name: 'Initiative', exact: true })
   const currentLinks = async () => subnav.locator('[aria-current=page]').allInnerTexts()
-  check('sub-nav: links Overview, Grants, Roles', JSON.stringify(await subnav.getByRole('link').allInnerTexts().then((t) => t.map((s) => s.trim()))) === JSON.stringify(['Overview', 'Grants', 'Roles']))
+  check('sub-nav: links Overview, Grants, Roles, Apps', JSON.stringify(await subnav.getByRole('link').allInnerTexts().then((t) => t.map((s) => s.trim()))) === JSON.stringify(['Overview', 'Grants', 'Roles', 'Apps']))
   check('sub-nav: Overview is current at /admin/initiatives/<id>', JSON.stringify(await currentLinks()) === '["Overview"]', JSON.stringify(await currentLinks()))
   for (const [name, suffix] of [['Grants', '/grants'], ['Roles', '/roles'], ['Overview', '']]) {
     await subnav.getByRole('link', { name, exact: true }).click()
@@ -505,6 +512,202 @@ try {
   await page.getByRole('table').getByRole('row').nth(1).waitFor({ timeout: DATA_TIMEOUT })
   const endState = await snapshot()
   check('demo roles and grants (API) equal the starting set', endState === startState, `${startState} != ${endState}`)
+  // ---- 5d-2b: initiative apps and deployments. Idempotent: "New app" is opened and CANCELLED, never submitted (creating an app is
+  // not idempotent); the temporary rename and host are undone, and the apps/deployments of demo and platform (through the API)
+  // are compared before and after. Leftovers of an interrupted run are removed first.
+  console.log('  -- admin: demo Apps (list, New app cancelled, rename round trip, add/remove host, reserved and duplicate hosts)')
+  await login(ADMIN.email)
+  await page.goto(`${BASE}/admin/initiatives`)
+  await page.getByRole('table').getByRole('row').nth(1).waitFor({ timeout: DATA_TIMEOUT })
+  const platformId = ((await page.getByRole('table').getByRole('link', { name: 'Platform', exact: true }).getAttribute('href')) ?? '').split('/').pop()
+  check('platform initiative id captured', !!platformId)
+  const apiSend = (method, path, body) => page.evaluate(async ([m, p, b]) => {
+    const r = await fetch(`/api/v1${p}`, { method: m, headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, body: JSON.stringify(b) })
+    return { status: r.status }
+  }, [method, path, body])
+  const appsOf = (id) => apiAll(`/initiatives/${id}/apps`, 'apps')
+  const appsSnapshot = async () => JSON.stringify(await Promise.all([demoId, platformId].map(async (id) => (await appsOf(id))
+    .map((a) => `${a.id}|${a.name}|${a.status}|${a.deployments.map((d) => d.host).sort().join(',')}`).sort())))
+  for (const a of await appsOf(demoId)) {
+    for (const d of a.deployments.filter((d) => d.host === SMOKE_HOST)) await apiCall('DELETE', `/deployments/${d.id}`)
+    if (a.name === MARKER_APP) await apiSend('PATCH', `/apps/${a.id}`, { name: 'hello-a' })
+  }
+  const appsStart = await appsSnapshot()
+  console.log(`  (demo and platform apps at start: ${appsStart})`)
+  const helloA = (await appsOf(demoId)).find((a) => a.name === 'hello-a')
+  check('seed: demo has the app "hello-a" with its host', !!helloA && helloA.deployments.some((d) => d.host === ALICE.apps[0].host))
+  const portalApp = (await appsOf(platformId))[0]
+  check('seed: platform has exactly the portal app', (await appsOf(platformId)).length === 1 && !!portalApp)
+
+  const appsMutations = []
+  page.on('request', (r) => { if (r.method() !== 'GET' && r.method() !== 'HEAD') appsMutations.push(`${r.method()} ${new URL(r.url()).pathname}`) })
+  const appRow = (app) => page.getByRole('table').getByRole('row').filter({ hasText: app.id })
+  const appsDlg = () => page.getByRole('dialog')
+  const appsAlert = () => page.getByRole('alertdialog')
+  const inDialog = () => page.evaluate(() => !!document.activeElement?.closest('[role=dialog]'))
+  const openAddHost = async (label) => {
+    await appRow(helloA).getByRole('button', { name: `Add a host to app ${label}`, exact: true }).click()
+    await appsDlg().waitFor({ timeout: DATA_TIMEOUT })
+  }
+  const hostPost = `${BASE}/api/v1/apps/${helloA?.id}/deployments`
+
+  reset()
+  await page.goto(`${BASE}/admin/initiatives/${demoId}`)
+  await page.getByRole('heading', { level: 1, name: 'Demo', exact: true }).waitFor({ timeout: DATA_TIMEOUT })
+  await page.getByRole('navigation', { name: 'Initiative', exact: true }).getByRole('link', { name: 'Apps', exact: true }).click()
+  await page.waitForURL(`${BASE}/admin/initiatives/${demoId}/apps`, { timeout: DATA_TIMEOUT })
+  await appRow(helloA).waitFor({ timeout: DATA_TIMEOUT })
+  check('apps: sub-nav current is Apps', JSON.stringify(await page.getByRole('navigation', { name: 'Initiative', exact: true }).locator('[aria-current=page]').allInnerTexts()) === '["Apps"]')
+  check('apps: hello-a listed once with status Active', (await appRow(helloA).count()) === 1 && (await appRow(helloA).innerText()).includes('Active'))
+  const hostLink = appRow(helloA).getByRole('link', { name: ALICE.apps[0].host })
+  check(`apps: hello-a host is a link to https://${ALICE.apps[0].host}/`, (await hostLink.getAttribute('href')) === `https://${ALICE.apps[0].host}/`, String(await hostLink.getAttribute('href')))
+  await checkStyled('apps (admin)')
+  await report('apps (admin)')
+
+  reset()
+  appsMutations.length = 0
+  const newApp = page.getByRole('button', { name: 'New app', exact: true })
+  await newApp.click()
+  await appsDlg().waitFor({ timeout: DATA_TIMEOUT })
+  check('new app dialog: focus is inside', await inDialog())
+  check('new app dialog: initial focus is the Name input', await appsDlg().getByRole('textbox', { name: /^Name/ }).evaluate((el) => el === document.activeElement))
+  await report('new app dialog (open)')
+  await appsDlg().getByRole('button', { name: 'Cancel', exact: true }).click() // NEVER submitted
+  await appsDlg().waitFor({ state: 'detached', timeout: DATA_TIMEOUT })
+  check('new app dialog: Cancel returns focus to the trigger', await newApp.evaluate((el) => el === document.activeElement))
+  check('new app dialog: no mutation request', appsMutations.length === 0, JSON.stringify(appsMutations))
+  check('new app dialog: the app count is unchanged (API)', (await appsOf(demoId)).length === 1)
+
+  console.log('  -- admin: rename hello-a to a marker and back')
+  reset()
+  let appRenamed = false
+  try {
+    await appRow(helloA).getByRole('button', { name: 'Rename app hello-a', exact: true }).click()
+    await appsDlg().waitFor({ timeout: DATA_TIMEOUT })
+    check('rename dialog: initial focus is the Name input', await appsDlg().getByRole('textbox', { name: /^Name/ }).evaluate((el) => el === document.activeElement))
+    await appsDlg().getByRole('textbox', { name: /^Name/ }).fill(MARKER_APP)
+    await appsDlg().getByRole('button', { name: 'Save name', exact: true }).click()
+    appRenamed = true
+    await appsDlg().waitFor({ state: 'detached', timeout: DATA_TIMEOUT })
+    await appRow(helloA).getByText(MARKER_APP, { exact: true }).waitFor({ timeout: DATA_TIMEOUT })
+    check(`apps rename: "${MARKER_APP}" shown, id kept`, (await appRow(helloA).innerText()).includes(helloA.id))
+    check('apps rename: the API has the marker', (await appsOf(demoId)).some((a) => a.id === helloA.id && a.name === MARKER_APP))
+    await report('apps rename')
+  } finally {
+    if (appRenamed) {
+      reset()
+      await appRow(helloA).getByRole('button', { name: `Rename app ${MARKER_APP}`, exact: true }).click()
+      await appsDlg().waitFor({ timeout: DATA_TIMEOUT })
+      await appsDlg().getByRole('textbox', { name: /^Name/ }).fill('hello-a')
+      await appsDlg().getByRole('button', { name: 'Save name', exact: true }).click()
+      await appsDlg().waitFor({ state: 'detached', timeout: DATA_TIMEOUT })
+      await appRow(helloA).getByText('hello-a', { exact: true }).waitFor({ timeout: DATA_TIMEOUT })
+      check('apps rename: original name "hello-a" restored', (await appsOf(demoId)).some((a) => a.id === helloA.id && a.name === 'hello-a'))
+      await report('apps rename back')
+    }
+  }
+
+  console.log('  -- admin: add host (mixed case -> lowercased), screenshot, remove it behind a confirmation')
+  reset()
+  let hostAdded = false
+  try {
+    await openAddHost('hello-a')
+    check('add host dialog: focus is inside', await inDialog())
+    check('add host dialog: initial focus is the Host input', await appsDlg().getByRole('textbox', { name: /^Host/ }).evaluate((el) => el === document.activeElement))
+    await appsDlg().getByRole('textbox', { name: /^Host/ }).fill(`  ${SMOKE_HOST_INPUT}  `)
+    await page.screenshot({ path: `${OUT}/apps-add-host-dialog.png`, fullPage: true })
+    await report('add host dialog (open)')
+    await appsDlg().getByRole('button', { name: 'Add host', exact: true }).click()
+    hostAdded = true
+    await appsDlg().waitFor({ state: 'detached', timeout: DATA_TIMEOUT })
+    await appRow(helloA).getByRole('link', { name: SMOKE_HOST }).waitFor({ timeout: DATA_TIMEOUT })
+    check(`add host: shown lowercased as ${SMOKE_HOST}`, (await appRow(helloA).getByRole('link', { name: SMOKE_HOST }).getAttribute('href')) === `https://${SMOKE_HOST}/`)
+    check('add host: the API has the lowercase host only', (await appsOf(demoId)).some((a) => a.id === helloA.id && a.deployments.some((d) => d.host === SMOKE_HOST) && !a.deployments.some((d) => d.host === SMOKE_HOST_INPUT)))
+    await report('add host')
+    reset()
+    await appRow(helloA).getByRole('button', { name: `Remove host ${SMOKE_HOST}`, exact: true }).click()
+    await appsAlert().waitFor({ timeout: DATA_TIMEOUT })
+    check('remove host: confirm dialog (alertdialog) visible, focus inside', await page.evaluate(() => !!document.activeElement?.closest('[role=alertdialog]')))
+    await appsAlert().getByRole('button', { name: 'Remove host', exact: true }).click()
+    await appsAlert().waitFor({ state: 'detached', timeout: DATA_TIMEOUT })
+    hostAdded = false
+    await appRow(helloA).getByRole('link', { name: SMOKE_HOST }).waitFor({ state: 'detached', timeout: DATA_TIMEOUT })
+    check(`remove host: ${SMOKE_HOST} gone (list and API)`, !(await appsOf(demoId)).some((a) => a.deployments.some((d) => d.host === SMOKE_HOST)))
+    await report('remove host')
+  } finally {
+    if (hostAdded) for (const a of await appsOf(demoId)) for (const d of a.deployments.filter((d) => d.host === SMOKE_HOST)) await apiCall('DELETE', `/deployments/${d.id}`)
+  }
+
+  console.log('  -- admin: reserved auth host -> 422 copy; hello-b host -> 409 duplicate copy; nothing added')
+  for (const [label, host, copy, status] of [['auth host', AUTH_HOST, RESERVED_COPY, 422], ['hello-b host', ALICE.apps[1].host, TAKEN_COPY, 409]]) {
+    reset()
+    await openAddHost('hello-a')
+    await appsDlg().getByRole('textbox', { name: /^Host/ }).fill(host)
+    await appsDlg().getByRole('button', { name: 'Add host', exact: true }).click()
+    await appsDlg().getByText(copy).first().waitFor({ timeout: DATA_TIMEOUT })
+    check(`add ${label}: copy "${copy}" shown and the dialog stays open`, await appsDlg().isVisible())
+    const failed = `${hostPost} HTTP ${status}`
+    check(`add ${label}: the API answered ${status}`, failedRequests.includes(failed), JSON.stringify(failedRequests))
+    await report(`add ${label}`, { tolerated: [`status of ${status}`], toleratedRequests: [failed] })
+    await appsDlg().getByRole('button', { name: 'Cancel', exact: true }).click()
+    await appsDlg().waitFor({ state: 'detached', timeout: DATA_TIMEOUT })
+    check(`add ${label}: nothing added to hello-a (API)`, (await appsOf(demoId)).every((a) => a.id !== helloA.id || a.deployments.map((d) => d.host).join() === ALICE.apps[0].host))
+  }
+
+  console.log('  -- admin: platform Apps (portal app: disable -> 409, last host -> 409)')
+  reset()
+  await page.goto(`${BASE}/admin/initiatives/${platformId}/apps`)
+  await appRow(portalApp).waitFor({ timeout: DATA_TIMEOUT })
+  check('platform apps: portal app listed with status Active', (await appRow(portalApp).innerText()).includes('Active'))
+  await report('platform apps')
+  reset()
+  await appRow(portalApp).getByRole('button', { name: /^Disable app /, }).click()
+  await appsAlert().waitFor({ timeout: DATA_TIMEOUT })
+  await appsAlert().getByRole('button', { name: 'Disable app', exact: true }).click()
+  await appsAlert().getByText(PORTAL_DISABLE_COPY).waitFor({ timeout: DATA_TIMEOUT })
+  const disable409 = `${BASE}/api/v1/apps/${portalApp.id} HTTP 409`
+  check(`portal disable: copy "${PORTAL_DISABLE_COPY}" shown`, true)
+  check('portal disable: the API answered 409', failedRequests.includes(disable409), JSON.stringify(failedRequests))
+  await report('portal disable 409', { tolerated: ['status of 409'], toleratedRequests: [disable409] })
+  await appsAlert().getByRole('button', { name: 'Cancel', exact: true }).click()
+  await appsAlert().waitFor({ state: 'detached', timeout: DATA_TIMEOUT })
+  check('portal disable: status stays Active (list and API)', (await appRow(portalApp).innerText()).includes('Active') && (await appsOf(platformId))[0].status === 'active')
+  if (portalApp.deployments.length === 1) {
+    const portalHost = portalApp.deployments[0]
+    reset()
+    await appRow(portalApp).getByRole('button', { name: `Remove host ${portalHost.host}`, exact: true }).click()
+    await appsAlert().waitFor({ timeout: DATA_TIMEOUT })
+    await appsAlert().getByRole('button', { name: 'Remove host', exact: true }).click()
+    await appsAlert().getByText(PORTAL_LAST_HOST_COPY).waitFor({ timeout: DATA_TIMEOUT })
+    const remove409 = `${BASE}/api/v1/deployments/${portalHost.id} HTTP 409`
+    check(`portal last host: copy "${PORTAL_LAST_HOST_COPY}" shown`, true)
+    check('portal last host: the API answered 409', failedRequests.includes(remove409), JSON.stringify(failedRequests))
+    await report('portal last host 409', { tolerated: ['status of 409'], toleratedRequests: [remove409] })
+    await appsAlert().getByRole('button', { name: 'Cancel', exact: true }).click()
+    await appsAlert().waitFor({ state: 'detached', timeout: DATA_TIMEOUT })
+    check('portal last host: the host stays (list and API)', (await appRow(portalApp).getByRole('link', { name: portalHost.host }).count()) === 1 && (await appsOf(platformId))[0].deployments.length === 1)
+  } else {
+    console.log(`  SKIP: portal remove-host case (the portal app has ${portalApp.deployments.length} hosts, not exactly one; a real portal host is never removed)`)
+  }
+
+  console.log('  -- dave (manager of demo): Apps tab is read-only')
+  await login(DAVE.email)
+  reset()
+  await page.goto(`${BASE}/admin/initiatives/${demoId}/apps`)
+  await appRow(helloA).waitFor({ timeout: DATA_TIMEOUT })
+  check('dave apps: sub-nav current is Apps', JSON.stringify(await page.getByRole('navigation', { name: 'Initiative', exact: true }).locator('[aria-current=page]').allInnerTexts()) === '["Apps"]')
+  check('dave apps: hello-a listed with its host link', (await appRow(helloA).getByRole('link', { name: ALICE.apps[0].host }).getAttribute('href')) === `https://${ALICE.apps[0].host}/`)
+  for (const name of [/^New app/, /^Rename/, /^Disable/, /^Enable/, /^Add (a )?host/, /^Remove host/]) check(`dave apps: no button ${name}`, (await page.getByRole('button', { name }).count()) === 0)
+  check('dave apps: read-only notice', (await bodyText()).includes('Only platform administrators change apps and their hosts'))
+  await page.screenshot({ path: `${OUT}/apps-manager.png`, fullPage: true })
+  await report('apps (dave)')
+
+  console.log('  -- admin: demo and platform apps/deployments equal the starting set')
+  await login(ADMIN.email)
+  await page.goto(`${BASE}/admin/initiatives`)
+  await page.getByRole('table').getByRole('row').nth(1).waitFor({ timeout: DATA_TIMEOUT })
+  const appsEnd = await appsSnapshot()
+  check('demo and platform apps/deployments (API) equal the starting set', appsEnd === appsStart, `${appsStart} != ${appsEnd}`)
 } catch (e) {
   fail(`browser scenario aborted: ${e.message.split('\n')[0]} (url ${page.url().split('?')[0]})`)
   await page.screenshot({ path: `${OUT}/aborted.png` }).catch(() => {})
