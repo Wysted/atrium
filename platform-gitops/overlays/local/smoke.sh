@@ -291,10 +291,31 @@ probe() { # probe <ns> <pod> <url>: HTTP status or 000
 wait_probe() { # wait_probe <ns> <pod> <url> <want> [timeout-s]: poll until the status is <want> (positive controls only)
   local got="" end=$(( $(date +%s) + ${5:-30} ))
   while (( $(date +%s) < end )); do
-    got="$(probe "$1" "$2" "$3")"; [[ "$got" == "$4" ]] && break; sleep 1
+    got="$(${WAIT_FN:-probe} "$1" "$2" "$3")"; [[ "$got" == "$4" ]] && break; sleep 1
   done
   echo "$got"
 }
+# JWKS listener speaks HTTPS only. The local CA is streamed into the pod's curl on stdin (no file in the pod, no mount).
+JWKS_CA=.tools/secrets/k3d-jwks-ca.crt
+JWKS_SVC=platform-api-jwks.platform.svc.cluster.local
+JWKS_URL=https://$JWKS_SVC:8083/.well-known/jwks.json
+probe_tls() { # probe_tls <ns> <pod> <url>: HTTP status or 000, server certificate verified against the local CA
+  $K -n "$1" exec -i "$2" -- curl -s -o /dev/null --max-time 4 --cacert /dev/stdin -w '%{http_code}' "$3" < "$JWKS_CA" 2>/dev/null || true
+}
+probe_tlsk() { # like probe_tls, certificate NOT verified (pod-IP URLs, where the SAN cannot match): reachability only
+  $K -n "$1" exec "$2" -- curl -sk -o /dev/null --max-time 4 -w '%{http_code}' "$3" 2>/dev/null || true
+}
+tls_rc() { # tls_rc <ns> <pod> <ca|noca> <curl args...>: curl exit code (0 ok, 60 verification failed, 35 handshake failed, 7 refused/blocked, 28 timeout)
+  local ns="$1" pod="$2" mode="$3"; shift 3
+  if [[ "$mode" == ca ]]; then
+    $K -n "$ns" exec -i "$pod" -- curl -s -o /dev/null --max-time 4 --cacert /dev/stdin "$@" < "$JWKS_CA" >/dev/null 2>&1
+  else
+    $K -n "$ns" exec "$pod" -- curl -s -o /dev/null --max-time 4 "$@" >/dev/null 2>&1
+  fi
+  echo $?
+}
+wait_probe_tls() { WAIT_FN=probe_tls wait_probe "$@"; }
+wait_probe_tlsk() { WAIT_FN=probe_tlsk wait_probe "$@"; }
 probe_tcp() { # probe_tcp <ns> <pod> <host> <port>: connected / blocked / dns-error (curl 6: the name did not resolve)
   local rc
   rc="$($K -n "$1" exec "$2" -- sh -c "curl -s --max-time 4 -o /dev/null telnet://$3:$4 </dev/null; echo \$?" 2>/dev/null)"
@@ -308,12 +329,12 @@ check "hello-a pod -> platform-db:5432 (egress)" "$(probe_tcp hello-a probe-hell
 check "hello-a pod -> hello-b" "$(probe hello-a probe-hello http://hello.hello-b.svc.cluster.local:8080/healthz)" 000
 check "hello-a pod -> platform-api-public:8080 (not allowed)" "$(probe hello-a probe-hello http://platform-api-public.platform.svc.cluster.local:8080/login)" 000
 echo "  -- positive controls:"
-check "hello-a pod -> JWKS on platform-api-jwks:8083" "$(probe hello-a probe-hello http://platform-api-jwks.platform.svc.cluster.local:8083/.well-known/jwks.json)" 200
+check "hello-a pod -> JWKS on platform-api-jwks:8083" "$(probe_tls hello-a probe-hello $JWKS_URL)" 200
 check "Traefik-labelled pod -> platform-api-internal /healthz (8081)" "$(probe traefik probe-traefik http://platform-api-internal.platform.svc.cluster.local:8081/healthz)" 200
 check "platform-api reaches PostgreSQL (readyz via internal listener, from Traefik)" "$(probe traefik probe-traefik http://platform-api-internal.platform.svc.cluster.local:8081/readyz)" 200
 check "internal listener does not serve the JWKS (404)" "$(probe traefik probe-traefik http://platform-api-internal.platform.svc.cluster.local:8081/.well-known/jwks.json)" 404
 check "hello-a pod -> platform-api-internal:8081 /healthz (app namespaces cannot reach it)" "$(probe hello-a probe-hello http://platform-api-internal.platform.svc.cluster.local:8081/healthz)" 000
-check "Traefik-labelled pod -> platform-api-jwks:8083 (Traefik does not need it)" "$(probe traefik probe-traefik http://platform-api-jwks.platform.svc.cluster.local:8083/.well-known/jwks.json)" 000
+check "Traefik-labelled pod -> platform-api-jwks:8083 (Traefik does not need it)" "$(probe_tls traefik probe-traefik $JWKS_URL)" 000
 
 section "10. Pods: no ServiceAccount token, DB role, KEK mode"
 for target in "platform deploy/platform-api" "portal deploy/portal" "hello-a deploy/hello" "hello-b deploy/hello" "platform-db statefulset/postgres"; do
@@ -490,15 +511,15 @@ metrics_up() { # metrics_up <ns> <pod>: the metrics listener serves go_goroutine
 }
 echo "  platform-api pods: $PA_PODS; portal pods: $PO_PODS"
 sleep 5
-check "hello-a: JWKS on platform-api-jwks:8083 (positive control)" "$(wait_probe hello-a probe-hello http://platform-api-jwks.platform.svc.cluster.local:8083/.well-known/jwks.json 200)" 200
-check "smoke-app: JWKS on platform-api-jwks:8083 (positive control)" "$(wait_probe smoke-app probe-open http://platform-api-jwks.platform.svc.cluster.local:8083/.well-known/jwks.json 200)" 200
+check "hello-a: JWKS on platform-api-jwks:8083 (positive control)" "$(wait_probe_tls hello-a probe-hello $JWKS_URL 200)" 200
+check "smoke-app: JWKS on platform-api-jwks:8083 (positive control)" "$(wait_probe_tls smoke-app probe-open $JWKS_URL 200)" 200
 check "smoke-app -> platform-api-internal:8081 /healthz (app namespaces cannot reach the internal listener)" "$(probe smoke-app probe-open http://platform-api-internal.platform.svc.cluster.local:8081/healthz)" 000
 check "smoke-app -> platform-api-internal:8081 /forwardauth" "$(probe smoke-app probe-open http://platform-api-internal.platform.svc.cluster.local:8081/forwardauth)" 000
 for pod in $PA_PODS; do
   ip="$(pod_ip platform "$pod")"
   # The replacement replica of section 12 may not be in kube-router's allow set yet: wait until its JWKS answers.
-  check "smoke-app: platform-api $pod :8083 JWKS by pod IP (positive control)" "$(wait_probe smoke-app probe-open http://$ip:8083/.well-known/jwks.json 200)" 200
-  check "smoke-app: platform-api $pod :8083 serves nothing but the JWKS (/healthz is 404)" "$(probe smoke-app probe-open http://$ip:8083/healthz)" 404
+  check "smoke-app: platform-api $pod :8083 JWKS by pod IP (positive control)" "$(wait_probe_tlsk smoke-app probe-open https://$ip:8083/.well-known/jwks.json 200)" 200
+  check "smoke-app: platform-api $pod :8083 serves nothing but the JWKS (/healthz is 404)" "$(probe_tlsk smoke-app probe-open https://$ip:8083/healthz)" 404
   check "Traefik-labelled pod -> platform-api $pod :8081 /healthz (positive control)" "$(wait_probe traefik probe-traefik http://$ip:8081/healthz 200)" 200
   check "smoke-app -> platform-api $pod $ip:8081 (internal listener, Traefik only)" "$(probe smoke-app probe-open http://$ip:8081/healthz)" 000
   check "platform-api $pod: metrics listener is up (apiserver proxy)" "$(metrics_up platform "$pod")" 1
@@ -519,6 +540,49 @@ check "platform-api reaches PostgreSQL (readyz, positive control)" "$(probe trae
 check "probe_tcp sees an open port (positive control: platform-api-jwks:8083)" "$(probe_tcp smoke-app probe-open platform-api-jwks.platform.svc.cluster.local 8083)" connected
 check "probe_tcp: smoke-app -> platform-api-internal:8081 is blocked" "$(probe_tcp smoke-app probe-open platform-api-internal.platform.svc.cluster.local 8081)" blocked
 check "smoke-app (app namespace) -> postgres:5432" "$(probe_tcp smoke-app probe-open postgres.platform-db.svc.cluster.local 5432)" blocked
+
+section "16b. JWKS internal TLS: HTTPS only, SAN, CA verification, TLS 1.3 (local CA from jwks-tls.sh)"
+# Every negative has its positive in the same position: same pod, same URL, only the variable under test changes.
+SAN_WANT="platform-api-jwks platform-api-jwks.platform platform-api-jwks.platform.svc platform-api-jwks.platform.svc.cluster.local"
+# Exact comparison: one SAN per line, whole-line match (check is substring-based).
+sans="$($K -n platform get secret platform-api-jwks-tls -o jsonpath='{.data.tls\.crt}' \
+  | ./tk sh -c 'base64 -d | openssl x509 -noout -ext subjectAltName' 2>&1 | tail -n +2 | tr ',' '\n' | sed 's/^ *//')"
+for n in $SAN_WANT; do
+  if grep -Fxq "DNS:$n" <<<"$sans"; then pass "Secret certificate SAN (DNS:$n)"; else fail "Secret certificate SAN: DNS:$n missing"; fi
+done
+check "Secret certificate SAN: exact count of DNS entries" "$(grep -c '^DNS:' <<<"$sans")" 4
+check "Secret certificate SAN: no other entry types" "$(grep -vc '^DNS:' <<<"$sans" || true)" 0
+check "Secret platform-api-jwks-tls is kubernetes.io/tls" "$($K -n platform get secret platform-api-jwks-tls -o jsonpath='{.type}')" kubernetes.io/tls
+skeys="$($K -n platform get secret platform-api-jwks-tls -o jsonpath='{.data}' | ./tk jq -r 'keys|join(",")')"
+check "Secret keys are exactly tls.crt,tls.key" "$skeys" "tls.crt,tls.key"
+check_not "Secret has no ca.key" "$skeys" "ca.key"
+check_not "Secret has no ca.crt (leaf only)" "$skeys" "ca.crt"
+for ns in hello-a hello-b portal; do
+  ckeys="$($K -n $ns get configmap platform-jwks-ca -o jsonpath='{.data}' | ./tk jq -r 'keys|join(",")')"
+  [[ $ckeys == ca.crt ]] && pass "ConfigMap platform-jwks-ca in $ns keys are exactly ca.crt" || fail "ConfigMap platform-jwks-ca in $ns: keys '$ckeys', want exactly ca.crt"
+  check_not "ConfigMap platform-jwks-ca in $ns has no ca.key" "$ckeys" "ca.key"
+done
+check "leaf verifies against the CA for the service name (openssl verify)" \
+  "$(./tk sh -c 'openssl verify -CAfile .tools/secrets/k3d-jwks-ca.crt -verify_hostname platform-api-jwks.platform.svc.cluster.local .tools/secrets/k3d-jwks-tls.crt' 2>&1)" "OK"
+check "leaf does NOT verify for another name (negative control of the SAN check)" \
+  "$(./tk sh -c 'openssl verify -CAfile .tools/secrets/k3d-jwks-ca.crt -verify_hostname platform-api-internal.platform.svc.cluster.local .tools/secrets/k3d-jwks-tls.crt' 2>&1)" "hostname mismatch"
+echo "  -- from hello-a (app namespace):"
+check "positive: HTTPS + CA -> 200" "$(probe_tls hello-a probe-hello $JWKS_URL)" 200
+body="$($K -n hello-a exec -i probe-hello -- curl -s --max-time 4 --cacert /dev/stdin "$JWKS_URL" < "$JWKS_CA" 2>/dev/null)"
+check "positive: body is a JWKS" "$body" '"keys"'
+check "positive: curl exit code with the CA" "$(tls_rc hello-a probe-hello ca "$JWKS_URL")" 0
+check "no CA (system roots only) -> verification fails (curl 60)" "$(tls_rc hello-a probe-hello noca "$JWKS_URL")" 60
+check "no CA, certificate check off -> reachable (the failure above is verification, not the network)" "$(tls_rc hello-a probe-hello noca -k "$JWKS_URL")" 0
+pa_ip="$(pod_ip platform "$(echo $PA_PODS | awk '{print $1}')")"
+check "CA + pod-IP URL -> SAN mismatch (curl 60)" "$(tls_rc hello-a probe-hello ca "https://$pa_ip:8083/.well-known/jwks.json")" 60
+check "CA + pod-IP URL with --resolve to the service name -> verified (positive control)" \
+  "$(tls_rc hello-a probe-hello ca --resolve "$JWKS_SVC:8083:$pa_ip" "$JWKS_URL")" 0
+check "plain HTTP on :8083 is not served (TLS only)" "$($K -n hello-a exec probe-hello -- curl -s -o /dev/null --max-time 4 -w '%{http_code}' "http://$JWKS_SVC:8083/.well-known/jwks.json" 2>/dev/null | grep -c '^200$' || true)" 0
+check "plain HTTP: the port is open (TCP connect, positive control)" "$(probe_tcp hello-a probe-hello $JWKS_SVC 8083)" connected
+check "TLS 1.3 accepted" "$(tls_rc hello-a probe-hello ca --tlsv1.3 "$JWKS_URL")" 0
+check "TLS 1.2 refused (handshake failure, curl 35)" "$(tls_rc hello-a probe-hello ca --tls-max 1.2 "$JWKS_URL")" 35
+echo "  -- rotation (not automated here): re-run jwks-tls.sh after deleting .tools/secrets/k3d-jwks-tls.* (new leaf, same CA),"
+echo "     wait ~1-2 min (kubelet volume sync + 30 s reload); apps keep verifying, no restart, then compare the served serial."
 
 section "17. Integration probe: hello-a health shows an ok probe and a seen host (within ${PROBE_DEADLINE_S}s)"
 JADH="$WORK/portal-admin-health"; login "$JADH" admin@example.com "$P" >/dev/null
@@ -650,10 +714,10 @@ for pod in $PA_PODS; do
   ip="$(pod_ip platform "$pod")"
   check "monitoring Prometheus-labelled pod -> platform-api $pod:9090/metrics (positive)" "$(wait_probe monitoring probe-prom http://$ip:9090/metrics 200)" 200
   check "[ingress] probe-other -> platform-api $pod:9090 (not a Prometheus pod)" "$(probe monitoring probe-other http://$ip:9090/metrics)" 000
-  check "[ingress] probe-other -> platform-api $pod:8083 (JWKS listener: app namespaces only)" "$(probe monitoring probe-other http://$ip:8083/.well-known/jwks.json)" 000
+  check "[ingress] probe-other -> platform-api $pod:8083 (JWKS listener: app namespaces only)" "$(probe_tlsk monitoring probe-other https://$ip:8083/.well-known/jwks.json)" 000
   check "[ingress] probe-other -> platform-api $pod:8081 (internal listener: Traefik only)" "$(probe monitoring probe-other http://$ip:8081/healthz)" 000
   check "[ingress] probe-other -> platform-api $pod:8080 (public listener: Traefik only)" "$(probe monitoring probe-other http://$ip:8080/login)" 000
-  check "[egress] Prometheus-labelled pod -> platform-api $pod:8083 (JWKS listener)" "$(probe monitoring probe-prom http://$ip:8083/.well-known/jwks.json)" 000
+  check "[egress] Prometheus-labelled pod -> platform-api $pod:8083 (JWKS listener)" "$(probe_tlsk monitoring probe-prom https://$ip:8083/.well-known/jwks.json)" 000
   check "[egress] Prometheus-labelled pod -> platform-api $pod:8081 (internal listener)" "$(probe monitoring probe-prom http://$ip:8081/healthz)" 000
   check "[egress] Prometheus-labelled pod -> platform-api $pod:8080 (public listener)" "$(probe monitoring probe-prom http://$ip:8080/login)" 000
   check "[egress] Grafana-labelled pod -> platform-api $pod:9090" "$(probe monitoring probe-grafana http://$ip:9090/metrics)" 000

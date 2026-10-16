@@ -19,6 +19,14 @@ patches:
                 env:
                   - {name: HELLO_APP_ID, value: app_016XJSY1BRD79NEGNJBXQJT5KT}
                   - {name: HELLO_ISSUER, value: "https://auth.apps.wysted.dev"}
+                  # JWKS over HTTPS, verified against the local CA (ConfigMap platform-jwks-ca, created by jwks-tls.sh).
+                  - {name: HELLO_JWKS_URL, value: "https://platform-api-jwks.platform.svc.cluster.local:8083/.well-known/jwks.json"}
+                  - {name: HELLO_JWKS_CA_FILE, value: /etc/hello/jwks-ca/ca.crt}
+                volumeMounts:
+                  - {name: jwks-ca, mountPath: /etc/hello/jwks-ca, readOnly: true}
+            volumes:
+              - name: jwks-ca
+                configMap: {name: platform-jwks-ca}
   - target: {kind: IngressRoute, name: hello}
     patch: |-
       - {op: replace, path: /spec/routes/0/match, value: "Host(`hello-b.apps.wysted.dev`)"}

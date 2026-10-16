@@ -77,6 +77,9 @@ secret platform platform-api-pgpass pgpass="$SECRETS/k3d-api-pgpass"
 secret portal portal-pgpass pgpass="$SECRETS/k3d-portal-pgpass"
 secret monitoring grafana-admin admin-user="$SECRETS/k3d-grafana-admin-user" admin-password="$SECRETS/k3d-grafana-admin-password"
 
+echo "==> JWKS internal TLS (local CA; Secret platform-api-jwks-tls, ConfigMap platform-jwks-ca per app namespace)"
+"$HERE/jwks-tls.sh"
+
 echo "==> PostgreSQL"
 kc apply --dry-run=server -k "$REL/db" >/dev/null
 kc apply -k "$REL/db"

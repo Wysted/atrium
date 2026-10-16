@@ -18,6 +18,14 @@ patches:
                   - {name: PORTAL_ISSUER, value: "https://auth.apps.wysted.dev"}
                   # Short on purpose so the smoke can observe results (default 5m, minimum 1m).
                   - {name: PORTAL_PROBE_INTERVAL, value: 1m}
+                  # JWKS over HTTPS, verified against the local CA (ConfigMap platform-jwks-ca, created by jwks-tls.sh).
+                  - {name: PORTAL_JWKS_URL, value: "https://platform-api-jwks.platform.svc.cluster.local:8083/.well-known/jwks.json"}
+                  - {name: PORTAL_JWKS_CA_FILE, value: /etc/portal/jwks-ca/ca.crt}
+                volumeMounts:
+                  - {name: jwks-ca, mountPath: /etc/portal/jwks-ca, readOnly: true}
+            volumes:
+              - name: jwks-ca
+                configMap: {name: platform-jwks-ca}
   - target: {kind: IngressRoute, name: portal}
     patch: |-
       - {op: replace, path: /spec/routes/0/match, value: "Host(`portal.apps.wysted.dev`)"}

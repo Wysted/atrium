@@ -31,6 +31,7 @@ sync-wave `-1`) on the Job, or a Flux `Kustomization` for `base/migrate` that th
 | `up.sh` | secrets (`.tools/secrets/k3d-*`, generated once), image import (`BUILD=1` rebuilds the three images), apply in order (namespaces, DB, portal roles, migrate Job, seed, platform-api, hello-a/b, portal, monitoring), `down-spike.sh`, Traefik helm upgrade |
 | `roles.sh` / `roles.sql` | `platform_portal` (NOLOGIN) and the `portal_app` login role (member of `platform_portal` only) as the bootstrap superuser; idempotent, works on an existing volume (initdb.sh only runs once) |
 | `seed.sh` / `seed.sql` | dev data as platform_owner; idempotent, also restores grants revoked by the smoke |
+| `jwks-tls.sh` | local PKI for the JWKS listener (ECDSA P-256 CA 10 y + leaf 90 days, SANs of `platform-api-jwks`), Secret `platform-api-jwks-tls` and ConfigMap `platform-jwks-ca` per app namespace; idempotent, re-issues the leaf 30 days before expiry; called by `up.sh` before the rollouts |
 | `smoke.sh` | end-to-end checks with curl from the host; leaves the cluster as found |
 | `down-spike.sh` | deletes spike-authz / spike-app1 / spike-app2 (manifests stay in `spikes/`) |
 | `down-monitoring.sh` | removes PodMonitors/rules, the Helm release and the `monitoring` namespace (`DROP_CRDS=1` also the Operator CRDs); the platform keeps running |
@@ -135,6 +136,34 @@ Assumptions for adopters:
   resets the timestamp to the process start time, so detection can be delayed by up to 3 intervals (accepted). The portal
   rules assume one portal release per Prometheus (`job="portal"`): two releases sharing one would mask each other.
 - After changing the plain rules run `monitoring/gen-prometheusrule.sh`; `test-rules.sh` fails if the generated file is stale.
+
+## Internal TLS for the JWKS (optional, PKI-neutral)
+
+`base/` keeps the JWKS listener on plain HTTP (`:8083`, `http://` URLs): it carries no PKI, so every adopter picks its own.
+`overlays/local` turns TLS on with patches only (no base change):
+
+| Where | Patch |
+|---|---|
+| platform-api | `PLATFORM_JWKS_TLS_CERT_FILE=/etc/platform/jwks-tls/tls.crt`, `PLATFORM_JWKS_TLS_KEY_FILE=.../tls.key`, Secret `platform-api-jwks-tls` mounted with `defaultMode: 0440` (the key must be 0640 or stricter; `fsGroup` already lets the non-root user read it, like the KEK). The listener then serves HTTPS only, TLS 1.3 minimum, and reloads the pair every 30 s |
+| portal, hello-a/b | `*_JWKS_URL=https://platform-api-jwks.platform.svc.cluster.local:8083/...`, `*_JWKS_CA_FILE=/etc/<app>/jwks-ca/ca.crt` from ConfigMap `platform-jwks-ca` |
+
+Local CA: `overlays/local/jwks-tls.sh` (run by `up.sh`) keeps `k3d-jwks-ca.*` and `k3d-jwks-tls.*` in `.tools/secrets/` (git-ignored). The CA key
+never reaches the cluster. Rotation: delete `k3d-jwks-tls.*` and re-run the script (same CA, new leaf); the kubelet syncs the Secret
+volume in about a minute and the listener swaps the pair within 30 s, with no restart and no verifier change. Leaf rotation needs no
+restart (reload every 30 s; ~1 min with the Secret volume sync). CA rotation does: verifiers load the CA once at start-up, so the new CA
+must be distributed first and the verifiers restarted before the new leaf is served; the script does it in that order (ConfigMaps ->
+`rollout restart` portal, hello-a, hello-b + wait -> Secret). With cert-manager/trust-manager, bundle old+new CA during the transition.
+The script renews the CA when less than 150 days remain (leaf 90 + renewal window 30 + margin 30), so no leaf outlives its CA.
+
+Adopters: only the contract matters, not the script.
+- Server: any issuer that writes a PEM cert (chain allowed) and key (PKCS8/EC/RSA, mode <= 0640) at the two paths: cert-manager (`Certificate`
+  with `dnsNames` = the Service names above and `secretName: platform-api-jwks-tls`, which yields `tls.crt`/`tls.key` for the same mount),
+  a Vault agent template writing the files, or a manually created `kubernetes.io/tls` Secret. Keep the SAN equal to the name apps use.
+- Clients: distribute the issuing CA bundle (PEM) to each app namespace and point `*_JWKS_CA_FILE` (or `Config.RootCAs` in the SDK) at it:
+  cert-manager `trust-manager` Bundle, a Vault/CSI mount, or a ConfigMap per namespace. If the CA is public/system-trusted, omit the variable.
+- Switch the URLs to `https://` in the same change; an `http` URL logs a warning at verifier start-up.
+- Smoke section `16b` checks the SAN, CA verification (and its failure without the CA), TLS-only and TLS 1.3.
+- `overlays/local-google` builds on `overlays/local/platform`, so it inherits the TLS patches (the apps keep the CA ConfigMap from `up.sh`).
 
 ## Notes
 

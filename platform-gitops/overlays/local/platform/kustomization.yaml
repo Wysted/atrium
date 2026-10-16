@@ -18,6 +18,16 @@ patches:
                   # The portal app (seed.sql, reserved initiative `platform`): any active user may open it.
                   # Same id as PORTAL_APP_ID in ../portal.
                   - {name: PLATFORM_PORTAL_APP_ID, value: app_01HQ3PD7RTA5M2XKWV9N8B4CYE}
+                  # Internal TLS on the JWKS listener (HTTPS only). The pair comes from the Secret created by jwks-tls.sh;
+                  # any issuer works as long as these two files exist (see README, "Internal TLS for the JWKS").
+                  - {name: PLATFORM_JWKS_TLS_CERT_FILE, value: /etc/platform/jwks-tls/tls.crt}
+                  - {name: PLATFORM_JWKS_TLS_KEY_FILE, value: /etc/platform/jwks-tls/tls.key}
+                volumeMounts:
+                  - {name: jwks-tls, mountPath: /etc/platform/jwks-tls, readOnly: true}
+            volumes:
+              # The key must be 0640 or stricter: 0440 + the pod fsGroup, like the KEK.
+              - name: jwks-tls
+                secret: {secretName: platform-api-jwks-tls, defaultMode: 0440}
   - target: {kind: IngressRoute, name: platform-api}
     patch: |-
       - {op: replace, path: /spec/routes/0/match, value: "Host(`auth.apps.wysted.dev`)"}
