@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"platform/api/internal/access"
 	"platform/api/internal/httpx"
 	"platform/api/internal/portalapp"
 	"platform/api/internal/postgres"
@@ -55,6 +56,8 @@ func serve(ctx context.Context, cfg config, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+
+	checkPortalApp(ctx, postgres.NewAccessRepository(pool), cfg.AppID, log)
 
 	servers := map[string]*http.Server{
 		"internal": httpx.NewServer(cfg.InternalAddr, a.Internal),
@@ -121,5 +124,34 @@ func waitBounded(ctx context.Context, wait func()) bool {
 		return true
 	case <-ctx.Done():
 		return false
+	}
+}
+
+// portalAppLookup is the read-only port used by checkPortalApp.
+type portalAppLookup interface {
+	PortalAppInitiativeKey(ctx context.Context, appID string) (key string, found bool, err error)
+}
+
+// portalCheckTimeout bounds the start-up sanity check of PORTAL_APP_ID.
+const portalCheckTimeout = 5 * time.Second
+
+// checkPortalApp warns when PORTAL_APP_ID does not point to an app of the reserved initiative. It never fails
+// start-up (the database may be unavailable or the seed not applied yet). The administration guards re-check
+// the initiative key on every request, so a wrong id only leaves the portal app unprotected. PORTAL_APP_ID and
+// platform-api's PLATFORM_PORTAL_APP_ID must hold the same id.
+func checkPortalApp(ctx context.Context, repo portalAppLookup, appID string, log *slog.Logger) {
+	ctx, cancel := context.WithTimeout(ctx, portalCheckTimeout)
+	defer cancel()
+	key, found, err := repo.PortalAppInitiativeKey(ctx, appID)
+	switch {
+	case err != nil:
+		log.Warn("cannot verify the portal app at start-up", "app_id", appID, "error", err.Error())
+	case !found:
+		log.Warn("PORTAL_APP_ID does not match any app: the portal app guards are inactive", "app_id", appID)
+	case key != access.PlatformInitiativeKey:
+		log.Warn("PORTAL_APP_ID belongs to another initiative: the portal app guards are inactive",
+			"app_id", appID, "initiative_key", key, "required", access.PlatformInitiativeKey)
+	default:
+		log.Info("portal app verified", "app_id", appID)
 	}
 }

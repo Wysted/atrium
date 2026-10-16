@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"platform/api/internal/adminz"
@@ -101,6 +102,7 @@ type HomeReader interface {
 type Tx interface {
 	Permissions() PermissionsReader
 	Grants() GrantRepo
+	Catalog() CatalogRepo
 	Groups() GroupRepo
 	Users() UserRepo
 	// Audit appends to the audit log inside the transaction: if the insert fails the mutation rolls back.
@@ -121,8 +123,11 @@ type Config struct {
 	// Store runs the units of work of the administration use cases.
 	Store Store
 	// PortalAppID is the id of the portal app (hidden from the home: every user may open it, it is not one of
-	// "their" apps). Empty means there is none.
+	// "their" apps; the administration refuses to disable it or to remove its last deployment). Empty means
+	// there is none.
 	PortalAppID string
+	// AuthHost is the host of the auth server (from the issuer). No deployment may use it. Empty means none.
+	AuthHost string
 	// Now is the clock for "expires_at must be in the future"; nil means time.Now.
 	Now func() time.Time
 }
@@ -133,6 +138,7 @@ type Service struct {
 	home        HomeReader
 	store       Store
 	portalAppID string
+	authHost    string
 	now         func() time.Time
 }
 
@@ -146,7 +152,8 @@ func NewService(cfg Config) (*Service, error) {
 		now = time.Now
 	}
 	return &Service{
-		permissions: cfg.Permissions, home: cfg.Home, store: cfg.Store, portalAppID: cfg.PortalAppID, now: now,
+		permissions: cfg.Permissions, home: cfg.Home, store: cfg.Store, portalAppID: cfg.PortalAppID,
+		authHost: strings.ToLower(cfg.AuthHost), now: now,
 	}, nil
 }
 

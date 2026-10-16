@@ -125,6 +125,7 @@ var _ portal.Tx = portalTx{}
 
 func (t portalTx) Permissions() portal.PermissionsReader { return &PermissionsRepo{db: t.tx} }
 func (t portalTx) Grants() portal.GrantRepo              { return GrantsRepo{db: t.tx} }
+func (t portalTx) Catalog() portal.CatalogRepo           { return CatalogRepo{db: t.tx} }
 func (t portalTx) Groups() portal.GroupRepo              { return GroupsRepo{db: t.tx} }
 func (t portalTx) Users() portal.UserRepo                { return UsersRepo{db: t.tx} }
 func (t portalTx) Audit() audit.Recorder                 { return txAudit{db: t.tx} }

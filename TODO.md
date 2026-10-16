@@ -33,7 +33,9 @@ Pending work and open questions for the portal platform. Detailed context lives 
   the same instant). After the migrated-template change (2026-10-15) 10 consecutive full `-race` runs of
   `platform/api` did not reproduce it and left no `platform_test_*` databases; stale ones (older than 15 min) are now
   swept at the start of each test binary. Root cause not proven: PostgreSQL requests an immediate checkpoint on every
-  `DROP DATABASE`, so parallel packages queue on checkpoint I/O (Docker/WSL). Keep open until it stays quiet in CI.
+  `DROP DATABASE`, so parallel packages queue on checkpoint I/O (Docker/WSL). Seen again on 2026-10-16 (`TestDecisionTable`
+  failing at 31.9 s in a full `-race` run, passing in isolation and in the next runs), so the template did not fix it.
+  Next step: capture the failing message (`go test -json`) to tell a drop timeout from a create/connect timeout.
 - [ ] **Reduce `platform_runtime`.** Once the portal owns administration, drop its write access to the authorization
   tables except what ForwardAuth and login need.
 - [ ] **Cookie prefix support in Safari.** `__Host-Http-` is enforced by Chrome 140+ and Firefox 143+; revisit Safari.

@@ -43,6 +43,9 @@ var referenceFields = map[string]string{
 	"initiative_access_group_id_fkey":              "group_id",
 	"group_members_group_id_fkey":                  "group_id",
 	"group_members_user_id_fkey":                   "user_id",
+	"initiative_roles_initiative_id_fkey":          "initiative_id",
+	"apps_initiative_id_fkey":                      "initiative_id",
+	"deployments_app_id_fkey":                      "app_id",
 }
 
 // referenceField names the request field behind a violated foreign key ("reference" for an unknown one).
@@ -213,7 +216,7 @@ func (r GrantsRepo) LockInitiative(ctx context.Context, id string) error {
 // clock_timestamp() and not the transaction's now()) and held by at least one active user,
 // directly or through a group. $1 = initiative id.
 const managerGrantsSQL = `
-SELECT ia.id::text,
+SELECT ia.id::text, ia.role_id::text,
        (ia.expires_at IS NULL OR ia.expires_at > clock_timestamp())
        AND (EXISTS (SELECT 1 FROM users u WHERE u.id = ia.user_id AND u.status = 'active')
             OR EXISTS (SELECT 1 FROM group_members gm JOIN users u ON u.id = gm.user_id
@@ -245,7 +248,7 @@ func (r GrantsRepo) LockManagerGrants(ctx context.Context, initiativeID string) 
 	}
 	grants, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (portal.ManagerGrant, error) {
 		var m portal.ManagerGrant
-		err := row.Scan(&m.ID, &m.Effective)
+		err := row.Scan(&m.ID, &m.RoleID, &m.Effective)
 		return m, err
 	})
 	if err != nil {

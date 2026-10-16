@@ -159,7 +159,8 @@ func TestInactiveSubjectIsNeverAllowed(t *testing.T) {
 	actions := []adminz.Action{
 		adminz.InitiativeCreate, adminz.InitiativeUpdate, adminz.InitiativeRead, adminz.InitiativeList, adminz.RoleCreate,
 		adminz.AppDisable, adminz.DeploymentDelete, adminz.GrantCreate, adminz.GrantDelete, adminz.GrantList,
-		adminz.GroupCreate, adminz.GroupList, adminz.GroupMemberList, adminz.UserDisable, adminz.UserSessionsRevoke,
+		adminz.GroupCreate, adminz.GroupList, adminz.GroupMemberList, adminz.RoleList, adminz.RoleUpdate, adminz.AppList,
+		adminz.DeploymentCreate, adminz.UserDisable, adminz.UserSessionsRevoke,
 		adminz.UserList, adminz.AuditList, "unknown.action",
 	}
 	for name, who := range map[string]adminz.Subject{"disabled platform admin": disabledAdmin, "zero value": zero} {
@@ -198,6 +199,14 @@ func TestDecideListingScope(t *testing.T) {
 		{"admin lists the grants of an initiative", admin, adminz.GrantList, inA("grant"), adminz.Allow, false, []string{initA}},
 		{"manager lists the grants of their initiative", managerAB, adminz.GrantList, inA("grant"), adminz.Allow, false, []string{initA}},
 		{"manager of another initiative lists no grants", managerB, adminz.GrantList, inA("grant"), adminz.NotFound, false, nil},
+		{"admin lists the roles of an initiative", admin, adminz.RoleList, inA("role"), adminz.Allow, false, []string{initA}},
+		{"manager lists the roles of their initiative", managerAB, adminz.RoleList, inA("role"), adminz.Allow, false, []string{initA}},
+		{"manager of another initiative lists no roles", managerB, adminz.RoleList, inA("role"), adminz.NotFound, false, nil},
+		{"roles need the initiative", admin, adminz.RoleList, adminz.Resource{Type: "role"}, adminz.Forbidden, false, nil},
+		{"admin lists the apps of an initiative", admin, adminz.AppList, inA("app"), adminz.Allow, false, []string{initA}},
+		{"manager lists the apps of their initiative", managerAB, adminz.AppList, inA("app"), adminz.Allow, false, []string{initA}},
+		{"plain user lists no apps", plain, adminz.AppList, inA("app"), adminz.NotFound, false, nil},
+		{"apps need the initiative", managerA, adminz.AppList, adminz.Resource{Type: "app"}, adminz.Forbidden, false, nil},
 		{"grants need the initiative", admin, adminz.GrantList, adminz.Resource{Type: "grant"}, adminz.Forbidden, false, nil},
 		{"admin lists group members", admin, adminz.GroupMemberList, adminz.Resource{Type: "group_member"}, adminz.Allow, true, nil},
 		{"manager lists no group members", managerA, adminz.GroupMemberList, adminz.Resource{Type: "group_member"}, adminz.Forbidden, false, nil},

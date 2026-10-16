@@ -37,6 +37,14 @@ var (
 	ErrMemberExists  = &Conflict{Detail: "the user is already a member of the group"}
 	ErrSelfDisable   = &Conflict{Detail: "an administrator cannot disable their own account"}
 	ErrLastAdmin     = &Conflict{Detail: "the portal must keep at least one active platform administrator"}
+
+	ErrInitiativeKeyTaken   = &Conflict{Detail: "an initiative with this key already exists"}
+	ErrRoleKeyTaken         = &Conflict{Detail: "the initiative already has a role with this key"}
+	ErrRoleInUse            = &Conflict{Detail: "the role still has grants"}
+	ErrHostTaken            = &Conflict{Detail: "a deployment for this host already exists"}
+	ErrPlatformInitiative   = &Conflict{Detail: "the platform initiative cannot be deactivated"}
+	ErrPortalApp            = &Conflict{Detail: "the portal app cannot be disabled"}
+	ErrLastPortalDeployment = &Conflict{Detail: "the portal app must keep at least one deployment"}
 )
 
 // ReferenceError is returned by repositories when a foreign key rejects a write; Field names the offending
@@ -53,6 +61,8 @@ const (
 	CodeNoUniqueActiveUser = "no_unique_active_user"
 	CodeUnknown            = "unknown"
 	CodeExclusive          = "exactly_one_required"
+	CodeReserved           = "reserved"
+	CodeAtLeastOne         = "at_least_one_required"
 )
 
 // FieldProblem is one invalid field of a request.
@@ -167,9 +177,11 @@ type GrantRow struct {
 }
 
 // ManagerGrant is a manages_access grant of an initiative, locked by LockManagerGrants. Effective means it
-// currently makes at least one active user a manager (see Service.DeleteGrant).
+// currently makes at least one active user a manager (see Service.DeleteGrant). RoleID is the role it grants:
+// turning manages_access off for a role removes every grant of that role from the managers.
 type ManagerGrant struct {
 	ID        string
+	RoleID    string
 	Effective bool
 }
 
@@ -235,6 +247,10 @@ const (
 	TargetGroupMember  = "group_member"
 	TargetUser         = "user"
 	TargetUserSessions = "user_sessions"
+	TargetInitiative   = "initiative"
+	TargetRole         = "role"
+	TargetApp          = "app"
+	TargetDeployment   = "deployment"
 )
 
 // GrantRepo is the storage of grants. Listing methods take the Scope the caller may see as a required

@@ -225,7 +225,8 @@ var rules = map[Action]rule{
 //     anyone else is forbidden. AuditList with Resource.InitiativeID set is a filter: allowed to admins and to
 //     managers of that initiative with that single initiative as scope, and not_found for anyone else.
 //     GroupList (id, key, name only; groups are global): admins and managers see All, anyone else is forbidden.
-//     GrantList lists one initiative: allowed to admins and to its managers with that initiative as scope.
+//     GrantList, RoleList and AppList list the rows of one initiative (the apps carry their deployments): allowed
+//     to admins and to its managers with that initiative as scope.
 //     The admin-only listings of global data (GroupMemberList, UserList) answer Scope All to admins.
 //  3. An action on an initiative-scoped resource needs Resource.InitiativeID (otherwise forbidden, even for
 //     admins: the caller forgot to resolve the owner). A caller who is neither platform admin nor manager of
@@ -269,11 +270,15 @@ func Decide(subject Subject, action Action, resource Resource) Decision {
 		return d
 	}
 	d := decideInitiative(subject, r, resource)
-	if d.Outcome == Allow && action == GrantList {
+	if d.Outcome == Allow && initiativeListings[action] {
 		d.Scope = Scope{Initiatives: []string{resource.InitiativeID}}
 	}
 	return d
 }
+
+// initiativeListings are the listings of the rows that belong to one initiative: allowed, they answer with that
+// initiative as the scope.
+var initiativeListings = map[Action]bool{GrantList: true, RoleList: true, AppList: true}
 
 // globalListings are the admin-only listings of global data: allowed, they answer with Scope All.
 var globalListings = map[Action]bool{GroupMemberList: true, UserList: true}

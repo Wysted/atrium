@@ -40,6 +40,8 @@ type fakeAdmin struct {
 	members portal.Page[portal.GroupMember]
 	events  portal.Page[portal.AuditEvent]
 	users   []portal.User
+
+	catalogCalls
 }
 
 func (f *fakeAdmin) note(caller, id string) error {

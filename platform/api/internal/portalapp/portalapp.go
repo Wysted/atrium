@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -49,6 +51,15 @@ type App struct {
 	Store portal.Store
 }
 
+// issuerHost returns the host of the issuer URL (https://<auth host>): the host no deployment may use.
+func issuerHost(issuer string) (string, error) {
+	u, err := url.Parse(issuer)
+	if err != nil || u.Hostname() == "" {
+		return "", errors.New("portalapp: the issuer must be an absolute URL with a host")
+	}
+	return strings.ToLower(u.Hostname()), nil
+}
+
 // New builds the app.
 func New(cfg Config) (*App, error) {
 	if cfg.Pool == nil || cfg.AppID == "" || cfg.Issuer == "" || cfg.JWKSURL == "" {
@@ -65,12 +76,17 @@ func New(cfg Config) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create assertion verifier: %w", err)
 	}
+	authHost, err := issuerHost(cfg.Issuer)
+	if err != nil {
+		return nil, err
+	}
 	store := postgres.NewPortalStore(cfg.Pool)
 	svc, err := portal.NewService(portal.Config{
 		Permissions: postgres.NewPermissionsRepo(cfg.Pool),
 		Home:        postgres.NewHomeRepo(cfg.Pool),
 		Store:       store,
 		PortalAppID: cfg.AppID,
+		AuthHost:    authHost,
 	})
 	if err != nil {
 		return nil, err

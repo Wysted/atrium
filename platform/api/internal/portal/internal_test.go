@@ -168,12 +168,12 @@ func TestIsLastEffective(t *testing.T) {
 		managers []ManagerGrant
 		want     bool
 	}{
-		{"only effective grant", []ManagerGrant{{"g1", true}}, true},
-		{"another effective one remains", []ManagerGrant{{"g1", true}, {"g2", true}}, false},
-		{"others are not effective", []ManagerGrant{{"g1", true}, {"g2", false}, {"g3", false}}, true},
-		{"the target is not effective", []ManagerGrant{{"g1", false}}, false},
-		{"the target is not effective and nobody is", []ManagerGrant{{"g1", false}, {"g2", false}}, false},
-		{"target missing from the list", []ManagerGrant{{"g2", true}}, false},
+		{"only effective grant", []ManagerGrant{{ID: "g1", Effective: true}}, true},
+		{"another effective one remains", []ManagerGrant{{ID: "g1", Effective: true}, {ID: "g2", Effective: true}}, false},
+		{"others are not effective", []ManagerGrant{{ID: "g1", Effective: true}, {ID: "g2", Effective: false}, {ID: "g3", Effective: false}}, true},
+		{"the target is not effective", []ManagerGrant{{ID: "g1", Effective: false}}, false},
+		{"the target is not effective and nobody is", []ManagerGrant{{ID: "g1", Effective: false}, {ID: "g2", Effective: false}}, false},
+		{"target missing from the list", []ManagerGrant{{ID: "g2", Effective: true}}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -185,37 +185,39 @@ func TestIsLastEffective(t *testing.T) {
 	}
 }
 
-// Every listing method of the repository ports (named List*) takes the Scope the caller may see as its second
+// Every listing method of the repository ports (named List*, in admin.go and catalog.go) takes the Scope the caller may see as its second
 // parameter, after the context: a listing without one cannot be written, and the compiler enforces the type.
 // This test makes sure a new List* method cannot be added to a port without it. FindActiveByEmail is
 // intentionally outside the rule: it is not a listing but a lookup of at most two rows that resolves a grant's
 // subject, and its name keeps it out of this check.
 func TestListingMethodsTakeAScope(t *testing.T) {
 	t.Parallel()
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "admin.go", nil, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
 	var listings int
-	ast.Inspect(file, func(n ast.Node) bool {
-		iface, ok := n.(*ast.InterfaceType)
-		if !ok {
+	for _, name := range []string{"admin.go", "catalog.go"} {
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, name, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ast.Inspect(file, func(n ast.Node) bool {
+			iface, ok := n.(*ast.InterfaceType)
+			if !ok {
+				return true
+			}
+			for _, m := range iface.Methods.List {
+				fn, ok := m.Type.(*ast.FuncType)
+				if !ok || len(m.Names) == 0 || !strings.HasPrefix(m.Names[0].Name, "List") {
+					continue
+				}
+				listings++
+				if !secondParamIsScope(fn) {
+					t.Errorf("%s: the second parameter of a listing must be adminz.Scope", m.Names[0].Name)
+				}
+			}
 			return true
-		}
-		for _, m := range iface.Methods.List {
-			fn, ok := m.Type.(*ast.FuncType)
-			if !ok || len(m.Names) == 0 || !strings.HasPrefix(m.Names[0].Name, "List") {
-				continue
-			}
-			listings++
-			if !secondParamIsScope(fn) {
-				t.Errorf("%s: the second parameter of a listing must be adminz.Scope", m.Names[0].Name)
-			}
-		}
-		return true
-	})
-	if listings < 5 { // grants, groups, members, users, audit
+		})
+	}
+	if listings < 8 { // grants, groups, members, users, audit, initiatives, roles, apps
 		t.Fatalf("found only %d listing methods: the check is not looking at the ports", listings)
 	}
 }

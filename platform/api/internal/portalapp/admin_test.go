@@ -3,6 +3,7 @@ package portalapp_test
 import (
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -59,9 +60,35 @@ func (s *stack) freshGroup() string {
 	return scalar[string](s, `INSERT INTO groups (key) VALUES ($1) RETURNING id::text`, fmt.Sprintf("fresh-%d", seq.Add(1)))
 }
 
+// freshRole inserts a role without grants into the initiative and returns its id.
+func (s *stack) freshRole(initiativeID string) string {
+	return scalar[string](s, `INSERT INTO initiative_roles (initiative_id, key) VALUES ($1, $2) RETURNING id::text`,
+		initiativeID, fmt.Sprintf("role-%d", seq.Add(1)))
+}
+
+// freshApp inserts an app with one deployment into the initiative and returns the app id, the deployment id and
+// the host.
+func (s *stack) freshApp(initiativeID string) (appID, deploymentID, host string) {
+	n := seq.Add(1)
+	appID = fmt.Sprintf("app_%026d", n)
+	host = fmt.Sprintf("fresh-%d.apps.example.test", n)
+	s.exec(`INSERT INTO apps (id, initiative_id, name) VALUES ($1, $2, 'Fresh')`, appID, initiativeID)
+	deploymentID = scalar[string](s, `INSERT INTO deployments (host, app_id) VALUES ($1, $2) RETURNING id::text`, host, appID)
+	return appID, deploymentID, host
+}
+
+// catalogState is a digest of every column of every catalog row: a refused request must leave it as it was.
+func (s *stack) catalogState() string {
+	return scalar[string](s, `SELECT md5(
+  coalesce((SELECT string_agg(i::text, ',' ORDER BY id) FROM initiatives i), '') ||
+  coalesce((SELECT string_agg(r::text, ',' ORDER BY id) FROM initiative_roles r), '') ||
+  coalesce((SELECT string_agg(a::text, ',' ORDER BY id) FROM apps a), '') ||
+  coalesce((SELECT string_agg(d::text, ',' ORDER BY id) FROM deployments d), ''))`)
+}
+
 // snapshot summarizes every table an administration endpoint can change.
 func (s *stack) snapshot() string {
-	return fmt.Sprintf("grants=%d groups=%d members=%d users=%d active=%d sessions=%d audit=%d",
+	return fmt.Sprintf("catalog=%s grants=%d groups=%d members=%d users=%d active=%d sessions=%d audit=%d", s.catalogState(),
 		scalar[int](s, `SELECT count(*) FROM initiative_access`), scalar[int](s, `SELECT count(*) FROM groups`),
 		scalar[int](s, `SELECT count(*) FROM group_members`), scalar[int](s, `SELECT count(*) FROM users`),
 		scalar[int](s, `SELECT count(*) FROM users WHERE status = 'active'`), scalar[int](s, `SELECT count(*) FROM sessions`),
@@ -132,6 +159,38 @@ func TestPermissionMatrix(t *testing.T) {
 			u, _ := s.freshUser()
 			return req{http.MethodDelete, "/api/v1/users/" + u + "/sessions", "{}"}
 		}, [5]int{ok, fb, fb, fb, fb}},
+		{"list initiatives", func() req { return req{http.MethodGet, "/api/v1/initiatives", ""} }, [5]int{ok, ok, ok, fb, fb}},
+		{"create initiative", func() req {
+			return req{http.MethodPost, "/api/v1/initiatives", fmt.Sprintf(`{"key":"new-%d","name":"New"}`, seq.Add(1))}
+		}, [5]int{cr, fb, fb, fb, fb}},
+		{"get initiative", func() req { return req{http.MethodGet, "/api/v1/initiatives/" + c.alpha, ""} }, [5]int{ok, ok, nf, nf, fb}},
+		{"patch initiative", func() req {
+			return req{http.MethodPatch, "/api/v1/initiatives/" + c.alpha, `{"name":"Alpha 2"}`}
+		}, [5]int{ok, fb, nf, nf, fb}},
+		{"list roles", func() req { return req{http.MethodGet, "/api/v1/initiatives/" + c.alpha + "/roles", ""} }, [5]int{ok, ok, nf, nf, fb}},
+		{"create role", func() req {
+			return req{http.MethodPost, "/api/v1/initiatives/" + c.alpha + "/roles", fmt.Sprintf(`{"key":"r-%d"}`, seq.Add(1))}
+		}, [5]int{cr, fb, nf, nf, fb}},
+		{"patch role", func() req {
+			return req{http.MethodPatch, "/api/v1/roles/" + s.freshRole(c.alpha), `{"manages_access":true}`}
+		}, [5]int{ok, fb, nf, nf, fb}},
+		{"delete role", func() req { return req{http.MethodDelete, "/api/v1/roles/" + s.freshRole(c.alpha), "{}"} }, [5]int{nc, fb, nf, nf, fb}},
+		{"list apps", func() req { return req{http.MethodGet, "/api/v1/initiatives/" + c.alpha + "/apps", ""} }, [5]int{ok, ok, nf, nf, fb}},
+		{"create app", func() req {
+			return req{http.MethodPost, "/api/v1/initiatives/" + c.alpha + "/apps", `{"name":"New"}`}
+		}, [5]int{cr, fb, nf, nf, fb}},
+		{"patch app", func() req {
+			id, _, _ := s.freshApp(c.alpha)
+			return req{http.MethodPatch, "/api/v1/apps/" + id, `{"status":"disabled"}`}
+		}, [5]int{ok, fb, nf, nf, fb}},
+		{"create deployment", func() req {
+			id, _, _ := s.freshApp(c.alpha)
+			return req{http.MethodPost, "/api/v1/apps/" + id + "/deployments", fmt.Sprintf(`{"host":"extra-%d.apps.example.test"}`, seq.Add(1))}
+		}, [5]int{cr, fb, nf, nf, fb}},
+		{"delete deployment", func() req {
+			_, id, _ := s.freshApp(c.alpha)
+			return req{http.MethodDelete, "/api/v1/deployments/" + id, "{}"}
+		}, [5]int{nc, fb, nf, nf, fb}},
 		{"audit log", func() req { return req{http.MethodGet, "/api/v1/audit", ""} }, [5]int{ok, ok, ok, fb, fb}},
 		{"audit of the initiative", func() req { return req{http.MethodGet, "/api/v1/audit?initiative_id=" + c.alpha, ""} }, [5]int{ok, ok, nf, nf, fb}},
 	}
@@ -246,4 +305,152 @@ func TestAdministrationOverHTTP(t *testing.T) {
 	if w := s.api(c.admin, http.MethodGet, "/api/v1/audit?limit=0", ""); w.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("limit=0 = %d, want 422", w.Code)
 	}
+}
+
+// The catalog over HTTP, from an empty initiative to a deployed app, with the audit trail and the guards that
+// keep the portal reachable.
+func TestCatalogOverHTTP(t *testing.T) {
+	t.Parallel()
+	s := newStack(t)
+	s.seed() // the platform initiative with the portal app on portalHost
+	c := s.seedCast()
+	appIDPattern := regexp.MustCompile(`^app_[0-9A-HJKMNP-TV-Z]{26}$`)
+	type idBody struct{ ID string }
+	audit := func(action, targetID, initiativeID string) int {
+		return scalar[int](s, `SELECT count(*) FROM audit_events WHERE action = $1 AND target_id = $2 AND initiative_id = $3 AND actor_id = $4`,
+			action, targetID, initiativeID, c.admin)
+	}
+	mustStatus := func(w *recorder, want int) {
+		t.Helper()
+		if w.Code != want {
+			t.Fatalf("status = %d, want %d: %s", w.Code, want, w.Body.String())
+		}
+	}
+
+	// Initiatives.
+	w := s.api(c.admin, http.MethodPost, "/api/v1/initiatives", `{"key":"gamma","name":"Gamma"}`)
+	mustStatus(w, http.StatusCreated)
+	gamma := decode[idBody](t, w).ID
+	if audit("initiative.create", gamma, gamma) != 1 {
+		t.Fatal("no audit row for the creation")
+	}
+	mustStatus(s.api(c.admin, http.MethodPost, "/api/v1/initiatives", `{"key":"gamma"}`), http.StatusConflict)
+	w = s.api(c.admin, http.MethodPost, "/api/v1/initiatives", `{"key":"Not A Key"}`)
+	mustStatus(w, http.StatusUnprocessableEntity)
+	if !strings.Contains(w.Body.String(), `{"field":"key","code":"invalid"}`) || strings.Contains(w.Body.String(), "Not A Key") {
+		t.Fatalf("validation = %s", w.Body.String())
+	}
+	mustStatus(s.api(c.admin, http.MethodPatch, "/api/v1/initiatives/"+gamma, `{"key":"other"}`), http.StatusBadRequest)
+	mustStatus(s.api(c.admin, http.MethodPatch, "/api/v1/initiatives/"+gamma, `{}`), http.StatusUnprocessableEntity)
+	w = s.api(c.admin, http.MethodPatch, "/api/v1/initiatives/"+gamma, `{"status":"inactive"}`)
+	mustStatus(w, http.StatusOK)
+	if got := decode[struct{ Key, Status string }](t, w); got.Key != "gamma" || got.Status != "inactive" || audit("initiative.deactivate", gamma, gamma) != 1 {
+		t.Fatalf("initiative = %+v", got)
+	}
+	mustStatus(s.api(c.admin, http.MethodPatch, "/api/v1/initiatives/"+gamma, `{"status":"active"}`), http.StatusOK)
+	if audit("initiative.activate", gamma, gamma) != 1 {
+		t.Fatal("no audit row for the activation")
+	}
+
+	// Roles and the last-manager rule.
+	rolesPath := "/api/v1/initiatives/" + gamma + "/roles"
+	w = s.api(c.admin, http.MethodPost, rolesPath, `{"key":"lead","manages_access":true}`)
+	mustStatus(w, http.StatusCreated)
+	lead := decode[idBody](t, w).ID
+	mustStatus(s.api(c.admin, http.MethodPost, rolesPath, `{"key":"lead"}`), http.StatusConflict)
+	w = s.api(c.admin, http.MethodPost, rolesPath, `{"key":"editor"}`)
+	mustStatus(w, http.StatusCreated)
+	editor := decode[idBody](t, w).ID
+	if audit("role.create", lead, gamma) != 1 || audit("role.create", editor, gamma) != 1 {
+		t.Fatal("no audit rows for the roles")
+	}
+	mustStatus(s.api(c.admin, http.MethodPatch, "/api/v1/roles/"+lead, `{"key":"x","manages_access":false}`), http.StatusBadRequest)
+	mustStatus(s.api(c.admin, http.MethodPatch, "/api/v1/roles/"+lead, `{}`), http.StatusUnprocessableEntity)
+	holder, _ := s.freshUser()
+	s.exec(`INSERT INTO initiative_access (initiative_id, role_id, user_id) VALUES ($1, $2, $3)`, gamma, lead, holder)
+	w = s.api(c.admin, http.MethodPatch, "/api/v1/roles/"+lead, `{"manages_access":false}`)
+	mustStatus(w, http.StatusConflict)
+	if scalar[bool](s, `SELECT manages_access FROM initiative_roles WHERE id = $1`, lead) == false {
+		t.Fatal("the refused demotion was applied")
+	}
+	mustStatus(s.api(c.admin, http.MethodPatch, "/api/v1/roles/"+editor, `{"manages_access":true}`), http.StatusOK)
+	if audit("role.update", editor, gamma) != 1 {
+		t.Fatal("no audit row for the promotion")
+	}
+	mustStatus(s.api(c.admin, http.MethodDelete, "/api/v1/roles/"+lead, "{}"), http.StatusConflict) // it has a grant
+	mustStatus(s.api(c.admin, http.MethodDelete, "/api/v1/roles/"+editor, "{}"), http.StatusNoContent)
+	mustStatus(s.api(c.admin, http.MethodDelete, "/api/v1/roles/"+editor, "{}"), http.StatusNotFound)
+	if audit("role.delete", editor, gamma) != 1 {
+		t.Fatal("no audit row for the deletion")
+	}
+
+	// Apps and deployments.
+	appsPath := "/api/v1/initiatives/" + gamma + "/apps"
+	w = s.api(c.admin, http.MethodPost, appsPath, `{"name":"Hello"}`)
+	mustStatus(w, http.StatusCreated)
+	app := decode[struct {
+		ID          string
+		Deployments []struct{ Host string }
+	}](t, w)
+	if !appIDPattern.MatchString(app.ID) || app.Deployments == nil || len(app.Deployments) != 0 || !strings.Contains(w.Body.String(), `"deployments":[]`) {
+		t.Fatalf("app = %+v: %s", app, w.Body.String())
+	}
+	mustStatus(s.api(c.admin, http.MethodPost, appsPath, `{"id":"app_00000000000000000000000000"}`), http.StatusBadRequest)
+	if audit("app.create", app.ID, gamma) != 1 {
+		t.Fatal("no audit row for the app")
+	}
+	deploymentsPath := "/api/v1/apps/" + app.ID + "/deployments"
+	w = s.api(c.admin, http.MethodPost, deploymentsPath, `{"host":"hello-gamma.apps.example.test"}`)
+	mustStatus(w, http.StatusCreated)
+	dep := decode[idBody](t, w).ID
+	if audit("deployment.create", dep, gamma) != 1 {
+		t.Fatal("no audit row for the deployment")
+	}
+	mustStatus(s.api(c.admin, http.MethodPost, deploymentsPath, `{"host":"hello-gamma.apps.example.test"}`), http.StatusConflict)
+	mustStatus(s.api(c.admin, http.MethodPost, deploymentsPath, `{"host":"`+portalHost+`"}`), http.StatusConflict)
+	w = s.api(c.admin, http.MethodPost, deploymentsPath, `{"host":"auth.apps.example.test"}`)
+	mustStatus(w, http.StatusUnprocessableEntity)
+	if !strings.Contains(w.Body.String(), `{"field":"host","code":"reserved"}`) {
+		t.Fatalf("auth host = %s", w.Body.String())
+	}
+	mustStatus(s.api(c.admin, http.MethodPost, deploymentsPath, `{"host":"Upper.apps.example.test"}`), http.StatusUnprocessableEntity)
+	mustStatus(s.api(c.admin, http.MethodPost, deploymentsPath, `{"host":"*.apps.example.test"}`), http.StatusUnprocessableEntity)
+
+	w = s.api(c.admin, http.MethodGet, appsPath, "")
+	listed := decode[struct {
+		Apps []struct {
+			ID          string
+			Deployments []struct{ Host string }
+		}
+	}](t, w)
+	if w.Code != http.StatusOK || len(listed.Apps) != 1 || len(listed.Apps[0].Deployments) != 1 || listed.Apps[0].Deployments[0].Host != "hello-gamma.apps.example.test" {
+		t.Fatalf("apps = %s", w.Body.String())
+	}
+	mustStatus(s.api(c.admin, http.MethodPatch, "/api/v1/apps/"+app.ID, `{"status":"disabled"}`), http.StatusOK)
+	if audit("app.disable", app.ID, gamma) != 1 {
+		t.Fatal("no audit row for the disable")
+	}
+	mustStatus(s.api(c.admin, http.MethodPatch, "/api/v1/apps/"+app.ID, `{"initiative_id":"`+c.alpha+`"}`), http.StatusBadRequest)
+	mustStatus(s.api(c.admin, http.MethodPatch, "/api/v1/apps/"+strings.ToLower(app.ID), `{"name":"x"}`), http.StatusNotFound)
+	mustStatus(s.api(c.admin, http.MethodDelete, "/api/v1/deployments/"+dep, "{}"), http.StatusNoContent)
+	mustStatus(s.api(c.admin, http.MethodDelete, "/api/v1/deployments/"+dep, "{}"), http.StatusNotFound)
+	if n := scalar[int](s, `SELECT count(*) FROM audit_events WHERE action = 'deployment.delete' AND target_id = $1 AND before->>'host' = 'hello-gamma.apps.example.test'`, dep); n != 1 {
+		t.Fatalf("%d audit rows keep the removed host", n)
+	}
+
+	// The guards that keep the portal reachable.
+	platform := scalar[string](s, `SELECT id::text FROM initiatives WHERE key = 'platform'`)
+	mustStatus(s.api(c.admin, http.MethodPatch, "/api/v1/initiatives/"+platform, `{"status":"inactive"}`), http.StatusConflict)
+	mustStatus(s.api(c.admin, http.MethodPatch, "/api/v1/apps/"+portalAppID, `{"status":"disabled"}`), http.StatusConflict)
+	portalDeployment := scalar[string](s, `SELECT id::text FROM deployments WHERE host = $1`, portalHost)
+	mustStatus(s.api(c.admin, http.MethodDelete, "/api/v1/deployments/"+portalDeployment, "{}"), http.StatusConflict)
+	mustStatus(s.api(c.admin, http.MethodPost, "/api/v1/apps/"+portalAppID+"/deployments", `{"host":"portal-2.apps.example.test"}`), http.StatusCreated)
+	mustStatus(s.api(c.admin, http.MethodDelete, "/api/v1/deployments/"+portalDeployment, "{}"), http.StatusNoContent)
+
+	// A manager reads what they need to grant roles and check integrations, in their initiative only.
+	w = s.api(c.mgrA, http.MethodGet, "/api/v1/initiatives/"+c.alpha+"/roles", "")
+	if roles := decode[struct{ Roles []struct{ Key string } }](t, w); w.Code != http.StatusOK || len(roles.Roles) != 2 {
+		t.Fatalf("manager's roles = %d %s", w.Code, w.Body.String())
+	}
+	mustStatus(s.api(c.mgrA, http.MethodGet, "/api/v1/initiatives/"+gamma+"/apps", ""), http.StatusNotFound)
 }

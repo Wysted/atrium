@@ -40,12 +40,18 @@ func newAdminEnv(t *testing.T) *adminEnv {
 // newAdminEnvWith lets a test decorate the store (to fail the audit insert, or to force an interleaving).
 func newAdminEnvWith(t *testing.T, wrap func(portal.Store) portal.Store) *adminEnv {
 	t.Helper()
+	return newAdminEnvCfg(t, wrap, func(*portal.Config) {})
+}
+
+// newAdminEnvCfg is newAdminEnvWith with a hook to set the portal app and the auth host of the service.
+func newAdminEnvCfg(t *testing.T, wrap func(portal.Store) portal.Store, tune func(*portal.Config)) *adminEnv {
+	t.Helper()
 	owner := newTestDB(t)
 	pool := testdb.Portal(t, owner)
 	store := wrap(postgres.NewPortalStore(pool))
-	svc, err := portal.NewService(portal.Config{
-		Permissions: postgres.NewPermissionsRepo(pool), Home: postgres.NewHomeRepo(pool), Store: store,
-	})
+	cfg := portal.Config{Permissions: postgres.NewPermissionsRepo(pool), Home: postgres.NewHomeRepo(pool), Store: store}
+	tune(&cfg)
+	svc, err := portal.NewService(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -666,8 +672,8 @@ func (b *barrier) arrive(t *testing.T) {
 	}
 }
 
-// meetingStore holds every unit of work at its first read of a grant until two have done it, so both have
-// seen the grants as they were before either of them takes a lock. Without the row locks of DeleteGrant, both
+// meetingStore holds every unit of work at its first read of a grant, role or deployment until two have done
+// it, so both have seen the world as it was before either of them takes a lock. Without the row locks of DeleteGrant, both
 // would then pass the last-manager check and delete.
 type meetingStore struct {
 	portal.Store
@@ -688,6 +694,18 @@ type meetingTx struct {
 
 func (m *meetingTx) Grants() portal.GrantRepo { return meetingGrants{GrantRepo: m.Tx.Grants(), m: m} }
 
+func (m *meetingTx) Catalog() portal.CatalogRepo {
+	return meetingCatalog{CatalogRepo: m.Tx.Catalog(), m: m}
+}
+
+// meet holds the unit of work at its first read of a grant, role or deployment until two have got there.
+func (m *meetingTx) meet() {
+	if !m.waited {
+		m.waited = true
+		m.b.arrive(m.t)
+	}
+}
+
 type meetingGrants struct {
 	portal.GrantRepo
 	m *meetingTx
@@ -695,11 +713,25 @@ type meetingGrants struct {
 
 func (g meetingGrants) GetGrant(ctx context.Context, id string) (portal.Grant, error) {
 	grant, err := g.GrantRepo.GetGrant(ctx, id)
-	if !g.m.waited {
-		g.m.waited = true
-		g.m.b.arrive(g.m.t)
-	}
+	g.m.meet()
 	return grant, err
+}
+
+type meetingCatalog struct {
+	portal.CatalogRepo
+	m *meetingTx
+}
+
+func (c meetingCatalog) GetRole(ctx context.Context, id string) (portal.Role, error) {
+	r, err := c.CatalogRepo.GetRole(ctx, id)
+	c.m.meet()
+	return r, err
+}
+
+func (c meetingCatalog) GetDeployment(ctx context.Context, id string) (portal.Deployment, error) {
+	d, err := c.CatalogRepo.GetDeployment(ctx, id)
+	c.m.meet()
+	return d, err
 }
 
 // Two revocations of the two manager grants of one initiative, run at the same time against a real database:
@@ -822,12 +854,22 @@ func TestMutationsRollBackWhenTheAuditInsertFails(t *testing.T) {
 	grantee := e.email(e.w.user(t, "active"))
 	e.w.grantUser(t, alpha.id, alpha.editor, target, "")
 	mustExec(t, e.owner, `INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (sha256('s1'::bytea), $1, now() + interval '1 hour')`, target)
+	spareRole := e.w.role(t, alpha.id, "spare")
+	app := e.w.app(t, alpha.id, "rollback.example.test")
+	spareDeployment := scalar[string](t, e.owner, `INSERT INTO deployments (host, app_id) VALUES ('spare.example.test', $1) RETURNING id::text`, app)
+	yes, rename, disabled := true, "renamed", "disabled"
 
 	rows := func() string {
-		return fmt.Sprintf("grants=%d groups=%d members=%d active=%d sessions=%d audit=%d",
+		return fmt.Sprintf("grants=%d groups=%d members=%d active=%d sessions=%d audit=%d catalog=%s",
 			e.count(`SELECT count(*) FROM initiative_access`), e.count(`SELECT count(*) FROM groups`),
 			e.count(`SELECT count(*) FROM group_members`), e.count(`SELECT count(*) FROM users WHERE status = 'active'`),
-			e.count(`SELECT count(*) FROM sessions`), e.auditCount())
+			e.count(`SELECT count(*) FROM sessions`), e.auditCount(),
+			// Every column of every catalog row, so a change to any of them shows.
+			scalar[string](t, e.owner, `SELECT md5(
+  coalesce((SELECT string_agg(i::text, ',' ORDER BY id) FROM initiatives i), '') ||
+  coalesce((SELECT string_agg(r::text, ',' ORDER BY id) FROM initiative_roles r), '') ||
+  coalesce((SELECT string_agg(a::text, ',' ORDER BY id) FROM apps a), '') ||
+  coalesce((SELECT string_agg(d::text, ',' ORDER BY id) FROM deployments d), ''))`))
 	}
 	mutations := map[string]func() error{
 		"grant.create": func() error {
@@ -844,6 +886,36 @@ func TestMutationsRollBackWhenTheAuditInsertFails(t *testing.T) {
 			_, err := e.svc.RevokeUserSessions(ctx, admin, target)
 			return err
 		},
+		"initiative.create": func() error {
+			_, err := e.svc.CreateInitiative(ctx, admin, portal.NewInitiative{Key: "fresh"})
+			return err
+		},
+		"initiative.update": func() error {
+			_, err := e.svc.UpdateInitiative(ctx, admin, alpha.id, portal.InitiativePatch{Name: &rename})
+			return err
+		},
+		"role.create": func() error {
+			_, err := e.svc.CreateRole(ctx, admin, alpha.id, portal.NewRole{Key: "fresh"})
+			return err
+		},
+		"role.update": func() error {
+			_, err := e.svc.UpdateRole(ctx, admin, alpha.editor, portal.RolePatch{ManagesAccess: &yes})
+			return err
+		},
+		"role.delete": func() error { return e.svc.DeleteRole(ctx, admin, spareRole) },
+		"app.create": func() error {
+			_, err := e.svc.CreateApp(ctx, admin, alpha.id, portal.NewApp{Name: "Fresh"})
+			return err
+		},
+		"app.disable": func() error {
+			_, err := e.svc.UpdateApp(ctx, admin, app, portal.AppPatch{Status: &disabled})
+			return err
+		},
+		"deployment.create": func() error {
+			_, err := e.svc.CreateDeployment(ctx, admin, app, portal.NewDeployment{Host: "fresh.example.test"})
+			return err
+		},
+		"deployment.delete": func() error { return e.svc.DeleteDeployment(ctx, admin, spareDeployment) },
 	}
 	for name, mutate := range mutations {
 		t.Run(name, func(t *testing.T) {

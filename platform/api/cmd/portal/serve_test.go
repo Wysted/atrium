@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"strings"
@@ -87,5 +88,39 @@ func TestPrivilegedLoginFlagIsLoggedAsAnError(t *testing.T) {
 	var buf bytes.Buffer
 	if err := checkLoginRole(postgres.RuntimeIdentity{SessionUser: "portal_login"}, false, slog.New(slog.NewJSONHandler(&buf, nil))); err != nil || buf.Len() != 0 {
 		t.Fatalf("a clean start without the flag must be silent: %v %q", err, buf.String())
+	}
+}
+
+type fakeLookup struct {
+	key   string
+	found bool
+	err   error
+}
+
+func (f fakeLookup) PortalAppInitiativeKey(context.Context, string) (string, bool, error) {
+	return f.key, f.found, f.err
+}
+
+func TestCheckPortalAppWarnsAndNeverFails(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		repo fakeLookup
+		want string
+	}{
+		{"verified", fakeLookup{key: "platform", found: true}, "portal app verified"},
+		{"unknown app", fakeLookup{}, "does not match any app"},
+		{"other initiative", fakeLookup{key: "hello", found: true}, "belongs to another initiative"},
+		{"database error", fakeLookup{err: errors.New("down")}, "cannot verify the portal app"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var buf bytes.Buffer
+			checkPortalApp(t.Context(), tt.repo, "app_x", slog.New(slog.NewTextHandler(&buf, nil)))
+			if !strings.Contains(buf.String(), tt.want) {
+				t.Fatalf("log = %q, want %q", buf.String(), tt.want)
+			}
+		})
 	}
 }

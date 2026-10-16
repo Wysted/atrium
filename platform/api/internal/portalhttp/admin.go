@@ -13,6 +13,22 @@ import (
 // AdminService is the use-case port of the administration endpoints (implemented by portal.Service). Every
 // method takes the caller's user id first: authorization happens inside, in the unit of work of the mutation.
 type AdminService interface {
+	ListInitiatives(ctx context.Context, callerID string, req portal.PageRequest) (portal.Page[portal.Initiative], error)
+	GetInitiative(ctx context.Context, callerID, initiativeID string) (portal.Initiative, error)
+	CreateInitiative(ctx context.Context, callerID string, in portal.NewInitiative) (portal.Initiative, error)
+	UpdateInitiative(ctx context.Context, callerID, initiativeID string, p portal.InitiativePatch) (portal.Initiative, error)
+
+	ListRoles(ctx context.Context, callerID, initiativeID string, req portal.PageRequest) (portal.Page[portal.Role], error)
+	CreateRole(ctx context.Context, callerID, initiativeID string, in portal.NewRole) (portal.Role, error)
+	UpdateRole(ctx context.Context, callerID, roleID string, p portal.RolePatch) (portal.Role, error)
+	DeleteRole(ctx context.Context, callerID, roleID string) error
+
+	ListApps(ctx context.Context, callerID, initiativeID string, req portal.PageRequest) (portal.Page[portal.App], error)
+	CreateApp(ctx context.Context, callerID, initiativeID string, in portal.NewApp) (portal.App, error)
+	UpdateApp(ctx context.Context, callerID, appID string, p portal.AppPatch) (portal.App, error)
+	CreateDeployment(ctx context.Context, callerID, appID string, in portal.NewDeployment) (portal.Deployment, error)
+	DeleteDeployment(ctx context.Context, callerID, deploymentID string) error
+
 	ListGrants(ctx context.Context, callerID, initiativeID string, req portal.PageRequest) (portal.Page[portal.Grant], error)
 	CreateGrant(ctx context.Context, callerID, initiativeID string, in portal.NewGrant) (portal.Grant, error)
 	DeleteGrant(ctx context.Context, callerID, grantID string) error
@@ -35,6 +51,14 @@ var _ AdminService = (*portal.Service)(nil)
 
 // Routes of the administration API (contract block 6). Ids come from the URL, never keys.
 const (
+	PathInitiatives      = "/api/v1/initiatives"
+	PathInitiative       = "/api/v1/initiatives/{id}"
+	PathInitiativeRoles  = "/api/v1/initiatives/{id}/roles"
+	PathRole             = "/api/v1/roles/{id}"
+	PathInitiativeApps   = "/api/v1/initiatives/{id}/apps"
+	PathApp              = "/api/v1/apps/{id}"
+	PathAppDeployments   = "/api/v1/apps/{id}/deployments"
+	PathDeployment       = "/api/v1/deployments/{id}"
 	PathInitiativeGrants = "/api/v1/initiatives/{id}/grants"
 	PathGrant            = "/api/v1/grants/{id}"
 	PathGroups           = "/api/v1/groups"
@@ -56,6 +80,8 @@ const (
 )
 
 func (a *api) adminRoutes(mux *http.ServeMux) {
+	a.catalogRoutes(mux)
+
 	mux.HandleFunc("GET "+PathInitiativeGrants, a.listGrants)
 	mux.HandleFunc("POST "+PathInitiativeGrants, a.createGrant)
 	mux.HandleFunc("DELETE "+PathGrant, a.deleteGrant)

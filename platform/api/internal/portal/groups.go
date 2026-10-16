@@ -9,8 +9,8 @@ import (
 	"platform/api/internal/adminz"
 )
 
-// groupKeyPattern mirrors the groups.key CHECK.
-var groupKeyPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9_-]*[a-z0-9])?$`)
+// keyPattern mirrors the key CHECK of groups, initiatives and initiative roles.
+var keyPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9_-]*[a-z0-9])?$`)
 
 type groupDoc struct {
 	Key  string `json:"key"`
@@ -60,7 +60,7 @@ func (s *Service) CreateGroup(ctx context.Context, callerID string, in NewGroup)
 		switch {
 		case in.Key == "":
 			v.Problems = append(v.Problems, FieldProblem{Field: "key", Code: CodeRequired})
-		case len(in.Key) > maxGroupKey || !cleanText(in.Key) || !groupKeyPattern.MatchString(in.Key):
+		case len(in.Key) > maxGroupKey || !cleanText(in.Key) || !keyPattern.MatchString(in.Key):
 			v.Problems = append(v.Problems, FieldProblem{Field: "key", Code: CodeInvalid})
 		}
 		if len(in.Name) > maxGroupName || !cleanText(in.Name) {

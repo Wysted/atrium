@@ -67,14 +67,25 @@ func decodeCursor(kind, text string, withTime bool) (*Cursor, error) {
 	if _, err := dec.Token(); !errors.Is(err, io.EOF) { // trailing data
 		return nil, ErrInvalidCursor
 	}
-	if doc.Kind != kind || !IsUUID(doc.ID) || (doc.At != nil) != withTime {
+	if doc.Kind != kind || !validCursorID(kind, doc.ID) || (doc.At != nil) != withTime {
 		return nil, ErrInvalidCursor
 	}
-	c := &Cursor{ID: strings.ToLower(doc.ID)}
+	c := &Cursor{ID: doc.ID}
+	if kind != cursorKindApps { // app ids are uppercase text; every other id is a UUID, stored in lowercase
+		c.ID = strings.ToLower(doc.ID)
+	}
 	if doc.At != nil {
 		c.At = *doc.At
 	}
 	return c, nil
+}
+
+// validCursorID reports whether id can be a key of the listing: an app id for the apps, a UUID otherwise.
+func validCursorID(kind, id string) bool {
+	if kind == cursorKindApps {
+		return appIDPattern.MatchString(id)
+	}
+	return IsUUID(id)
 }
 
 // pageSize applies the default and the cap to a requested page size.

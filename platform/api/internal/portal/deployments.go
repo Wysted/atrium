@@ -1,0 +1,164 @@
+package portal
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+
+	"platform/api/internal/adminz"
+)
+
+// Limits of a host (RFC 1035 and RFC 1123).
+const (
+	maxHostLength  = 253
+	maxLabelLength = 63
+)
+
+// validHost reports whether host is a lowercase DNS name that can be matched against X-Forwarded-Host: at most
+// 253 bytes, labels of 1 to 63 characters from [a-z0-9-] that neither start nor end with a hyphen, no trailing
+// dot, no wildcard, no port. A name whose last label is all digits is refused too: it would be an IP address
+// (or look like one), and Traefik routes by name. Internationalized names must come in their xn-- form.
+func validHost(host string) bool {
+	if host == "" || len(host) > maxHostLength {
+		return false
+	}
+	labels := strings.Split(host, ".")
+	for _, l := range labels {
+		if l == "" || len(l) > maxLabelLength || l[0] == '-' || l[len(l)-1] == '-' {
+			return false
+		}
+		for i := range len(l) {
+			if c := l[i]; (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '-' {
+				return false
+			}
+		}
+	}
+	return !allDigits(labels[len(labels)-1])
+}
+
+func allDigits(s string) bool {
+	for i := range len(s) {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return s != ""
+}
+
+// deploymentDoc is the audit document of a deployment.
+type deploymentDoc struct {
+	AppID string `json:"app_id"`
+	Host  string `json:"host"`
+}
+
+func deploymentResource(d Deployment) adminz.Resource {
+	return adminz.Resource{Type: TargetDeployment, ID: d.ID, InitiativeID: d.InitiativeID}
+}
+
+// CreateDeployment attaches a host to an app (platform admins only). The host must be valid (see validHost)
+// and must not be the auth host (CodeReserved). A host that already exists, on this app or on any other one
+// (the portal's own hosts included), is ErrHostTaken and creates nothing.
+func (s *Service) CreateDeployment(ctx context.Context, callerID, appID string, in NewDeployment) (Deployment, error) {
+	if !appIDPattern.MatchString(appID) {
+		return Deployment{}, ErrNotFound
+	}
+	var out Deployment
+	err := s.store.WithTx(ctx, func(tx Tx) error {
+		out = Deployment{}
+		sub, err := subject(ctx, tx, callerID)
+		if err != nil {
+			return err
+		}
+		a, err := tx.Catalog().GetApp(ctx, appID)
+		if err != nil {
+			return err
+		}
+		if _, err := authorize(sub, adminz.DeploymentCreate, adminz.Resource{Type: TargetDeployment, InitiativeID: a.InitiativeID}); err != nil {
+			return err
+		}
+		switch {
+		case in.Host == "":
+			return invalid("host", CodeRequired)
+		case !validHost(in.Host):
+			return invalid("host", CodeInvalid)
+		case s.authHost != "" && in.Host == s.authHost:
+			return invalid("host", CodeReserved)
+		}
+		d, err := tx.Catalog().InsertDeployment(ctx, a.ID, in.Host)
+		var ref *ReferenceError
+		switch {
+		case errors.Is(err, ErrDuplicate):
+			return ErrHostTaken
+		case errors.As(err, &ref): // the app vanished meanwhile
+			return ErrNotFound
+		case err != nil:
+			return fmt.Errorf("insert deployment: %w", err)
+		}
+		d.InitiativeID = a.InitiativeID
+		if err := record(ctx, tx, event{
+			actor: callerID, action: adminz.DeploymentCreate, targetType: TargetDeployment, targetID: d.ID,
+			initiativeID: a.InitiativeID, after: deploymentDoc{AppID: d.AppID, Host: d.Host},
+		}); err != nil {
+			return err
+		}
+		out = d
+		return nil
+	})
+	return out, err
+}
+
+// DeleteDeployment removes a host from its app (platform admins only). The last deployment of the portal app
+// cannot be removed (ErrLastPortalDeployment): without a host nobody could reach the portal to repair it.
+//
+// The app row is locked FOR NO KEY UPDATE before the deployments are counted, and the deployment is read again
+// after the lock. Two removals of the last two deployments therefore run one after the other and the second
+// counts what the first left; without the lock both would count two and both delete. The app row is a leaf of
+// the lock order of the portal: nothing else is locked while holding it. Repeating a removal is ErrNotFound.
+func (s *Service) DeleteDeployment(ctx context.Context, callerID, deploymentID string) error {
+	deploymentID, ok := canonicalUUID(deploymentID)
+	if !ok {
+		return ErrNotFound
+	}
+	return s.store.WithTx(ctx, func(tx Tx) error {
+		sub, err := subject(ctx, tx, callerID)
+		if err != nil {
+			return err
+		}
+		d, err := tx.Catalog().GetDeployment(ctx, deploymentID)
+		if err != nil {
+			return err
+		}
+		if _, err := authorize(sub, adminz.DeploymentDelete, deploymentResource(d)); err != nil {
+			return err
+		}
+
+		a, err := tx.Catalog().LockApp(ctx, d.AppID)
+		if err != nil {
+			return err
+		}
+		if d, err = tx.Catalog().GetDeployment(ctx, deploymentID); err != nil {
+			return err
+		}
+		if s.isPortalApp(a) {
+			n, err := tx.Catalog().CountDeployments(ctx, a.ID)
+			if err != nil {
+				return fmt.Errorf("count deployments: %w", err)
+			}
+			if n <= 1 {
+				return ErrLastPortalDeployment
+			}
+		}
+		deleted, err := tx.Catalog().DeleteDeployment(ctx, d.ID)
+		if err != nil {
+			return fmt.Errorf("delete deployment: %w", err)
+		}
+		if !deleted {
+			return ErrNotFound
+		}
+		return record(ctx, tx, event{
+			actor: callerID, action: adminz.DeploymentDelete, targetType: TargetDeployment, targetID: d.ID,
+			initiativeID: d.InitiativeID, before: deploymentDoc{AppID: d.AppID, Host: d.Host},
+		})
+	})
+}
