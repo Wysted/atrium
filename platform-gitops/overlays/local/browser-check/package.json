@@ -1,0 +1,9 @@
+{
+  "name": "portal-browser-check",
+  "private": true,
+  "type": "module",
+  "description": "Real-browser smoke of the portal web app. The playwright version MUST equal the pinned image (see browser-check.sh).",
+  "dependencies": {
+    "playwright": "1.64.1"
+  }
+}

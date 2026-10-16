@@ -411,7 +411,7 @@ check_not "no rejected mutation was applied" "$(cat "$WORK/b")" smoke-group-reje
 check "the accepted one was" "$(cat "$WORK/b")" smoke-group-ok
 code=$(mutate "$JAD" DELETE "$P/api/v1/groups/$gid" same-origin application/json); check "DELETE same-origin + JSON (cleanup)" "$code" 204
 
-section "15. Portal responses: security headers, no CORS, /metrics not served on the public host"
+section "15. Portal responses: security headers, no CORS, /metrics, probes and /_platform/ not served by the portal"
 code=$(api "$JAD" -H 'Origin: https://evil.example' "$P/api/v1/me"); check "GET with a foreign Origin" "$code" 200
 hdrs="$(tr -d '\r' < "$WORK/h" | tr A-Z a-z)"
 for h in "content-security-policy: default-src 'none'; frame-ancestors 'none'" "strict-transport-security: max-age=63072000; includesubdomains" \
@@ -420,11 +420,20 @@ for h in "content-security-policy: default-src 'none'; frame-ancestors 'none'" "
 check_not "no Access-Control-* on the response" "$hdrs" "access-control-"
 code=$(curl -s -o "$WORK/b" -D "$WORK/h" -w '%{http_code}' -X OPTIONS -H "Origin: https://evil.example" -H 'Access-Control-Request-Method: POST' "$P/api/v1/groups")
 echo "  preflight status: $code"; check_not "no Access-Control-* on a preflight" "$(tr -d '\r' < "$WORK/h" | tr A-Z a-z)" "access-control-"
-code=$(api "$JAD" "$P/metrics"); check "authenticated /metrics on the public host" "$code" 404
-code=$(curl -s -o "$WORK/b" -w '%{http_code}' -H 'Accept: application/json' "$P/metrics"); check "anonymous /metrics on the public host (ForwardAuth, API request)" "$code" 401
-for path in /healthz /readyz; do
+# Contract: /metrics lives on the metrics listener only and the probes on the internal one; the web handler (SPA fallback)
+# must never answer them on the public host. With a session they are a JSON 404, never the SPA shell. The /_platform/
+# prefix is reserved on every app host: ForwardAuth only intercepts the callback (with a code) and logout; the rest of
+# the subtree reaches the portal, which answers the same JSON 404.
+for path in /metrics /metrics/ /healthz /readyz /_platform/nope; do
   code=$(api "$JAD" "$P$path"); check "authenticated $path on the public host" "$code" 404
+  check "  (problem+json)" "$(header content-type)" "application/problem+json"
+  check_not "  (not the SPA shell)" "$(cat "$WORK/b")" "<html"
+  check_not "  (no Prometheus exposition / probe answer)" "$(cat "$WORK/b")" "# HELP"
 done
+code=$(nav "$JAD" "$P/_platform/nope"); check "authenticated navigation to /_platform/nope" "$code" 404
+check "  (problem+json, never text/html)" "$(header content-type)" "application/problem+json"
+code=$(curl -s -o "$WORK/b" -w '%{http_code}' -H 'Accept: application/json' "$P/metrics"); check "anonymous /metrics on the public host (ForwardAuth, API request)" "$code" 401
+code=$(curl -s -o "$WORK/b" -w '%{http_code}' -H 'Accept: application/json' "$P/_platform/nope"); check "anonymous /_platform/nope (ForwardAuth, API request)" "$code" 401
 
 section "16. Metrics and internal ports are closed to app namespaces; JWKS stays open"
 # Negatives come only from smoke-app: an app-labelled namespace WITHOUT policies of its own, so the destination's ingress
@@ -623,8 +632,91 @@ check "POST /-/reload is refused (lifecycle API off; a Grafana-labelled pod asks
 check "Grafana pod mounts no ServiceAccount token" "$($K -n monitoring get deploy monitoring-grafana -o jsonpath='{.spec.template.spec.automountServiceAccountToken}')" false
 check "API egress policy lists /32 endpoints only" "$($K -n monitoring get networkpolicy allow-egress-apiserver -o jsonpath='{.spec.egress[0].to[*].ipBlock.cidr}' | tr ' ' '\n' | grep -vc '/32$' || true)" 0
 
+section "20. Web app through Traefik: HTML with the startup-computed CSP, immutable assets, JSON 404s, ForwardAuth, method guards"
+# inline_hash <html file>: sha256 (base64) of every EXECUTABLE inline <script> body, one per line (what a browser compares
+# to the CSP). Data blocks (type="application/json", e.g. __NUXT_DATA__) never execute and are not hashed.
+inline_hash() { python3 -c '
+import base64, hashlib, re, sys
+html = open(sys.argv[1], encoding="utf-8").read()
+for m in re.finditer(r"<script(?![^>]*\bsrc=)([^>]*)>(.*?)</script>", html, re.S):
+    t = re.search(r"\btype=[\"\x27]?([^\"\x27\s>]*)", m.group(1))
+    if t and t.group(1) not in ("module", "text/javascript", "application/javascript"):
+        continue
+    print(base64.b64encode(hashlib.sha256(m.group(2).encode()).digest()).decode())' "$1"; }
+JW="$WORK/portal-web"
+login "$JW" alice@example.com "$P" >/dev/null
+code=$(nav "$JW" "$P/"); check "GET / (navigation, session)" "$code" 200
+cp "$WORK/b" "$WORK/web-home.html"; hdrs="$(tr -d '\r' < "$WORK/h" | tr A-Z a-z)"
+check "content type" "$(header content-type)" "text/html"
+check "Cache-Control no-cache" "$(header cache-control)" "no-cache"
+csp="$(header content-security-policy)"; echo "  csp: $csp"
+for d in "default-src 'none'" "script-src 'self' 'sha256-" "style-src 'self';" "img-src 'self';" "font-src 'self';" "connect-src 'self';" \
+         "form-action 'self' $AUTH;" "frame-ancestors 'none'" "base-uri 'none'"; do check "CSP directive" "$csp" "$d"; done
+check_not "CSP has no unsafe-inline/unsafe-eval" "$csp" "unsafe-"
+hashes="$(inline_hash "$WORK/web-home.html")"
+check "exactly one inline script" "$(echo "$hashes" | grep -c .)" 1
+check "CSP sha256 matches the inline script of the served HTML" "$csp" "'sha256-$hashes'"
+for h in "strict-transport-security: max-age=63072000; includesubdomains" "x-frame-options: deny" "x-content-type-options: nosniff" \
+         "cross-origin-opener-policy: same-origin" "cross-origin-resource-policy: same-origin" "referrer-policy: no-referrer"; do check "header" "$hdrs" "$h"; done
+check_not "no Access-Control-* on the HTML" "$hdrs" "access-control-"
+home_etag="$(header etag)"
+code=$(nav "$JW" "$P/admin/groups/some-id"); check "deep client route /admin/groups/some-id" "$code" 200
+check "deep route serves the same body as /" "$(cmp -s "$WORK/b" "$WORK/web-home.html" && echo same)" same
+check "deep route has the same CSP" "$(header content-security-policy)" "$csp"
+check "deep route Cache-Control no-cache" "$(header cache-control)" "no-cache"
+code=$(nav "$JW" -H "If-None-Match: $home_etag" "$P/"); check "conditional GET / with the ETag" "$code" 304
+asset="$(grep -o '/_nuxt/[^"]*\.js' "$WORK/web-home.html" | head -1)"; echo "  asset: $asset"
+[[ -n "$asset" ]] && pass "an /_nuxt/*.js asset is referenced by the HTML" || fail "no /_nuxt/*.js asset in the served HTML"
+code=$(api "$JW" "$P$asset"); check "GET $asset" "$code" 200
+check "asset content type is JavaScript" "$(header content-type)" "javascript"
+check "asset Cache-Control immutable" "$(header cache-control)" "public, max-age=31536000, immutable"
+check "asset keeps the API CSP" "$(header content-security-policy)" "default-src 'none'; frame-ancestors 'none'"
+check "asset has nosniff" "$(header x-content-type-options)" nosniff
+css="$(grep -o '/_nuxt/[^"]*\.css' "$WORK/web-home.html" | head -1)"
+code=$(api "$JW" "$P$css"); check "GET $css" "$code" 200
+check "stylesheet content type" "$(header content-type)" "text/css"
+code=$(api "$JW" "$P/_nuxt/nope.js"); check "missing /_nuxt/nope.js" "$code" 404
+check "404 is problem+json" "$(header content-type)" "application/problem+json"
+check "404 body" "$(cat "$WORK/b")" '"status":404'
+check_not "a missing asset is never cached as immutable" "$(header cache-control)" immutable
+code=$(api "$JW" "$P/api/unknown"); check "GET /api/unknown" "$code" 404
+check "unknown API route is problem+json" "$(header content-type)" "application/problem+json"
+check "unknown API route keeps the API CSP" "$(header content-security-policy)" "default-src 'none'; frame-ancestors 'none'"
+code=$(api "$JW" "$P/missing.json"); check "GET a path that looks like a file is a JSON 404, not the SPA" "$code" 404
+echo "  -- Method guards (JSON/CrossOrigin guards run before routing)"
+code=$(mutate "$JW" POST "$P/" same-origin application/json '{}'); check "POST / same-origin + JSON" "$code" 405
+check "405 lists the allowed methods" "$(header allow)" "GET, HEAD"
+code=$(mutate "$JW" POST "$P/" same-origin -); check "POST / without Content-Type (JSON guard first)" "$code" 415
+code=$(mutate "$JW" POST "$P/" cross-site application/json '{}'); check "POST / cross-site (CrossOriginProtection first)" "$code" 403
+echo "  -- ForwardAuth applies to the web app like to the API"
+code=$(nav "$WORK/web-anon" "$P/"); check "navigation to / without session" "$code" 302
+check "redirects to the auth host login" "$(header location)" "$AUTH/login?"
+code=$(nav "$WORK/web-anon" "$P/admin/groups/some-id"); check "navigation to a deep route without session" "$code" 302
+check "deep route carries rd with the path" "$(header location)" "rd=https%3A%2F%2F$P_HOST%2Fadmin%2Fgroups%2Fsome-id"
+code=$(api "$WORK/web-anon" "$P$asset"); check "asset fetch without session (non-navigation)" "$code" 401
+code=$(api "$WORK/web-anon" "$P/api/unknown"); check "unknown API route without session" "$code" 401
+
+section "21. Real browser (Chromium/Playwright in Docker): fake login, / renders, error page for an unknown route, zero CSP violations"
+# Last section and part of the smoke (not a separate command): it shares the smoke's contract (PASS/FAIL lines, one exit
+# code, cluster as found) and the browser is the only check of what the CSP does to the SPA (inline styles/scripts). Cost:
+# needs the host docker and the pinned Playwright image (pulled once). SKIP_BROWSER_CHECK=1 skips it explicitly.
+if [[ "${SKIP_BROWSER_CHECK:-}" == 1 ]]; then
+  echo "  SKIP: SKIP_BROWSER_CHECK=1"; BROWSER_SKIPPED=1
+else
+  "$REL/browser-check/browser-check.sh" > "$WORK/browser.log" 2>&1; rc=$?
+  cat "$WORK/browser.log"
+  bf="$(grep -c '^  FAIL:' "$WORK/browser.log")"
+  if (( bf > 0 )); then
+    while IFS= read -r line; do fail "browser: ${line#  FAIL: }"; done < <(grep '^  FAIL:' "$WORK/browser.log")
+  elif (( rc != 0 )); then
+    fail "browser check exited $rc without a verdict (see the output above)"
+  else
+    pass "browser check finished with $(grep -c '^  PASS:' "$WORK/browser.log") passing checks"
+  fi
+fi
+
 echo
-if (( FAILS == 0 )); then echo "ALL CHECKS PASSED"; else
+if (( FAILS == 0 )); then echo "ALL CHECKS PASSED${BROWSER_SKIPPED:+ (browser check SKIPPED)}"; else
   echo "$FAILS CHECK(S) FAILED:"
   for f in "${FAILED[@]}"; do echo "  - section $f"; done
   exit 1
