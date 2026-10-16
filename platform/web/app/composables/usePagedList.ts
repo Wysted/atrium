@@ -5,15 +5,17 @@ import type { ApiError } from '~/composables/useApi'
  * echoed back (URL-encoded). A failed first page leaves `items` empty and sets `error`; a failed "load more"
  * keeps the items already shown and sets `error` too (the UI tells them apart by `items.length`).
  * A newer request wins over an older one still in flight (`reload()` after a mutation).
+ * `{ immediate: false }` skips the load on mount (the caller runs `reload()` itself, e.g. when a dialog opens).
  */
 export function usePagedList<TPage extends { next_cursor?: string }, TItem>(
   path: string,
   select: (page: TPage) => TItem[],
+  options: { immediate?: boolean } = {},
 ) {
   const items = shallowRef<TItem[]>([])
   const nextCursor = ref<string | null>(null)
   const error = shallowRef<ApiError | null>(null)
-  const loading = ref(true)
+  const loading = ref(options.immediate ?? true)
   const loadingMore = ref(false)
   let generation = 0
 
@@ -66,7 +68,7 @@ export function usePagedList<TPage extends { next_cursor?: string }, TItem>(
     }
   }
 
-  onMounted(reload)
+  if (options.immediate ?? true) onMounted(reload)
 
   return { items, error, loading, loadingMore, hasMore: computed(() => nextCursor.value !== null), reload, loadMore }
 }

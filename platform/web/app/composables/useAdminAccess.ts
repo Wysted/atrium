@@ -12,6 +12,9 @@ export function useAdminAccess() {
   const permissions = computed(() => state.data.value?.permissions ?? null)
   const isPlatformAdmin = computed(() => !!permissions.value?.platform_admin)
   const isManager = computed(() => (permissions.value?.managed_initiatives.length ?? 0) > 0)
+  /** Platform admin, or a non-expired `manages_access` grant on this initiative (grants and roles screens). */
+  const managesInitiative = (initiativeId: string) =>
+    isPlatformAdmin.value || !!permissions.value?.managed_initiatives.some(i => i.id === initiativeId)
   return {
     me: state.data,
     error: state.error,
@@ -20,6 +23,7 @@ export function useAdminAccess() {
     revalidate: state.refreshQuiet,
     isPlatformAdmin,
     isManager,
+    managesInitiative,
     canAdminister: computed(() => isPlatformAdmin.value || isManager.value),
   }
 }

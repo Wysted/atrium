@@ -93,3 +93,89 @@ export interface PatchInitiativeBody {
   name?: string
   status?: InitiativeStatus
 }
+
+/** GET/POST/PATCH of a role: `/initiatives/{id}/roles`, `/roles/{id}`. The key is immutable. */
+export interface Role {
+  id: string
+  initiative_id: string
+  key: string
+  manages_access: boolean
+}
+
+/** GET /api/v1/initiatives/{id}/roles?cursor=&limit= */
+export interface RoleList {
+  roles: Role[]
+  next_cursor?: string
+}
+
+/** POST /api/v1/initiatives/{id}/roles. `key` <= 32 chars with the initiative key pattern. */
+export interface CreateRoleBody {
+  key: string
+  manages_access: boolean
+}
+
+/** PATCH /api/v1/roles/{id}: `manages_access` is the only field. */
+export interface PatchRoleBody {
+  manages_access: boolean
+}
+
+/** The role embedded in a grant (no `initiative_id`). */
+export interface GrantRole {
+  id: string
+  key: string
+  manages_access: boolean
+}
+
+export interface GrantUser {
+  id: string
+  email: string
+  name: string
+}
+
+/** A group reference: embedded in a grant and listed by GET /groups (which adds `created_at`). */
+export interface GrantGroup {
+  id: string
+  key: string
+  name: string
+}
+
+/** One grant. Exactly one of `user` and `group` is set, the other is null. */
+export interface Grant {
+  id: string
+  initiative_id: string
+  role: GrantRole
+  user: GrantUser | null
+  group: GrantGroup | null
+  /** RFC 3339; null = never. Expired grants are listed too. */
+  expires_at: string | null
+  /** User id of the granter; null when that user no longer exists. */
+  granted_by: string | null
+  granted_at: string
+}
+
+/** GET /api/v1/initiatives/{id}/grants?cursor=&limit= (oldest first). */
+export interface GrantList {
+  grants: Grant[]
+  next_cursor?: string
+}
+
+/** POST /api/v1/initiatives/{id}/grants. Exactly one of `email` and `group_id`; `expires_at` must be in the future. */
+export interface CreateGrantBody {
+  email?: string
+  group_id?: string
+  role_id: string
+  expires_at?: string
+}
+
+export interface Group {
+  id: string
+  key: string
+  name: string
+  created_at: string
+}
+
+/** GET /api/v1/groups?cursor=&limit= (platform admins and managers; no members). */
+export interface GroupList {
+  groups: Group[]
+  next_cursor?: string
+}

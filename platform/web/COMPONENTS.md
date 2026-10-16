@@ -109,9 +109,22 @@ All accept `as` (tag name, default `div`) and a default slot.
 
 ### BaseInput
 - Purpose: single-line text input.
-- Props: `modelValue` (`v-model`, string), `type?: 'text'|'email'|'search' = 'text'`, `readonly?`, `disabled?`. Other attributes (`id`, `aria-*`, `autocomplete`...) fall through to the `<input>`.
+- Props: `modelValue` (`v-model`, string), `type?: 'text'|'email'|'search'|'datetime-local' = 'text'` (`datetime-local`: wall-clock value `YYYY-MM-DDTHH:mm`; `localInputToRfc3339()` in `app/utils/datetime.ts` adds the user's offset), `readonly?`, `disabled?`. Other attributes (`id`, `aria-*`, `autocomplete`...) fall through to the `<input>`.
 - Exposes `focus()`. Invalid look comes from `aria-invalid`.
 - A11y: never use without a `BaseField` (or another label). Focus ring via the `focus` token.
+
+### BaseSelect
+- Purpose: native `<select>` (Reka's Select injects `<style>`, banned by the CSP).
+- Props: `modelValue` (`v-model`, string), `options: SelectOption[]` (`{ value, label, disabled? }`, in `app/types/ui.ts`), `placeholder?: string` (adds a disabled first option with the empty value), `disabled?`. Other attributes (`id`, `aria-*`) fall through to the `<select>`.
+- Exposes `focus()`. Invalid look comes from `aria-invalid`.
+- Example: `<BaseField label="Role" v-slot="field"><BaseSelect v-bind="field" v-model="roleId" :options="roleOptions" placeholder="Choose a role" /></BaseField>`
+- A11y: never use without a `BaseField` (or another label); the browser provides keyboard and the platform picker.
+
+### BaseCheckbox
+- Purpose: native checkbox with its visible label (default slot) and optional hint.
+- Props: `modelValue` (`v-model`, boolean), `hint?: string` (linked with `aria-describedby`). Other attributes (`disabled`, `name`) fall through to the `<input>`.
+- Example: `<BaseCheckbox v-model="managesAccess" hint="Holders can grant access.">Manages access</BaseCheckbox>`
+- A11y: the label is a real `<label for>`; it carries its own text, so it does not go inside a `BaseField`.
 
 ### BaseTable
 - Purpose: semantic data table.
@@ -186,13 +199,16 @@ Style behavior of what is used (reka-ui 2.11.0, from its source; the browser che
 
 ## API layer
 
-- `app/types/api.ts`: payload types mirroring `platform/api/internal/portalhttp` (`MeResponse`, `HomeResponse`, `HomeApp`, `InitiativeRef`, `Initiative`, `InitiativeList`, `CreateInitiativeBody`, `PatchInitiativeBody`) and the RFC 9457 `Problem`.
+- `app/types/api.ts`: payload types mirroring `platform/api/internal/portalhttp` (`MeResponse`, `HomeResponse`, `HomeApp`, `InitiativeRef`, `Initiative`, `InitiativeList`, `CreateInitiativeBody`, `PatchInitiativeBody`, `Role`, `RoleList`, `CreateRoleBody`, `PatchRoleBody`, `Grant`, `GrantRole`, `GrantUser`, `GrantGroup`, `GrantList`, `CreateGrantBody`, `Group`, `GroupList`) and the RFC 9457 `Problem`.
 - `app/composables/useApi.ts`: `apiGet<T>(path)` (same-origin `$fetch` under `/api/v1`, no tokens or CSRF headers, no retries), `ApiError` (`status`, `kind`, `problem`, `reloading`) and `useApiData<T>(key, path)` (client-side `useAsyncData`, returns `data`, `error`, `pending`, `refresh`, `refreshQuiet()` (re-fetch that keeps the previous state on failure, resolves to a boolean), `set(value)` (replace the cached value, e.g. with a mutation response); failures come back as `error`, never thrown). Error kinds: `unauthorized` (401), `forbidden` (403), `not_found` (404), `conflict` (409), `invalid` (400/415/422), `unavailable` (503), `server` (other 5xx), `network`, `unknown`. Response bodies are never logged and `ApiError.message` is fixed text.
 - Mutations: `apiSend(method, path, body?)` / `useApi().post|patch|del` (`POST`/`PATCH`/`DELETE`, `Content-Type: application/json` always sent, DELETE without a body included, same-origin, no CSRF headers: CrossOriginProtection plus the JSON content type are the guards; no retries). `ApiError.retryAfter` holds a numeric `Retry-After` (503), capped at 120 s. 413 maps to kind `invalid`.
 - `app/utils/mutationError.ts`: `describeMutationError(error, { conflict, notFound?, fields?, fieldCopy? })` -> `{ message, fields, retryable }`, fixed English copy only (server `detail` is never shown). 422 `errors[]` -> per declared field via `CODE_COPY` (`required`, `invalid`, `must_be_in_the_future`, `no_unique_active_user`, `unknown`, `exactly_one_required`, `reserved`, `at_least_one_required`; unknown codes fall back to `invalid`; first error per field wins; errors on fields the form does not render fold into "Check the values and try again."), 400/413/415 -> "The request was not accepted. Reload the page and try again.", 409 -> the per-action `conflict` copy, 403 -> "You do not have permission to do this.", 404 -> "This item no longer exists.", 503 -> "The portal is busy. Try again in N seconds." (retryable), network/5xx retryable, 401 -> reload policy below.
-- `app/composables/useAdminAccess.ts`: `/me` (shared `me` key) as `isPlatformAdmin`, `isManager`, `canAdminister`, `revalidate()` (quiet background re-read; the admin layout calls it on mount). The UI only hides; the API enforces.
-- `app/composables/usePagedList.ts`: `usePagedList<Page, Item>(path, select)` keyset list (opaque cursor echoed back): `items`, `loading`, `loadingMore`, `error`, `hasMore`, `reload()`, `loadMore()`; a newer request wins over an older one.
+- `app/composables/useAdminAccess.ts`: `/me` (shared `me` key) as `isPlatformAdmin`, `isManager`, `canAdminister`, `managesInitiative(id)` (platform admin, or `managed_initiatives` includes the id), `revalidate()` (quiet background re-read; the admin layout calls it on mount). The UI only hides; the API enforces.
+- `app/composables/usePagedList.ts`: `usePagedList<Page, Item>(path, select, { immediate? })` keyset list (opaque cursor echoed back; `immediate: false` skips the load on mount, the caller runs `reload()`): `items`, `loading`, `loadingMore`, `error`, `hasMore`, `reload()`, `loadMore()`; a newer request wins over an older one.
 - `app/utils/initiative.ts`: key/name validation mirroring Go (key `^[a-z0-9]([a-z0-9_-]*[a-z0-9])?$`, <= 63; name <= 200 bytes), `initiativeLabel()` (name, else key), `PLATFORM_INITIATIVE_KEY`.
+- `app/composables/useInitiativeContext.ts`: `provideInitiativeContext()` / `useInitiativeContext()` -> `{ initiative, set }`; the `/admin/initiatives/[id]` parent route provides the loaded initiative to its nested pages.
+- `app/utils/role.ts`: role key validation (<= 32, same pattern as initiative keys), `ROLE_FIELD_COPY`, `LAST_MANAGER_COPY` (fixed 409 copy for revoking a manager grant or turning `manages_access` off).
+- `app/utils/datetime.ts`: `formatTimestamp()` (locale), `isPast()`, `localInputToRfc3339()` (a `datetime-local` value to RFC 3339 with the user's offset).
 - 401 policy: the session is gone, so the page reloads once (ForwardAuth answers the navigation with a 302 to login). `login_url` is not followed. Loop guard: at most one reload per 30 s (`sessionStorage`), plus a module flag so every 401 after the first in the same page load also reports `reloading` (no flash of the reload message); beyond that `ApiError.reloading` is false and the UI asks the user to reload.
 - `app/utils/hostname.ts`: `isHostname()` (mirrors Go `hostname.Valid`: lowercase DNS labels, <= 253 chars, no trailing dot, last label not all digits) and `hostUrl()` (`https://<host>/` or null).
 
@@ -216,10 +232,22 @@ Style behavior of what is used (reka-ui 2.11.0, from its source; the browser che
 - `FeaturesInitiativesCreateDialog` (`CreateDialog.vue`): `v-model:open`, emits `created(initiative)` (the list page navigates to `/admin/initiatives/<id>`). Key input focused on open. Client validation like Go; 409 shows "An initiative with this key already exists. If you just retried, it may have been created by your earlier attempt: check the list." on the key field.
 - `FeaturesInitiativesNameForm` (`NameForm.vue`): props `initiative`, `editable`; key always read-only; PATCH name; emits `saved(initiative)` (the PATCH response; the page sets it as its state, no re-fetch).
 - `FeaturesInitiativesStatusPanel` (`StatusPanel.vue`): props `initiative`, `canChange`; one button (activate/deactivate) behind `UiConfirmDialog`, hidden for the `platform` initiative (409 still handled); emits `changed(initiative)` (the PATCH response).
-- Pages: `/admin/initiatives` (keyset list with "Load more", "New initiative" for platform admins) and `/admin/initiatives/[id]` (overview + status; managers see it read-only; 404 -> "Initiative not found").
+- Pages: `/admin/initiatives` (keyset list with "Load more", "New initiative" for platform admins) and the nested `/admin/initiatives/[id]` (parent route `[id].vue`: loads the initiative once, h1, `FeaturesInitiativesSubNav`, `<NuxtPage />`; 404 -> "Initiative not found") with children `index` (overview + status; managers see it read-only), `grants` and `roles`. Each child is a thin page over a panel.
+- `FeaturesInitiativesSubNav` (`SubNav.vue`): prop `initiativeId`. `<nav aria-label="Initiative">` with plain links Overview / Grants / Roles (not a tabs widget), `aria-current="page"` on the current one.
+
+### features/roles
+- `FeaturesRolesPanel` (`Panel.vue`): props `initiativeId`, `canEdit` (platform admin). Keyset list; with `canEdit`: "New role", toggle `manages_access` (ON goes straight through, OFF asks for confirmation; 409 = `LAST_MANAGER_COPY`) and delete behind `UiConfirmDialog` (409 = "Remove this role's grants first."). Managers see it read-only. The API returns no grant count per role, so none is shown.
+- `FeaturesRolesTable` (`Table.vue`): props `roles`, `canEdit`, `caption`, `busyId?`; emits `toggle(role)`, `remove(role)`.
+- `FeaturesRolesCreateDialog` (`CreateDialog.vue`): props `initiativeId`, `v-model:open`, emits `created(role)`. Key validated like Go (<= 32), `BaseCheckbox` for `manages_access`; 409 = key taken.
+
+### features/grants
+- `FeaturesGrantsPanel` (`Panel.vue`): props `initiativeId`, `canEdit` (platform admin or manager of the initiative). Keyset list, "Grant access", revoke behind `UiConfirmDialog` (409 = `LAST_MANAGER_COPY`). Removed grants leave the list locally; a creation reloads it.
+- `FeaturesGrantsTable` (`Table.vue`): props `grants`, `canRevoke`, `caption`; emits `revoke(grant)`. Subject (user name/email or group), role (+ "Manages access" badge), expiry with an "Expired" badge (the API lists expired grants), created date.
+- `FeaturesGrantsCreateDialog` (`CreateDialog.vue`): props `initiativeId`, `v-model:open`, emits `created(grant)`. Subject type select (user by email / group), role select (all pages of this initiative's roles), optional `datetime-local` expiry validated in the future, 422 per field (`email`, `group_id`, `role_id`, `expires_at`), 409 = subject already holds the role.
+- `FeaturesGrantsGroupSelect` (`GroupSelect.vue`): `v-model` group id; native select over `GET /groups` with "Load more groups" (polite live region announces "N groups loaded"); clears a `v-model` id that is not among the loaded options; fetches on mount, so mount it only when needed. Scaling debt: no search, so very large group lists need many "Load more" clicks.
 - `FeaturesHomeLoadError` now takes optional `subject` (title: "Could not load {subject}", default "your apps") and `forbiddenDescription`.
 
 ## TODO (priority order)
 
-1. Admin screens beyond initiatives: roles, grants, apps (next slice), groups, users, audit, driven by `platform/docs/contract.md`.
+1. Admin screens beyond initiatives, roles and grants: apps (next slice), groups, users, audit, driven by `platform/docs/contract.md`.
 2. Menu (Reka UI), only if a screen needs it; audit its source for `<style>` first.

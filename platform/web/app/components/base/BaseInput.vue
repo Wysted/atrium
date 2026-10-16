@@ -5,7 +5,7 @@
  * styled from `aria-invalid`. `focus()` is exposed so a form can move focus to the first invalid field.
  */
 withDefaults(defineProps<{
-  type?: 'text' | 'email' | 'search'
+  type?: 'text' | 'email' | 'search' | 'datetime-local'
   readonly?: boolean
   disabled?: boolean
 }>(), {

@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import type { Initiative } from '~/types/api'
 
+// Parent route of the initiative screens (overview, grants, roles): it loads the initiative once, shows the title
+// and the sub-navigation, and hands the initiative to the nested pages.
 definePageMeta({ layout: 'admin' })
 
 const route = useRoute()
@@ -16,6 +18,12 @@ useHead({ title: computed(() => `${title.value} - Initiatives - Administration -
 
 const notFound = computed(() => state.error.value?.kind === 'not_found')
 const loading = computed(() => !initiative.value && !state.error.value)
+
+provideInitiativeContext({
+  // Only the nested pages read it, and they render once the initiative is loaded.
+  initiative: initiative as Ref<Initiative>,
+  set: value => state.set(value),
+})
 </script>
 
 <template>
@@ -57,32 +65,10 @@ const loading = computed(() => !initiative.value && !state.error.value)
     <template v-else-if="initiative">
       <BasePageHeader
         :title="title"
-        :description="access.isPlatformAdmin.value ? 'Rename the initiative or change its status.' : 'You can see this initiative; only platform administrators change it.'"
+        :description="access.isPlatformAdmin.value ? 'Manage the initiative, its roles and who has access.' : 'Manage who has access to this initiative.'"
       />
-      <BaseCard as="section" aria-labelledby="initiative-overview" :padding="6">
-        <BaseStack :gap="4">
-          <BaseHeading id="initiative-overview" :level="2" size="lg">
-            Overview
-          </BaseHeading>
-          <FeaturesInitiativesNameForm
-            :initiative="initiative"
-            :editable="access.isPlatformAdmin.value"
-            @saved="state.set($event)"
-          />
-        </BaseStack>
-      </BaseCard>
-      <BaseCard as="section" aria-labelledby="initiative-status" :padding="6">
-        <BaseStack :gap="4">
-          <BaseHeading id="initiative-status" :level="2" size="lg">
-            Status
-          </BaseHeading>
-          <FeaturesInitiativesStatusPanel
-            :initiative="initiative"
-            :can-change="access.isPlatformAdmin.value"
-            @changed="state.set($event)"
-          />
-        </BaseStack>
-      </BaseCard>
+      <FeaturesInitiativesSubNav :initiative-id="initiative.id" />
+      <NuxtPage />
     </template>
   </BaseStack>
 </template>

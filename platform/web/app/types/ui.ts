@@ -36,3 +36,10 @@ export interface TableColumn {
   /** Keep the header text for assistive tech only (e.g. an actions column). */
   hideLabel?: boolean
 }
+
+/** An option of `BaseSelect`. */
+export interface SelectOption {
+  value: string
+  label: string
+  disabled?: boolean
+}
