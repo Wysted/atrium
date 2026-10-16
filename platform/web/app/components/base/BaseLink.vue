@@ -2,7 +2,8 @@
 /**
  * `to` is an internal route (NuxtLink); `href` is an external URL (plain <a>).
  * `href` must be a trusted URL (literal or built from known constants), never a user-controlled value:
- * there is no safe-href helper yet, so `javascript:` and `data:` URLs would not be blocked.
+ * `href` is not sanitized, so `javascript:` and `data:` URLs would not be blocked. Hrefs built from data must come
+ * from a validating helper (`hostUrl()` in app/utils/hostname.ts, used by FeaturesHomeAppCard).
  * External links with target="_blank" always get rel="noopener noreferrer".
  */
 const props = defineProps<{

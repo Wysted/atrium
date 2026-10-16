@@ -5,7 +5,8 @@ import type { ButtonSize, ButtonVariant } from '~/types/ui'
  * Renders NuxtLink when `to` is set, <a> when `href` is set, otherwise <button>.
  * Disabled/loading links render as <a> without href and with aria-disabled, so they are not actionable.
  * `href` must be a trusted URL (literal or built from known constants), never a user-controlled value:
- * there is no safe-href helper yet, so `javascript:` and `data:` URLs would not be blocked.
+ * `href` is not sanitized, so `javascript:` and `data:` URLs would not be blocked. Hrefs built from data must come
+ * from a validating helper (`hostUrl()` in app/utils/hostname.ts).
  *
  * `click` is declared as an emit, so a parent `@click` does not fall through to the root element: it fires
  * only when the button is active. While `loading`, the <button> stays natively enabled (keeps focus) and

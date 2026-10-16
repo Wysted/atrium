@@ -7,7 +7,7 @@ Source of truth for the portal UI components. Read it before creating or changin
 1. Layers
    - `app/components/base/` (prefix `Base`): own primitives, no third-party UI. Layout, text, button, link, icon.
    - `app/components/ui/`: composed widgets built on Reka UI (Dialog, Menu, Select). TODO.
-   - `app/components/features/<domain>/`: domain components that know about the API types. TODO.
+   - `app/components/features/<domain>/`: domain components that know about the API types (`app/types/api.ts`). Nuxt names them with the path prefix: `features/home/AppCard.vue` is `<FeaturesHomeAppCard>`.
 2. Tokens only. Styling comes from `app/assets/css/tokens.css` through semantic utilities (`bg-surface`, `text-text-muted`, `border-border`, `bg-primary`, `rounded-md`, `shadow-sm`, `p-4`). No raw palette values, no arbitrary values (`bg-[#fff]`, `p-[13px]`). The one allowed exception: an arbitrary value that only references declared tokens through `var(--...)` (e.g. `BaseGrid` columns using `--container-grid-*`); never rely on Tailwind's default theme variables. An adopter re-themes by overriding that one file (colors, radius, type scale, shadows; the dark theme reuses the same names).
 3. Pages compose, they do not markup. `app/pages/**` may not use raw HTML elements (div, span, p, h1-h6, a, button, input, select, textarea, table, ul, ol, li, img, form, label, section, header, footer, nav, main); `vue/no-restricted-html-elements` fails lint. Layouts and components may use them.
 4. Tailwind classes must be literal strings. Props map to classes through lookup tables, never by string concatenation (`'gap-' + n` is not detected by the scanner).
@@ -79,7 +79,7 @@ All accept `as` (tag name, default `div`) and a default slot.
 
 ### BaseButton
 - Purpose: action or navigation styled as a button.
-- Props: `to?: string` (internal route, NuxtLink), `href?: string` (plain `<a>`; must be a trusted URL, never user-controlled, until a safe-href helper exists), `target?: '_self'|'_blank'` (`_blank` adds `rel="noopener noreferrer"`), `type?: 'button'|'submit'|'reset' = 'button'`, `variant?: 'primary'|'secondary'|'ghost'|'danger' = 'primary'`, `size?: 'sm'|'md'|'lg' = 'md'`, `disabled?: boolean`, `loading?: boolean`.
+- Props: `to?: string` (internal route, NuxtLink), `href?: string` (plain `<a>`; must be a trusted URL, never user-controlled: it is not sanitized. Built-from-data hrefs go through a validating helper such as `hostUrl()`, see `FeaturesHomeAppCard`), `target?: '_self'|'_blank'` (`_blank` adds `rel="noopener noreferrer"`), `type?: 'button'|'submit'|'reset' = 'button'`, `variant?: 'primary'|'secondary'|'ghost'|'danger' = 'primary'`, `size?: 'sm'|'md'|'lg' = 'md'`, `disabled?: boolean`, `loading?: boolean`.
 - Slots: default (text, optionally with a `BaseIcon`).
 - Events: `click` (declared emit, so a parent `@click` never reaches the root element directly); emitted only while active, never when `disabled` or `loading`.
 - Example: `<BaseButton variant="danger" type="submit" :loading="saving">Delete</BaseButton>`
@@ -87,7 +87,7 @@ All accept `as` (tag name, default `div`) and a default slot.
 
 ### BaseLink
 - Purpose: inline text link.
-- Props: `to?: string` (internal, NuxtLink), `href?: string` (external, `<a>`; must be a trusted URL, never user-controlled, until a safe-href helper exists), `target?: '_self'|'_blank'` (`_blank` adds `rel="noopener noreferrer"`).
+- Props: `to?: string` (internal, NuxtLink), `href?: string` (external, `<a>`; must be a trusted URL, never user-controlled: it is not sanitized. Built-from-data hrefs go through a validating helper such as `hostUrl()`, see `FeaturesHomeAppCard`), `target?: '_self'|'_blank'` (`_blank` adds `rel="noopener noreferrer"`).
 - Slots: default.
 - Example: `<BaseLink href="/docs/" target="_blank">Docs</BaseLink>`
 - A11y: link text must make sense out of context; announce new-tab behavior in the text when it matters.
@@ -109,8 +109,60 @@ All accept `as` (tag name, default `div`) and a default slot.
 - Action: "Go to home" calls `clearError({ redirect: '/' })`.
 - Note: `NUXT_E1005` ("Error caught during app initialization") in the console on a direct visit to an unknown route is Nuxt's own `app:error` diagnostic for the 404 raised during startup; it is expected and not a CSP issue.
 
+## Surfaces and feedback
+
+### BaseCard
+- Purpose: raised, bordered, rounded surface with a small shadow that groups content (a `BaseBox` preset).
+- Props: `as?: string = 'div'`, `padding?: Space = 4`.
+- Slots: default.
+- Example: `<BaseCard as="li"><BaseText>...</BaseText></BaseCard>`
+- A11y: use `as="li"` only inside a list; give a cluster of cards a heading.
+
+### BaseBadge
+- Purpose: small label for a role or status.
+- Props: `tone?: 'neutral'|'primary'|'success'|'warning'|'danger' = 'neutral'`.
+- Slots: default (text).
+- Example: `<BaseBadge tone="primary">editor</BaseBadge>`
+- A11y: tone is decoration; the text must carry the meaning. Text/border colors use the semantic tokens.
+
+### BaseSkeleton
+- Purpose: decorative loading placeholder (`motion-safe:animate-pulse`).
+- Props: `height?: 'sm'|'md'|'lg' = 'md'`, `width?: 'half'|'full' = 'full'`.
+- Slots: none.
+- Example: `<BaseSkeleton height="lg" width="half" />`
+- A11y: `aria-hidden`. The loading region must say it is busy: `aria-busy="true"` plus visually hidden text (`class="sr-only"` on a `BaseText`), see `FeaturesHomeAppSkeleton`.
+
+### BaseEmptyState
+- Purpose: "nothing here" or "could not load" block with an optional action.
+- Props: `title: string`, `description?: string`, `icon?: IconName = 'info'`, `level?: HeadingLevel = 2`.
+- Slots: default (actions, e.g. a `BaseButton`).
+- Example: `<BaseEmptyState title="No apps yet" description="..."><BaseButton>Retry</BaseButton></BaseEmptyState>`
+- A11y: renders a `section` with a heading; pick `level` so headings do not skip levels. The icon is decorative.
+
+### BasePageHeader
+- Purpose: page title block: `h1`, optional description and an actions slot.
+- Props: `title: string`, `description?: string`. The `h1` has `tabindex="-1"`; the component exposes `focusTitle()` to move focus there (template ref).
+- Slots: default (page actions, right aligned, wraps on small screens).
+- Example: `<BasePageHeader title="Welcome" description="..."><BaseButton to="/admin">Administration</BaseButton></BasePageHeader>`
+- A11y: owns the single `h1` of the page; rendered in a `header` element.
+
+## API layer
+
+- `app/types/api.ts`: payload types mirroring `platform/api/internal/portalhttp` (`MeResponse`, `HomeResponse`, `HomeApp`, `InitiativeRef`) and the RFC 9457 `Problem`.
+- `app/composables/useApi.ts`: `apiGet<T>(path)` (same-origin `$fetch` under `/api/v1`, no tokens or CSRF headers, no retries), `ApiError` (`status`, `kind`, `problem`, `reloading`) and `useApiData<T>(key, path)` (client-side `useAsyncData`, returns `data`, `error`, `pending`, `refresh`; failures come back as `error`, never thrown). Error kinds: `unauthorized` (401), `forbidden` (403), `not_found` (404), `conflict` (409), `invalid` (400/415/422), `unavailable` (503), `server` (other 5xx), `network`, `unknown`. Response bodies are never logged and `ApiError.message` is fixed text.
+- 401 policy: the session is gone, so the page reloads once (ForwardAuth answers the navigation with a 302 to login). `login_url` is not followed. Loop guard: at most one reload per 30 s (`sessionStorage`), plus a module flag so every 401 after the first in the same page load also reports `reloading` (no flash of the reload message); beyond that `ApiError.reloading` is false and the UI asks the user to reload.
+- `app/utils/hostname.ts`: `isHostname()` (mirrors Go `hostname.Valid`: lowercase DNS labels, <= 253 chars, no trailing dot, last label not all digits) and `hostUrl()` (`https://<host>/` or null).
+
+## Features
+
+### features/home
+- `FeaturesHomeAppCard` (`AppCard.vue`): props `app: HomeApp`. A `BaseCard as="li"` with name, initiative, host links (`hostUrl()`-validated, new tab, visually hidden "(opens in a new tab)") and role badges. The external-link icon is inside the `<a>`. When no host passes validation it shows a muted "No address available" note.
+- `FeaturesHomeAppSkeleton` (`AppSkeleton.vue`): grid of three card skeletons. It carries no live region of its own: the page wraps the results in a persistent `aria-live="polite"` container with `aria-busy` while loading.
+- `FeaturesHomeLoadError` (`LoadError.vue`): props `error: ApiError`, `retrying?: boolean` ("Try again" shows `BaseButton loading`), emits `retry`. Container has `role="alert"`. Fixed copy per error kind, never server detail.
+- `app/pages/index.vue`: greeting from `/me` (name, else email), "Administration" button to `/admin` when `permissions.platform_admin` or `managed_initiatives` is non-empty (the UI only hides), loading, error, "No apps yet" and the grid. The error state depends only on `/me/apps`; if `/me` fails while apps load, a muted "Some details could not be loaded." notice with a `/me`-only retry shows instead. After a successful retry focus moves to the page h1. The Administration button points to `/admin`, which lands in part 5d (until then it renders the 404 page).
+
 ## TODO (priority order)
 
-1. Card, Badge, Input, Field (label + hint + error), Select. TODO
-2. Table, EmptyState, PageHeader, Dialog (Reka UI), Menu (Reka UI). TODO
-3. Features (`app/components/features/<domain>/`), driven by the API types from `platform/docs/contract.md`. TODO
+1. Input, Field (label + hint + error), Select. TODO
+2. Table, Dialog (Reka UI), Menu (Reka UI). TODO
+3. Features beyond home (admin), driven by the API types from `platform/docs/contract.md`. TODO
