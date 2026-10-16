@@ -15,6 +15,15 @@ overlays/local     domain/app-id patches, scripts, seed, traefik values (fake lo
 overlays/local-google  real Google login on top of overlays/local: image tag, client secret, env, egress policy, grant/revoke
 ```
 
+## Ordering: migrate before platform-api (adopters)
+
+`platform-api` and `portal` refuse to start when the database roles drift from what the binary expects (missing or extra
+privileges), so the `migrate` Job (as platform_owner) must complete BEFORE the new Deployments roll out. `base/` has no ordering
+mechanism (the `wait-for-db` initContainer only waits for `pg_isready`). `overlays/local/up.sh` does it with `kubectl wait
+--for=condition=complete job/migrate` before applying platform-api. With GitOps, add it yourself: Argo CD `PreSync` hook (or
+sync-wave `-1`) on the Job, or a Flux `Kustomization` for `base/migrate` that the platform-api one `dependsOn` with
+`wait: true`. Delete the finished Job (or set `ttlSecondsAfterFinished`) so each release recreates it.
+
 ## Scripts (overlays/local)
 
 | Script | Purpose |

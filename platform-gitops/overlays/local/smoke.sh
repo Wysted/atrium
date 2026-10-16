@@ -321,6 +321,17 @@ line="$($K -n platform logs "$pod" 2>/dev/null | grep 'database role verified' |
 echo "  $line"
 check "database role verified" "$line" '"current_user":"platform_runtime"'
 check "login role" "$line" '"session_user":"platform_api"'
+# Least privilege (migration 0010): statements run as platform_runtime inside a transaction that is always rolled back.
+as_runtime() { # as_runtime <sql>: psql output (errors included) of one statement under SET ROLE platform_runtime (bootstrap superuser: owner cannot SET ROLE)
+  printf 'BEGIN;\nSET LOCAL ROLE platform_runtime;\n%s;\nROLLBACK;\n' "$1" \
+    | $K -n platform-db exec -i postgres-0 -- psql -q -U postgres_admin -d platform 2>&1
+}
+check "runtime cannot INSERT into initiatives" "$(as_runtime 'INSERT INTO initiatives DEFAULT VALUES')" "permission denied for table initiatives"
+check "runtime cannot UPDATE users.status" "$(as_runtime 'UPDATE users SET status = status')" "permission denied for table users"
+out="$(as_runtime "UPDATE deployments SET last_seen_at = last_seen_at RETURNING 'runtime-update-ok'")"
+check_not "runtime can UPDATE deployments.last_seen_at" "$out" "permission denied"
+check_not "runtime UPDATE deployments.last_seen_at has no error" "$out" "ERROR"
+check "runtime UPDATE deployments.last_seen_at returned rows" "$out" "runtime-update-ok"
 
 section "11. Traefik access log: no code, no cookie values; client IP seen"
 CODE="$(qparam "$(cat "$WORK/callback")" code)"
