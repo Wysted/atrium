@@ -235,6 +235,95 @@ func TestFullFlowAndLogs(t *testing.T) {
 	}
 }
 
+// decisionLines returns the "forwardauth decision" log records in order.
+func decisionLines(t *testing.T, logs string) []map[string]any {
+	t.Helper()
+	var out []map[string]any
+	for _, line := range strings.Split(logs, "\n") {
+		var rec map[string]any
+		if json.Unmarshal([]byte(line), &rec) == nil && rec["msg"] == "forwardauth decision" {
+			out = append(out, rec)
+		}
+	}
+	return out
+}
+
+func TestDecisionLogIdentity(t *testing.T) {
+	e := newEnv(t, envOptions{})
+	b := e.newBrowser()
+	anon := e.newBrowser()
+
+	b.login(hostA, "/", userEmail)
+	uid := e.userID(userEmail)
+	sid := e.scalar(`SELECT id::text FROM sessions WHERE user_id = $1`, uid)
+
+	// Each step returns the decision line it produced.
+	step := func(do func()) map[string]any {
+		t.Helper()
+		before := len(decisionLines(t, e.logs.String()))
+		do()
+		lines := decisionLines(t, e.logs.String())
+		if len(lines) != before+1 {
+			t.Fatalf("expected one new decision line, got %d", len(lines)-before)
+		}
+		return lines[len(lines)-1]
+	}
+	deny := step(func() { b.forward(fwd{host: hostA, uri: "/", headers: navHeaders}) })
+	e.grant(userEmail)
+	e.app.InvalidateAccess()
+	allow := step(func() { b.forward(fwd{host: hostA, uri: "/", headers: navHeaders}) })
+	anonymous := step(func() { anon.forward(fwd{host: hostA, uri: "/", headers: navHeaders}) })
+	logout := step(func() {
+		b.forward(fwd{host: hostA, method: http.MethodPost, uri: "/_platform/logout", headers: map[string]string{"Sec-Fetch-Site": "same-origin"}})
+	})
+
+	for name, tc := range map[string]struct {
+		rec                map[string]any
+		decision, reason   string
+		user, session, jti bool
+	}{
+		"deny":           {deny, "deny", "no_grant", true, true, false},
+		"allow":          {allow, "allow", "granted", true, true, true},
+		"login_redirect": {anonymous, "login_redirect", "no_cookie", false, false, false},
+		"logout":         {logout, "logout", "logout_ok", true, true, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if tc.rec["decision"] != tc.decision || tc.rec["reason"] != tc.reason {
+				t.Fatalf("line = %v", tc.rec)
+			}
+			for key, want := range map[string]struct {
+				present bool
+				value   string
+			}{"user_id": {tc.user, uid}, "sid": {tc.session, sid}} {
+				got, _ := tc.rec[key].(string)
+				if want.present && got != want.value || !want.present && got != "" {
+					t.Errorf("%s = %q, want present=%v (%q)", key, got, want.present, want.value)
+				}
+			}
+			if jti, _ := tc.rec["jti"].(string); (jti != "") != tc.jti {
+				t.Errorf("jti = %q, want present=%v", jti, tc.jti)
+			}
+		})
+	}
+
+	t.Run("callback_ok carries user and sid", func(t *testing.T) {
+		var cb map[string]any
+		for _, rec := range decisionLines(t, e.logs.String()) {
+			if rec["decision"] == "callback" {
+				cb = rec
+			}
+		}
+		if cb == nil || cb["reason"] != "callback_ok" || cb["user_id"] != uid || cb["sid"] != sid {
+			t.Fatalf("callback line = %v", cb)
+		}
+	})
+	t.Run("denial row has the user", func(t *testing.T) {
+		if n := e.count(`SELECT count(*) FROM access_denials WHERE reason = 'no_grant' AND user_id = $1 AND sid = $2`, uid, sid); n != 1 {
+			t.Fatalf("denial rows with user and sid = %d", n)
+		}
+	})
+}
+
 func TestSessionSwapping(t *testing.T) {
 	e := newEnv(t, envOptions{})
 	attacker, victim := e.newBrowser(), e.newBrowser()

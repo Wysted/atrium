@@ -284,7 +284,7 @@ func (h *Handler) decide(w http.ResponseWriter, r *http.Request, host string) ou
 			h.recordDenial(ctx, as, host, d)
 		}
 		h.respondError(w, nav, http.StatusForbidden, "Access denied", "")
-		return outcome{decision: DecisionDeny, reason: d.Reason, appID: d.AppID, sid: as.SessionID}
+		return outcome{decision: DecisionDeny, reason: d.Reason, appID: d.AppID, sid: as.SessionID, userID: as.UserID}
 	}
 	issued, err := h.cfg.Issuer.Issue(assertion.Request{
 		Audience: d.AppID, Subject: as.UserID, Email: cd.profile.Email, Name: cd.profile.Name,
@@ -296,12 +296,12 @@ func (h *Handler) decide(w http.ResponseWriter, r *http.Request, host string) ou
 			reason = ReasonNoSigner
 		}
 		o := h.unavailable(w, nav, reason, err)
-		o.appID, o.sid = d.AppID, as.SessionID
+		o.appID, o.sid, o.userID = d.AppID, as.SessionID, as.UserID
 		return o
 	}
 	w.Header().Set(HeaderAssertion, issued.Token)
 	w.WriteHeader(http.StatusOK)
-	return outcome{decision: DecisionAllow, reason: access.ReasonGranted, appID: d.AppID, sid: as.SessionID, jti: issued.JTI}
+	return outcome{decision: DecisionAllow, reason: access.ReasonGranted, appID: d.AppID, sid: as.SessionID, userID: as.UserID, jti: issued.JTI}
 }
 
 func (h *Handler) lookupApp(ctx context.Context, host string) (string, bool, error) {
@@ -379,7 +379,7 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request, host, appID, 
 	w.Header().Set(httpx.HeaderReferrerPolicy, httpx.ReferrerNone)
 	w.Header().Set(httpx.HeaderLocation, grant.RD)
 	w.WriteHeader(http.StatusFound)
-	return outcome{decision: DecisionCallback, reason: ReasonCallbackOK, appID: as.AppID, sid: as.SessionID}
+	return outcome{decision: DecisionCallback, reason: ReasonCallbackOK, appID: as.AppID, sid: as.SessionID, userID: as.UserID}
 }
 
 // logout handles POST /_platform/logout: it revokes the central session behind the app session (the
