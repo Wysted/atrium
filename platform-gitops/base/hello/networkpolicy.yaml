@@ -30,7 +30,7 @@ spec:
         - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: platform}}
           podSelector: {matchLabels: {app.kubernetes.io/name: platform-api}}
       ports:
-        - {protocol: TCP, port: 8081}
+        - {protocol: TCP, port: 8083}
     - to:
         - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}
           podSelector: {matchLabels: {k8s-app: kube-dns}}

@@ -6,7 +6,7 @@ Kustomize manifests of the platform for the local k3d cluster `portal`. Everythi
 base/namespaces    platform-db, platform, portal, hello-a, hello-b (Pod Security restricted); `monitoring` lives in overlays/local/namespaces
 base/postgres      StatefulSet postgres:18.6 (digest = compose.yaml), initdb.sh, NetworkPolicy
 base/migrate       Job `platform-api migrate` as platform_owner
-base/platform-api  Deployment x2, Services internal:8081 / public:8080, Middlewares, auth-host IngressRoute, NetworkPolicy
+base/platform-api  Deployment x2, Services internal:8081 / jwks:8083 / public:8080, Middlewares, auth-host IngressRoute, NetworkPolicy
 base/portal        Deployment x2 (cmd/portal), Service, IngressRoute (passHostHeader), NetworkPolicies
 base/hello         reference app (one instance per namespace via overlay)
 base/monitoring    NetworkPolicies of the monitoring namespace (default deny; Prometheus, Grafana)
@@ -50,17 +50,17 @@ the local overlay's `seed.sql`, never in base.
 
 ## Portal (base/portal)
 
-- Namespace `portal`, labelled `portal.wysted.dev/app-namespace=true` like any app namespace: platform-api's internal listener
-  (JWKS) already accepts it. `platform-db` accepts it too (`allow-ingress-platform` selects `platform` and `portal`).
+- Namespace `portal`, labelled `portal.wysted.dev/app-namespace=true` like any app namespace: platform-api's JWKS listener
+  (8083) already accepts it; the internal listener (8081) admits only Traefik. `platform-db` accepts it too (`allow-ingress-platform` selects `platform` and `portal`).
 - Database: login role `portal_app`, member only of `platform_portal`; password in `.tools/secrets/k3d-pg-portal-password`, pgpass
   Secret `portal/portal-pgpass` (`fsGroup` + `defaultMode: 0440`, like platform-api). The role is created by `roles.sh`, not by
   the migrations: `platform_owner` has no CREATEROLE and migration 0009 only creates `platform_portal` if it is missing.
 - Probe: `PORTAL_PROBE_ADDR=traefik.traefik.svc.cluster.local:443`. The wildcard certificate is the real Let's Encrypt one, so the
   system roots verify it: no `PORTAL_PROBE_CA_FILE` and no `PORTAL_PROBE_INSECURE_TLS`. Local interval 1m (`PORTAL_PROBE_INTERVAL`).
 - NetworkPolicies (default deny both ways): ingress only from Traefik to 8080 (kubelet probes on 8081 come from the node and are
-  never filtered); egress to DNS, PostgreSQL 5432, platform-api 8081 (JWKS) and Traefik pods on 8443. Policies see the POD port: the
+  never filtered); egress to DNS, PostgreSQL 5432, platform-api 8083 (JWKS) and Traefik pods on 8443. Policies see the POD port: the
   Service port 443 of Traefik is `websecure` = 8443. The metrics port 9090 is open only to the Prometheus pods of the `monitoring`
-  namespace (`allow-ingress-metrics`, same rule in `base/platform-api`). The internal and metrics listeners have no Service.
+  namespace (`allow-ingress-metrics`, same rule in `base/platform-api`). The metrics listener has no Service; the internal listener (8081) is reachable by Traefik only.
 - IngressRoute: exact `Host()`, `passHostHeader: true`; ForwardAuth and strip-assertion come from the entrypoint.
 
 ## Monitoring
@@ -138,7 +138,7 @@ Assumptions for adopters:
 
 ## Notes
 
-- Namespaces that host apps need the label `portal.wysted.dev/app-namespace=true`: the internal listener (JWKS) accepts them.
+- Namespaces that host apps need the label `portal.wysted.dev/app-namespace=true`: the JWKS listener (8083) accepts them.
 - Access log: `accessLog.fields.queryParameters.defaultMode: drop` (Traefik >= 3.7.3) removes the whole query from
   `RequestPath`, so the login `code`, `bind` and `rd` are never logged. Tradeoff: no query at all in access logs (it also
   hides benign parameters). Headers (Cookie, Set-Cookie, Location) are dropped by default.

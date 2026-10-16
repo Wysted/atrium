@@ -64,8 +64,8 @@ spec:
             - {name: PORTAL_METRICS_ADDR, value: ":9090"}
             - {name: PORTAL_APP_ID, value: app_REPLACED_BY_OVERLAY}
             - {name: PORTAL_ISSUER, value: "https://auth.invalid"}
-            # In-cluster URL of the internal listener, never through the public route.
-            - {name: PORTAL_JWKS_URL, value: "http://platform-api-internal.platform.svc.cluster.local:8081/.well-known/jwks.json"}
+            # In-cluster URL of the JWKS listener (8083), never through the public route.
+            - {name: PORTAL_JWKS_URL, value: "http://platform-api-jwks.platform.svc.cluster.local:8083/.well-known/jwks.json"}
             # Integration probe: always dial Traefik's websecure service, whatever the deployment host is.
             # TLS server name and Host stay the deployment host; the certificate is verified against the system roots.
             - {name: PORTAL_PROBE_ADDR, value: "traefik.traefik.svc.cluster.local:443"}

@@ -59,6 +59,8 @@ spec:
           env:
             - {name: PLATFORM_INTERNAL_ADDR, value: ":8081"}
             - {name: PLATFORM_PUBLIC_ADDR, value: ":8080"}
+            # GET /.well-known/jwks.json only: the single platform-api port app namespaces may reach (allow-ingress-jwks).
+            - {name: PLATFORM_JWKS_ADDR, value: ":8083"}
             # /metrics only; the default-deny NetworkPolicy keeps it closed except for the Prometheus pods (allow-ingress-metrics).
             - {name: PLATFORM_METRICS_ADDR, value: ":9090"}
             - {name: PLATFORM_KEK_FILE, value: /etc/platform/kek/kek}
@@ -74,6 +76,7 @@ spec:
           ports:
             - {name: public, containerPort: 8080}
             - {name: internal, containerPort: 8081}
+            - {name: jwks, containerPort: 8083}
             - {name: metrics, containerPort: 9090}
           livenessProbe:
             httpGet: {path: /healthz, port: internal}
@@ -106,7 +109,7 @@ spec:
         - name: pgpass
           secret: {secretName: platform-api-pgpass, defaultMode: 0440}
 ---
-# Listener reachable by Traefik (ForwardAuth) and by app namespaces (JWKS). Never exposed by an IngressRoute.
+# Listener reachable by Traefik (ForwardAuth) and kubelet (probes). Never exposed by an IngressRoute.
 apiVersion: v1
 kind: Service
 metadata:
@@ -116,6 +119,18 @@ spec:
   selector: {app.kubernetes.io/name: platform-api}
   ports:
     - {name: internal, port: 8081, targetPort: internal}
+---
+# JWKS listener for app namespaces. Its own Service (like the metrics listener has its own port) so the Service that
+# fronts /forwardauth never advertises a port that app namespaces are allowed to use.
+apiVersion: v1
+kind: Service
+metadata:
+  name: platform-api-jwks
+  labels: {app.kubernetes.io/name: platform-api, app.kubernetes.io/component: jwks, app.kubernetes.io/part-of: portal-platform}
+spec:
+  selector: {app.kubernetes.io/name: platform-api}
+  ports:
+    - {name: jwks, port: 8083, targetPort: jwks}
 ---
 # Auth host browser routes; the only target of the auth host IngressRoute.
 apiVersion: v1

@@ -90,6 +90,7 @@ drop_smoke_groups() {
 cleanup() {
   $K delete pod probe-default --ignore-not-found --wait=false >/dev/null 2>&1
   $K -n hello-a delete pod probe-hello --ignore-not-found --wait=false >/dev/null 2>&1
+  $K -n traefik delete pod probe-traefik --ignore-not-found --wait=false >/dev/null 2>&1
   $K delete namespace smoke-app --ignore-not-found --wait=false >/dev/null 2>&1
   $K delete -f "$REL/smoke-whoami.yaml" --ignore-not-found --wait=false >/dev/null 2>&1
   drop_smoke_groups
@@ -115,6 +116,14 @@ $K -n smoke-app run probe-open --image="$CURL_IMG" --restart=Never --command -- 
 $K wait --for=condition=Ready pod/probe-default --timeout=120s >/dev/null
 $K -n smoke-app wait --for=condition=Ready pod/probe-open --timeout=120s >/dev/null
 $K -n hello-a wait --for=condition=Ready pod/probe-hello --timeout=120s >/dev/null
+# Stand-in for Traefik (the only source allowed to reach the internal listener 8081: /forwardauth, /readyz): a temporary pod
+# carrying the label the ingress policy selects. The Traefik image has no curl. Its labels lack the chart's instance label,
+# so the Traefik Service never selects it.
+$K -n traefik delete pod probe-traefik --ignore-not-found >/dev/null 2>&1
+# Accepted for the local smoke: while it runs, this pod also passes the app namespaces' ingress policies (Traefik's label).
+$K -n traefik run probe-traefik --image="$CURL_IMG" --restart=Never --labels=app.kubernetes.io/name=traefik \
+  --overrides='{"spec":{"automountServiceAccountToken":false,"securityContext":{"runAsNonRoot":true,"runAsUser":65532,"seccompProfile":{"type":"RuntimeDefault"}},"containers":[{"name":"probe-traefik","image":"'"$CURL_IMG"'","command":["sleep","900"],"securityContext":{"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]}}}]}}' >/dev/null
+$K -n traefik wait --for=condition=Ready pod/probe-traefik --timeout=120s >/dev/null
 # Pods in the monitoring namespace (restricted Pod Security) for section 19, created now for the same reason as the others.
 # probe-prom and probe-grafana carry the label the real pods are selected by (and only the policies of that label apply);
 # probe-other has neither and gets its own allow-all EGRESS policy so that the INGRESS policy of the target decides.
@@ -203,11 +212,11 @@ section "5. Revocation propagates through NOTIFY (2 replicas) in < ${REVOKE_DEAD
 for _ in $(seq 1 12); do api "$JA" "$A/api/whoami" >/dev/null; done # warm the decision caches
 code=$(api "$JA" "$A/api/whoami"); check "before revoke" "$code" 200
 # Through Traefik only one replica may ever see the traffic (pooled keepalive connections), so the NOTIFY fan-out is
-# also measured per replica: a probe pod calls /forwardauth on each pod IP while the grant is deleted.
+# also measured per replica: a Traefik-labelled probe pod calls /forwardauth on each pod IP while the grant is deleted.
 IPS="$($K -n platform get pods -l app.kubernetes.io/name=platform-api -o jsonpath='{.items[*].status.podIP}')"
 COOKIE="$(awk '$1 ~ /hello-a/ && $6=="__Host-Http-platform_app"{print $7}' "$JA")"
 echo "  replicas: $IPS"
-$K -n hello-a exec probe-hello -- sh -c 'end=$(( $(date +%s) + 10 )); while [ $(date +%s) -lt $end ]; do for ip in '"$IPS"'; do s=$(curl -s -o /dev/null --max-time 2 -w "%{http_code}" -H "X-Forwarded-Host: '$A_HOST'" -H "X-Forwarded-Method: GET" -H "X-Forwarded-Uri: /api/whoami" -H "Accept: application/json" -H "Sec-Fetch-Mode: cors" -H "Cookie: __Host-Http-platform_app='"$COOKIE"'" http://$ip:8081/forwardauth); echo "$(date +%s) $ip $s"; done; sleep 0.1; done' > "$WORK/replica.log" 2>/dev/null &
+$K -n traefik exec probe-traefik -- sh -c 'end=$(( $(date +%s) + 10 )); while [ $(date +%s) -lt $end ]; do for ip in '"$IPS"'; do s=$(curl -s -o /dev/null --max-time 2 -w "%{http_code}" -H "X-Forwarded-Host: '$A_HOST'" -H "X-Forwarded-Method: GET" -H "X-Forwarded-Uri: /api/whoami" -H "Accept: application/json" -H "Sec-Fetch-Mode: cors" -H "Cookie: __Host-Http-platform_app='"$COOKIE"'" http://$ip:8081/forwardauth); echo "$(date +%s) $ip $s"; done; sleep 0.1; done' > "$WORK/replica.log" 2>/dev/null &
 POLLER=$!
 sleep 4 # both replicas answer 200 (and cache the decision) before the revoke
 commit_ms="$($K -n platform-db exec postgres-0 -- psql -At -q -U platform_owner -d platform -c \
@@ -286,8 +295,10 @@ wait_probe() { # wait_probe <ns> <pod> <url> <want> [timeout-s]: poll until the 
   done
   echo "$got"
 }
-probe_tcp() { # probe_tcp <ns> <pod> <host> <port>: connected / blocked
-  if $K -n "$1" exec "$2" -- sh -c "curl -s --max-time 4 -o /dev/null telnet://$3:$4 </dev/null; [ \$? -eq 28 ]" >/dev/null 2>&1; then echo connected; else echo blocked; fi
+probe_tcp() { # probe_tcp <ns> <pod> <host> <port>: connected / blocked / dns-error (curl 6: the name did not resolve)
+  local rc
+  rc="$($K -n "$1" exec "$2" -- sh -c "curl -s --max-time 4 -o /dev/null telnet://$3:$4 </dev/null; echo \$?" 2>/dev/null)"
+  case "$rc" in 28) echo connected ;; 6) echo dns-error ;; *) echo blocked ;; esac
 }
 check "default -> platform-db:5432" "$(probe_tcp default probe-default postgres.platform-db.svc.cluster.local 5432)" blocked
 check "default -> platform-api-internal:8081" "$(probe default probe-default http://platform-api-internal.platform.svc.cluster.local:8081/healthz)" 000
@@ -297,9 +308,12 @@ check "hello-a pod -> platform-db:5432 (egress)" "$(probe_tcp hello-a probe-hell
 check "hello-a pod -> hello-b" "$(probe hello-a probe-hello http://hello.hello-b.svc.cluster.local:8080/healthz)" 000
 check "hello-a pod -> platform-api-public:8080 (not allowed)" "$(probe hello-a probe-hello http://platform-api-public.platform.svc.cluster.local:8080/login)" 000
 echo "  -- positive controls:"
-check "hello-a pod -> JWKS on platform-api-internal:8081" "$(probe hello-a probe-hello http://platform-api-internal.platform.svc.cluster.local:8081/.well-known/jwks.json)" 200
-check "hello-a pod -> platform-api-internal /healthz" "$(probe hello-a probe-hello http://platform-api-internal.platform.svc.cluster.local:8081/healthz)" 200
-check "platform-api reaches PostgreSQL (readyz via internal listener)" "$(probe hello-a probe-hello http://platform-api-internal.platform.svc.cluster.local:8081/readyz)" 200
+check "hello-a pod -> JWKS on platform-api-jwks:8083" "$(probe hello-a probe-hello http://platform-api-jwks.platform.svc.cluster.local:8083/.well-known/jwks.json)" 200
+check "Traefik-labelled pod -> platform-api-internal /healthz (8081)" "$(probe traefik probe-traefik http://platform-api-internal.platform.svc.cluster.local:8081/healthz)" 200
+check "platform-api reaches PostgreSQL (readyz via internal listener, from Traefik)" "$(probe traefik probe-traefik http://platform-api-internal.platform.svc.cluster.local:8081/readyz)" 200
+check "internal listener does not serve the JWKS (404)" "$(probe traefik probe-traefik http://platform-api-internal.platform.svc.cluster.local:8081/.well-known/jwks.json)" 404
+check "hello-a pod -> platform-api-internal:8081 /healthz (app namespaces cannot reach it)" "$(probe hello-a probe-hello http://platform-api-internal.platform.svc.cluster.local:8081/healthz)" 000
+check "Traefik-labelled pod -> platform-api-jwks:8083 (Traefik does not need it)" "$(probe traefik probe-traefik http://platform-api-jwks.platform.svc.cluster.local:8083/.well-known/jwks.json)" 000
 
 section "10. Pods: no ServiceAccount token, DB role, KEK mode"
 for target in "platform deploy/platform-api" "portal deploy/portal" "hello-a deploy/hello" "hello-b deploy/hello" "platform-db statefulset/postgres"; do
@@ -476,12 +490,17 @@ metrics_up() { # metrics_up <ns> <pod>: the metrics listener serves go_goroutine
 }
 echo "  platform-api pods: $PA_PODS; portal pods: $PO_PODS"
 sleep 5
-check "hello-a: JWKS on platform-api-internal:8081 (positive control)" "$(wait_probe hello-a probe-hello http://platform-api-internal.platform.svc.cluster.local:8081/.well-known/jwks.json 200)" 200
-check "smoke-app: JWKS on platform-api-internal:8081 (positive control)" "$(wait_probe smoke-app probe-open http://platform-api-internal.platform.svc.cluster.local:8081/.well-known/jwks.json 200)" 200
+check "hello-a: JWKS on platform-api-jwks:8083 (positive control)" "$(wait_probe hello-a probe-hello http://platform-api-jwks.platform.svc.cluster.local:8083/.well-known/jwks.json 200)" 200
+check "smoke-app: JWKS on platform-api-jwks:8083 (positive control)" "$(wait_probe smoke-app probe-open http://platform-api-jwks.platform.svc.cluster.local:8083/.well-known/jwks.json 200)" 200
+check "smoke-app -> platform-api-internal:8081 /healthz (app namespaces cannot reach the internal listener)" "$(probe smoke-app probe-open http://platform-api-internal.platform.svc.cluster.local:8081/healthz)" 000
+check "smoke-app -> platform-api-internal:8081 /forwardauth" "$(probe smoke-app probe-open http://platform-api-internal.platform.svc.cluster.local:8081/forwardauth)" 000
 for pod in $PA_PODS; do
   ip="$(pod_ip platform "$pod")"
   # The replacement replica of section 12 may not be in kube-router's allow set yet: wait until its JWKS answers.
-  check "smoke-app: platform-api $pod :8081 JWKS by pod IP (positive control)" "$(wait_probe smoke-app probe-open http://$ip:8081/.well-known/jwks.json 200)" 200
+  check "smoke-app: platform-api $pod :8083 JWKS by pod IP (positive control)" "$(wait_probe smoke-app probe-open http://$ip:8083/.well-known/jwks.json 200)" 200
+  check "smoke-app: platform-api $pod :8083 serves nothing but the JWKS (/healthz is 404)" "$(probe smoke-app probe-open http://$ip:8083/healthz)" 404
+  check "Traefik-labelled pod -> platform-api $pod :8081 /healthz (positive control)" "$(wait_probe traefik probe-traefik http://$ip:8081/healthz 200)" 200
+  check "smoke-app -> platform-api $pod $ip:8081 (internal listener, Traefik only)" "$(probe smoke-app probe-open http://$ip:8081/healthz)" 000
   check "platform-api $pod: metrics listener is up (apiserver proxy)" "$(metrics_up platform "$pod")" 1
   check "smoke-app -> platform-api $pod $ip:9090/metrics" "$(probe smoke-app probe-open http://$ip:9090/metrics)" 000
   check "smoke-app -> platform-api $pod $ip:8080 (public listener, Traefik only)" "$(probe smoke-app probe-open http://$ip:8080/login)" 000
@@ -496,8 +515,9 @@ for pod in $PO_PODS; do
 done
 # The postgres policy now also admits the portal namespace: an app namespace must still not reach the database.
 check "postgres is up (pg_isready in the pod)" "$($K -n platform-db exec postgres-0 -- pg_isready -h 127.0.0.1 -p 5432 2>&1)" "accepting connections"
-check "platform-api reaches PostgreSQL (readyz, positive control)" "$(probe smoke-app probe-open http://platform-api-internal.platform.svc.cluster.local:8081/readyz)" 200
-check "probe_tcp sees an open port (positive control: platform-api-internal:8081)" "$(probe_tcp smoke-app probe-open platform-api-internal.platform.svc.cluster.local 8081)" connected
+check "platform-api reaches PostgreSQL (readyz, positive control)" "$(probe traefik probe-traefik http://platform-api-internal.platform.svc.cluster.local:8081/readyz)" 200
+check "probe_tcp sees an open port (positive control: platform-api-jwks:8083)" "$(probe_tcp smoke-app probe-open platform-api-jwks.platform.svc.cluster.local 8083)" connected
+check "probe_tcp: smoke-app -> platform-api-internal:8081 is blocked" "$(probe_tcp smoke-app probe-open platform-api-internal.platform.svc.cluster.local 8081)" blocked
 check "smoke-app (app namespace) -> postgres:5432" "$(probe_tcp smoke-app probe-open postgres.platform-db.svc.cluster.local 5432)" blocked
 
 section "17. Integration probe: hello-a health shows an ok probe and a seen host (within ${PROBE_DEADLINE_S}s)"
@@ -620,7 +640,7 @@ echo "     is blocked by the INGRESS policy of the destination (positive control
 echo "     the real pods and exercise their EGRESS policies"
 PROM_IP="$(pod_ip monitoring prometheus-monitoring-prometheus-0)"
 API_IP="$($K get endpoints kubernetes -o jsonpath='{.subsets[0].addresses[0].ip}' 2>/dev/null)"
-TRAEFIK_IP="$($K -n traefik get pod -l app.kubernetes.io/name=traefik -o jsonpath='{.items[0].status.podIP}')"
+TRAEFIK_IP="$($K -n traefik get pod -l app.kubernetes.io/name=traefik,app.kubernetes.io/instance=traefik-traefik -o jsonpath='{.items[0].status.podIP}')"
 echo "  prometheus=$PROM_IP kube-apiserver=$API_IP traefik pod=$TRAEFIK_IP"
 # The source of every destination-ingress negative must be able to send: probe-other reaches ports that are open and
 # unfiltered by any ingress policy (the API server, a Traefik pod).
@@ -630,9 +650,11 @@ for pod in $PA_PODS; do
   ip="$(pod_ip platform "$pod")"
   check "monitoring Prometheus-labelled pod -> platform-api $pod:9090/metrics (positive)" "$(wait_probe monitoring probe-prom http://$ip:9090/metrics 200)" 200
   check "[ingress] probe-other -> platform-api $pod:9090 (not a Prometheus pod)" "$(probe monitoring probe-other http://$ip:9090/metrics)" 000
-  check "[ingress] probe-other -> platform-api $pod:8081 (internal listener: app namespaces only)" "$(probe monitoring probe-other http://$ip:8081/.well-known/jwks.json)" 000
+  check "[ingress] probe-other -> platform-api $pod:8083 (JWKS listener: app namespaces only)" "$(probe monitoring probe-other http://$ip:8083/.well-known/jwks.json)" 000
+  check "[ingress] probe-other -> platform-api $pod:8081 (internal listener: Traefik only)" "$(probe monitoring probe-other http://$ip:8081/healthz)" 000
   check "[ingress] probe-other -> platform-api $pod:8080 (public listener: Traefik only)" "$(probe monitoring probe-other http://$ip:8080/login)" 000
-  check "[egress] Prometheus-labelled pod -> platform-api $pod:8081 (internal listener)" "$(probe monitoring probe-prom http://$ip:8081/.well-known/jwks.json)" 000
+  check "[egress] Prometheus-labelled pod -> platform-api $pod:8083 (JWKS listener)" "$(probe monitoring probe-prom http://$ip:8083/.well-known/jwks.json)" 000
+  check "[egress] Prometheus-labelled pod -> platform-api $pod:8081 (internal listener)" "$(probe monitoring probe-prom http://$ip:8081/healthz)" 000
   check "[egress] Prometheus-labelled pod -> platform-api $pod:8080 (public listener)" "$(probe monitoring probe-prom http://$ip:8080/login)" 000
   check "[egress] Grafana-labelled pod -> platform-api $pod:9090" "$(probe monitoring probe-grafana http://$ip:9090/metrics)" 000
 done

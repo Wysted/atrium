@@ -5,10 +5,8 @@ spec:
   podSelector: {}
   policyTypes: [Ingress, Egress]
 ---
-# Internal listener: Traefik (ForwardAuth) and app namespaces. The policy filters by PORT, not path: an app namespace
-# (portal.wysted.dev/app-namespace=true, which includes the portal) reaches the WHOLE internal port 8081 - JWKS but also
-# /forwardauth (which trusts X-Forwarded-*) and /readyz - not only JWKS. Anything that can label a namespace joins this set.
-# Nothing else may reach this port.
+# Internal listener (/forwardauth, /healthz, /readyz): Traefik only. /forwardauth trusts X-Forwarded-*, so app
+# namespaces must never reach it; kubelet probes come from the node and are not filtered. Nothing else may reach 8081.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata: {name: allow-ingress-internal, namespace: platform}
@@ -19,9 +17,23 @@ spec:
     - from:
         - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: traefik}}
           podSelector: {matchLabels: {app.kubernetes.io/name: traefik}}
-        - namespaceSelector: {matchLabels: {portal.wysted.dev/app-namespace: "true"}}
       ports:
         - {protocol: TCP, port: 8081}
+---
+# JWKS listener (GET /.well-known/jwks.json only): app namespaces (portal.wysted.dev/app-namespace=true, which includes
+# the portal). The policy filters by PORT, so this port serves nothing else on purpose. Anything that can label a
+# namespace joins this set, and all it gets is public keys.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: allow-ingress-jwks, namespace: platform}
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: platform-api}}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: {matchLabels: {portal.wysted.dev/app-namespace: "true"}}
+      ports:
+        - {protocol: TCP, port: 8083}
 ---
 # Public listener: Traefik only.
 apiVersion: networking.k8s.io/v1
