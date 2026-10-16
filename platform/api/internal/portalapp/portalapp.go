@@ -1,0 +1,105 @@
+// Package portalapp assembles the two HTTP surfaces of the portal process from their dependencies. The binary
+// and the integration tests both build it here, so what is tested is what runs.
+package portalapp
+
+import (
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"platform/api/internal/health"
+	"platform/api/internal/httpx"
+	"platform/api/internal/portal"
+	"platform/api/internal/portalhttp"
+	"platform/api/internal/postgres"
+	platformauth "platform/sdk/go"
+)
+
+// ExemptPath is the health path handed to the SDK in place of its default "/healthz". The SDK lets that one path
+// through without validating an assertion (kubelet probes do not go through Traefik); the portal's probes live
+// on the internal listener instead, so the public listener must have no unauthenticated path at all. ExemptPath
+// is under the reserved /_platform/ prefix and is answered with a 404 before the SDK sees it, so nothing, not
+// even a catch-all web handler, can ever be served through the exemption.
+const ExemptPath = "/_platform/no-unauthenticated-path"
+
+// Config describes one portal instance.
+type Config struct {
+	AppID   string // the portal's own app id: the aud the assertion must carry
+	Issuer  string // exact iss, https://<auth host>
+	JWKSURL string // fixed in-cluster URL of platform-api's JWKS
+	// Pool must run as postgres.PortalRole (postgres.OpenPortalPool).
+	Pool *pgxpool.Pool
+	// Web serves the SPA outside /api/ (a later part); nil answers 404.
+	Web            http.Handler
+	RequestTimeout time.Duration // zero means httpx.RequestTimeout
+	Logger         *slog.Logger
+}
+
+// App holds the handlers of both listeners.
+type App struct {
+	// Public is reached through Traefik with the ForwardAuth middleware: the API (and, later, the SPA).
+	Public http.Handler
+	// Internal serves the probes (and, later, metrics) to the cluster only.
+	Internal http.Handler
+	// Store runs units of work; the mutation use cases of later parts take it.
+	Store portal.Store
+}
+
+// New builds the app.
+func New(cfg Config) (*App, error) {
+	if cfg.Pool == nil || cfg.AppID == "" || cfg.Issuer == "" || cfg.JWKSURL == "" {
+		return nil, errors.New("portalapp: pool, app id, issuer and JWKS URL are required")
+	}
+	log := cfg.Logger
+	if log == nil {
+		log = slog.Default()
+	}
+
+	verifier, err := platformauth.NewVerifier(platformauth.Config{
+		Issuer: cfg.Issuer, Audience: cfg.AppID, JWKSURL: cfg.JWKSURL, HealthPath: ExemptPath,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create assertion verifier: %w", err)
+	}
+	svc, err := portal.NewService(portal.Config{
+		Permissions: postgres.NewPermissionsRepo(cfg.Pool),
+		Home:        postgres.NewHomeRepo(cfg.Pool),
+		PortalAppID: cfg.AppID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	public, err := portalhttp.New(portalhttp.Config{
+		Service: svc,
+		Auth: func(next http.Handler) http.Handler {
+			validate := verifier.MiddlewareWithLogger(log, next)
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == ExemptPath {
+					httpx.WriteProblem(w, httpx.Problem{Status: http.StatusNotFound})
+					return
+				}
+				validate.ServeHTTP(w, r)
+			})
+		},
+		Web:            cfg.Web,
+		RequestTimeout: cfg.RequestTimeout,
+		Logger:         log,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	internal := http.NewServeMux()
+	internal.Handle("GET "+health.PathLive, health.Live())
+	internal.Handle("GET "+health.PathReady, health.ReadyDB(cfg.Pool, log))
+
+	return &App{
+		Public:   public,
+		Internal: httpx.Recover(log, internal),
+		Store:    postgres.NewPortalStore(cfg.Pool),
+	}, nil
+}

@@ -41,22 +41,38 @@ func Live() http.Handler {
 // Ready answers 200 only with a reachable database, a loaded signer and no KEK mismatch; otherwise 503.
 // The body names no detail; the reason goes to the log.
 func Ready(db Pinger, signing Signing, log *slog.Logger) http.Handler {
+	return readiness(log, func(ctx context.Context) string {
+		switch {
+		case db.Ping(ctx) != nil:
+			return "database unreachable"
+		case signing.KEKMismatch():
+			return "kek mismatch"
+		}
+		if _, err := signing.Signer(); err != nil {
+			return "no signer loaded"
+		}
+		return ""
+	})
+}
+
+// ReadyDB answers 200 only with a reachable database; otherwise 503. It is the readiness of processes that
+// hold no signing keys (the portal).
+func ReadyDB(db Pinger, log *slog.Logger) http.Handler {
+	return readiness(log, func(ctx context.Context) string {
+		if db.Ping(ctx) != nil {
+			return "database unreachable"
+		}
+		return ""
+	})
+}
+
+// readiness turns a check that returns the reason it failed ("" when ready) into a probe handler.
+func readiness(log *slog.Logger, check func(ctx context.Context) string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set(httpx.HeaderCacheControl, httpx.CacheNoStore)
 		ctx, cancel := context.WithTimeout(r.Context(), PingTimeout)
 		defer cancel()
-		reason := ""
-		switch {
-		case db.Ping(ctx) != nil:
-			reason = "database unreachable"
-		case signing.KEKMismatch():
-			reason = "kek mismatch"
-		default:
-			if _, err := signing.Signer(); err != nil {
-				reason = "no signer loaded"
-			}
-		}
-		if reason != "" {
+		if reason := check(ctx); reason != "" {
 			log.Warn("not ready", "reason", reason)
 			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 			return

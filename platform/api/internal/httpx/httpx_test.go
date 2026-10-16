@@ -81,3 +81,18 @@ func TestRecoverFailsClosed(t *testing.T) {
 		t.Fatalf("status %d", rec.Code)
 	}
 }
+
+func TestNewServerSetsEveryLimit(t *testing.T) {
+	t.Parallel()
+	h := http.NotFoundHandler()
+	srv := NewServer(":0", h)
+	if srv.Addr != ":0" || srv.Handler == nil {
+		t.Fatalf("server = %+v", srv)
+	}
+	if srv.ReadHeaderTimeout <= 0 || srv.ReadTimeout <= 0 || srv.WriteTimeout <= 0 || srv.IdleTimeout <= 0 || srv.MaxHeaderBytes <= 0 {
+		t.Fatalf("a limit is unset: %+v", srv)
+	}
+	if srv.ReadHeaderTimeout > srv.ReadTimeout || srv.ReadTimeout > srv.WriteTimeout {
+		t.Fatalf("timeouts are not nested: %+v", srv)
+	}
+}

@@ -9,7 +9,7 @@ Status: v1 complete (2026-10-14); block 6 added (2026-10-15). Blocks were closed
 | 3 | Signing keys, rotation, JWKS | Closed (2026-10-14) |
 | 4 | PostgreSQL data model | Closed (2026-10-14); amended by block 6 |
 | 5 | Google login and sessions | Closed (2026-10-14) |
-| 6 | Portal app: home, administration, observability | Closed (2026-10-15), not implemented |
+| 6 | Portal app: home, administration, observability | Closed (2026-10-15); in progress (schema and read API done) |
 
 ## 1. Assertion JWT
 
@@ -45,6 +45,8 @@ not a bearer token to forward.
 3. Verify signature, `iss`, `aud == own app id`, `exp`/`nbf`/`iat` with 30 s leeway; `exp` and `aud` are mandatory.
 4. Read identity only from the verified assertion; ignore `X-Forwarded-User` and similar headers.
 5. Exempt the health path (`/healthz`) from validation: kubelet probes do not go through Traefik.
+   An app that serves probes on a separate internal listener (the portal) sets the exempt path to a route its
+   public mux never serves, so the public listener has no unauthenticated path.
 6. Never log the assertion and never forward it to other services.
 
 ### SDK failure behavior
@@ -345,6 +347,9 @@ Research notes: Engram `architecture/portal-web-stack-research`, `architecture/p
   `deployments` only on INSERT, DELETE or a change of host or app_id; telemetry columns do not emit it.
 - JSON API first (`/api/v1/*`, `application/problem+json` errors), web UI on top. The API also replaces
   `grant.sh`/`revoke.sh`. Permissions are always resolved by the API; the UI only hides what the caller cannot do.
+- Go tooling (build, test, vet, lint) always runs in workspace mode (`platform/go.work`): `cmd/portal` imports
+  `sdk/go` without a `require`/`replace`, exactly like `examples/hello`. A build of `platform/api` outside the
+  workspace does not resolve the SDK.
 - Web UI in `platform/web/`: Nuxt 4 with `ssr: false` + `nuxi generate` (and `experimental.entryImportMap: false`),
   embedded in the Go binary with `embed.FS`, SPA fallback to `200.html`. No Node runtime in production.
 
@@ -357,7 +362,7 @@ Research notes: Engram `architecture/portal-web-stack-research`, `architecture/p
 | Initiative roles (create, delete, `manages_access`) | Yes | No: role keys are part of the app's contract (`roles` claim) |
 | Grants in the initiative (user or group to role, `expires_at`), including `manages_access` roles | Yes | Yes, only in their initiatives |
 | Revoke grants in the initiative | Yes | Yes, except the last `manages_access` grant of the initiative |
-| Groups and members | Yes | No: groups are global, a change affects every initiative |
+| Groups and members | Yes | List groups only (id, key, name; never members), to grant access to a group. No changes: groups are global, a change affects every initiative |
 | Disable users, revoke their sessions | Yes | No |
 | `platform_admins` | No: CLI or SQL only (bootstrap) | No |
 | Audit log | All | Only events of their initiatives |
@@ -389,16 +394,18 @@ which still suggests tokens as an extra layer.
 Middleware order:
 
 1. Recover and request logging.
-2. Read isolation for `/api/*`: reject `Sec-Fetch-Site` values `same-site` and `cross-site` before authenticating,
-   and send `Vary: Sec-Fetch-Dest, Sec-Fetch-Mode, Sec-Fetch-Site`. A missing header is allowed (non-browser client,
-   same choice as Go).
+2. Read isolation for `/api/*`: reject any `Sec-Fetch-Site` value other than `same-origin` and `none` (`same-site`,
+   `cross-site` and unknown values) before authenticating, and send `Vary: Sec-Fetch-Dest, Sec-Fetch-Mode,
+   Sec-Fetch-Site`. A missing header is allowed (non-browser client, same choice as Go).
 3. `http.CrossOriginProtection` for non-safe methods. Verified in Go 1.27.2: `same-origin` and `none` pass, any other
    `Sec-Fetch-Site` is rejected; without it, `Origin` must match `Host` (scheme not compared, so HSTS matters);
    without both, the request passes.
 4. Mutations accept only `Content-Type: application/json` (parsed with `mime.ParseMediaType`, parameters allowed),
    otherwise 415. Handlers never call `ParseForm` or `FormValue`.
 
-Response headers on every portal response:
+Response headers on every portal response. The Content-Security-Policy below is the one of the web UI; API
+responses (`/api/*`, problem documents) carry `default-src 'none'; frame-ancestors 'none'` instead, and the UI
+handler is the only place that replaces it with the full policy:
 
 - `Content-Security-Policy: default-src 'none'; script-src 'self' 'sha256-<inline>'; style-src 'self';
   img-src 'self'; font-src 'self'; connect-src 'self'; form-action 'self' https://auth.apps.<domain>;
@@ -457,12 +464,16 @@ user: zero or several matches fail (`users.email` is not unique, `google_sub` is
 | `GET, POST /api/v1/initiatives/{id}/apps`; `PATCH /api/v1/apps/{id}` | Apps (`status`, `name`) |
 | `POST /api/v1/apps/{id}/deployments`; `DELETE /api/v1/deployments/{id}` | Hosts |
 | `GET, POST /api/v1/initiatives/{id}/grants`; `DELETE /api/v1/grants/{id}` | Grants (subject by email or group id, role, optional `expires_at` in the future) |
-| `GET, POST /api/v1/groups`; `DELETE /api/v1/groups/{id}`; `POST, DELETE /api/v1/groups/{id}/members` | Groups |
+| `GET, POST /api/v1/groups`; `DELETE /api/v1/groups/{id}`; `GET, POST, DELETE /api/v1/groups/{id}/members` | Groups (members: platform admins only) |
 | `GET /api/v1/users?email=`; `PATCH /api/v1/users/{id}`; `DELETE /api/v1/users/{id}/sessions` | Users (`status`) and session revocation |
 | `GET /api/v1/audit?initiative_id=&cursor=` | Audit log, newest first, keyset pagination |
 | `GET /api/v1/apps/{id}/health` | Integration health |
 
 URLs use ids, never keys. Lists use keyset pagination with an opaque cursor.
+
+Errors are `application/problem+json`. When a mutation loses against concurrent transactions (deadlock or
+serialization failure) on every one of its few attempts, the answer is `503` with `Retry-After`, never `500`;
+mutations are idempotent by natural key, so the client may simply retry.
 
 ### Home
 
@@ -471,6 +482,9 @@ active initiative, non-expired grant (direct or through a group). Invariant, enf
 a deployment appears in the home if and only if `/forwardauth` would answer 200 for that user. Internally it has the
 shape of an AuthZEN resource search (subject + action -> resources); no public AuthZEN endpoint is exposed until an
 external consumer needs one.
+
+The one exception to the invariant is the portal app itself: `/forwardauth` lets every active user in, but the home
+never lists it (it is where the user already is, not one of "their" apps). The test enforces the exception explicitly.
 
 ### Observability
 

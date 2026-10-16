@@ -14,33 +14,14 @@ import (
 	"platform/api/internal/app"
 	"platform/api/internal/googlelogin"
 	"platform/api/internal/housekeeping"
+	"platform/api/internal/httpx"
 	"platform/api/internal/keys"
 	"platform/api/internal/postgres"
 )
 
-// HTTP server limits. Requests are tiny (headers and cookies only), so these are tight.
-const (
-	readHeaderTimeout = 5 * time.Second
-	readTimeout       = 10 * time.Second
-	writeTimeout      = 15 * time.Second
-	idleTimeout       = 60 * time.Second
-	maxHeaderBytes    = 32 << 10 // Traefik forwards the whole Cookie header
-	// shutdownTimeout is the single budget for the whole shutdown (both listeners, background jobs and the
-	// pool), kept under the 30 s terminationGracePeriodSeconds default of Kubernetes with margin.
-	shutdownTimeout = 20 * time.Second
-)
-
-func newServer(addr string, h http.Handler) *http.Server {
-	return &http.Server{
-		Addr:              addr,
-		Handler:           h,
-		ReadHeaderTimeout: readHeaderTimeout,
-		ReadTimeout:       readTimeout,
-		WriteTimeout:      writeTimeout,
-		IdleTimeout:       idleTimeout,
-		MaxHeaderBytes:    maxHeaderBytes,
-	}
-}
+// shutdownTimeout is the single budget for the whole shutdown (both listeners, background jobs and the pool),
+// kept under the 30 s terminationGracePeriodSeconds default of Kubernetes with margin.
+const shutdownTimeout = 20 * time.Second
 
 // serve runs platform-api until ctx ends or a listener fails, then shuts everything down in order:
 // listeners first (in-flight requests finish), background jobs next, the pool last.
@@ -127,8 +108,8 @@ func serve(ctx context.Context, cfg config, log *slog.Logger) error {
 	spawn(func(c context.Context) { postgres.Listen(c, pool, access.NotifyChannel, a.InvalidateAccess, log) })
 
 	servers := map[string]*http.Server{
-		"internal": newServer(cfg.InternalAddr, a.Internal),
-		"public":   newServer(cfg.PublicAddr, a.Public),
+		"internal": httpx.NewServer(cfg.InternalAddr, a.Internal),
+		"public":   httpx.NewServer(cfg.PublicAddr, a.Public),
 	}
 	failed := make(chan error, len(servers))
 	for name, srv := range servers {
@@ -170,19 +151,7 @@ func serve(ctx context.Context, cfg config, log *slog.Logger) error {
 // error unless allowPrivileged (PLATFORM_ALLOW_PRIVILEGED_DB_LOGIN, development only) is set, in which case
 // it only logs a loud WARN.
 func checkLoginRole(ident postgres.RuntimeIdentity, allowPrivileged bool, log *slog.Logger) error {
-	var problems []string
-	if ident.SessionIsSuper {
-		problems = append(problems, "is a superuser")
-	}
-	if ident.SessionBypassRLS {
-		problems = append(problems, "bypasses row-level security")
-	}
-	if ident.SessionOwnsData {
-		problems = append(problems, "owns (or inherits the owner of) tables in schema public")
-	}
-	if ident.SessionCanCreate {
-		problems = append(problems, "can create objects in schema public")
-	}
+	problems := ident.LoginRoleProblems()
 	if len(problems) == 0 {
 		return nil
 	}

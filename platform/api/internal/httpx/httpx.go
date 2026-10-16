@@ -170,6 +170,29 @@ func Recover(log *slog.Logger, next http.Handler) http.Handler {
 	})
 }
 
+// HTTP server limits shared by every process. Requests are tiny (headers, cookies and small JSON bodies), so
+// these are tight.
+const (
+	readHeaderTimeout = 5 * time.Second
+	readTimeout       = 10 * time.Second
+	writeTimeout      = 15 * time.Second
+	idleTimeout       = 60 * time.Second
+	maxHeaderBytes    = 32 << 10 // Traefik forwards the whole Cookie header
+)
+
+// NewServer returns an http.Server for addr with the platform's timeouts and header limit.
+func NewServer(addr string, h http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           h,
+		ReadHeaderTimeout: readHeaderTimeout,
+		ReadTimeout:       readTimeout,
+		WriteTimeout:      writeTimeout,
+		IdleTimeout:       idleTimeout,
+		MaxHeaderBytes:    maxHeaderBytes,
+	}
+}
+
 // RequestTimeout is the per-request deadline of the ForwardAuth and auth-host handlers. It stays well under
 // the server WriteTimeout so a hung dependency ends in an explicit 503 instead of a dropped connection.
 const RequestTimeout = 5 * time.Second

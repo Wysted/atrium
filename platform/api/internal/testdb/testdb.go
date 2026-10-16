@@ -279,6 +279,21 @@ func Runtime(t testing.TB, owner *pgxpool.Pool) *pgxpool.Pool {
 	return pool
 }
 
+// Portal opens a pool over the same database as owner whose connections run as the least-privilege
+// platform_portal role, exactly as "portal serve" does. Fixtures keep using owner; the code under test must use
+// the returned pool so a missing grant fails the test.
+func Portal(t testing.TB, owner *pgxpool.Pool) *pgxpool.Pool {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	pool, _, err := postgres.OpenPortalPool(ctx, owner.Config())
+	if err != nil {
+		t.Fatalf("open portal pool: %v", err)
+	}
+	t.Cleanup(pool.Close) // registered after owner's cleanups, so it runs before the DROP DATABASE
+	return pool
+}
+
 // closeConn closes an admin connection; a failed close of a short-lived test connection carries no information.
 func closeConn(ctx context.Context, c *pgx.Conn) {
 	_ = c.Close(ctx)

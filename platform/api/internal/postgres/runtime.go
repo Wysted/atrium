@@ -43,17 +43,27 @@ func NewRuntimePool(ctx context.Context) (*pgxpool.Pool, RuntimeIdentity, error)
 // AfterConnect "SET ROLE" would run after the connection is already usable and, if forgotten on one code
 // path (Hijack, a second pool), silently leave a privileged connection.
 func OpenRuntimePool(ctx context.Context, cfg *pgxpool.Config) (*pgxpool.Pool, RuntimeIdentity, error) {
+	return openRolePool(ctx, cfg, RuntimeRole, func(ctx context.Context, db querier) (RuntimeIdentity, error) {
+		return CheckRuntimeRole(ctx, db)
+	})
+}
+
+// openRolePool opens a pool whose connections assume role as a startup parameter and refuses to return it
+// unless check passes.
+func openRolePool(ctx context.Context, cfg *pgxpool.Config, role string,
+	check func(context.Context, querier) (RuntimeIdentity, error),
+) (*pgxpool.Pool, RuntimeIdentity, error) {
 	cfg = cfg.Copy()
 	params := make(map[string]string, len(cfg.ConnConfig.RuntimeParams)+1)
 	maps.Copy(params, cfg.ConnConfig.RuntimeParams)
-	params["role"] = RuntimeRole
+	params["role"] = role
 	cfg.ConnConfig.RuntimeParams = params
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, RuntimeIdentity{}, err
 	}
-	id, err := CheckRuntimeRole(ctx, pool)
+	id, err := check(ctx, pool)
 	if err != nil {
 		pool.Close()
 		return nil, RuntimeIdentity{}, err
@@ -65,17 +75,65 @@ type rowQuerier interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
+// querier is a rowQuerier that can also return several rows (satisfied by *pgxpool.Pool).
+type querier interface {
+	rowQuerier
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+}
+
 // CheckRuntimeRole verifies that db runs with the least-privilege runtime role and refuses anything that
 // would silently void the grants of the schema: a different effective role, a superuser, a role that
 // bypasses row security, a role that owns (or inherits the owner of) tables, one that can create objects in
 // schema public, or one that can modify audit_events (append-only) or keep its history by truncating it.
 func CheckRuntimeRole(ctx context.Context, db rowQuerier) (RuntimeIdentity, error) {
+	f, err := loadRoleFacts(ctx, db)
+	if err != nil {
+		return RuntimeIdentity{}, err
+	}
+	if problems := f.problems(RuntimeRole); len(problems) > 0 {
+		return f.RuntimeIdentity, refusal(RuntimeRole, problems)
+	}
+	return f.RuntimeIdentity, nil
+}
+
+// refusal builds the start-up error shared by the runtime and portal roles.
+func refusal(role string, problems []error) error {
+	return fmt.Errorf("refusing to run: the database role is not the least-privilege role %s "+
+		"(connect with a login role that is a member of %s, not the owner of the schema): %w",
+		role, role, errors.Join(problems...))
+}
+
+// LoginRoleProblems lists why the login role (session_user) is unsafe: it could undo the assumed role with
+// RESET ROLE / SET ROLE. Empty means the login role is fine.
+func (id RuntimeIdentity) LoginRoleProblems() []string {
+	var problems []string
+	if id.SessionIsSuper {
+		problems = append(problems, "is a superuser")
+	}
+	if id.SessionBypassRLS {
+		problems = append(problems, "bypasses row-level security")
+	}
+	if id.SessionOwnsData {
+		problems = append(problems, "owns (or inherits the owner of) tables in schema public")
+	}
+	if id.SessionCanCreate {
+		problems = append(problems, "can create objects in schema public")
+	}
+	return problems
+}
+
+// roleFacts is what the database reports about the effective role of a connection.
+type roleFacts struct {
+	RuntimeIdentity
+	super, bypassRLS, ownsTables, canCreate bool
+	auditUpdate, auditDelete, auditTruncate bool
+}
+
+func loadRoleFacts(ctx context.Context, db rowQuerier) (roleFacts, error) {
 	var (
-		id                                      RuntimeIdentity
-		super, bypassRLS, ownsTables, canCreate bool
-		auditUpdate, auditDelete, auditTruncate bool
-		sessionSuper, sessionOwns               bool
-		sessionBypassRLS, sessionCanCreate      bool
+		f                                  roleFacts
+		sessionSuper, sessionOwns          bool
+		sessionBypassRLS, sessionCanCreate bool
 	)
 	err := db.QueryRow(ctx, `
 		SELECT current_user::text, session_user::text,
@@ -93,38 +151,38 @@ func CheckRuntimeRole(ctx context.Context, db rowQuerier) (RuntimeIdentity, erro
 		       has_schema_privilege(session_user, 'public', 'CREATE')
 		FROM pg_roles r, pg_roles s
 		WHERE r.rolname = current_user AND s.rolname = session_user`).Scan(
-		&id.CurrentUser, &id.SessionUser, &super, &bypassRLS, &ownsTables, &canCreate,
-		&auditUpdate, &auditDelete, &auditTruncate, &sessionSuper, &sessionOwns, &sessionBypassRLS, &sessionCanCreate)
+		&f.CurrentUser, &f.SessionUser, &f.super, &f.bypassRLS, &f.ownsTables, &f.canCreate,
+		&f.auditUpdate, &f.auditDelete, &f.auditTruncate, &sessionSuper, &sessionOwns, &sessionBypassRLS, &sessionCanCreate)
 	if err != nil {
-		return RuntimeIdentity{}, fmt.Errorf("check runtime role: %w", err)
+		return roleFacts{}, fmt.Errorf("check database role: %w", err)
 	}
-	id.SessionIsSuper, id.SessionOwnsData = sessionSuper, sessionOwns
-	id.SessionBypassRLS, id.SessionCanCreate = sessionBypassRLS, sessionCanCreate
+	f.SessionIsSuper, f.SessionOwnsData = sessionSuper, sessionOwns
+	f.SessionBypassRLS, f.SessionCanCreate = sessionBypassRLS, sessionCanCreate
+	return f, nil
+}
 
+// problems lists everything that voids the grants of the schema for the effective role; want is the role the
+// connection must be running as.
+func (f roleFacts) problems(want string) []error {
 	var problems []error
 	add := func(format string, args ...any) { problems = append(problems, fmt.Errorf(format, args...)) }
-	if id.CurrentUser != RuntimeRole {
-		add("effective role is %q, want %q", id.CurrentUser, RuntimeRole)
+	if f.CurrentUser != want {
+		add("effective role is %q, want %q", f.CurrentUser, want)
 	}
-	if super {
-		add("role %q is a superuser", id.CurrentUser)
+	if f.super {
+		add("role %q is a superuser", f.CurrentUser)
 	}
-	if bypassRLS {
-		add("role %q bypasses row-level security", id.CurrentUser)
+	if f.bypassRLS {
+		add("role %q bypasses row-level security", f.CurrentUser)
 	}
-	if ownsTables {
-		add("role %q owns (or inherits the owner of) tables in schema public", id.CurrentUser)
+	if f.ownsTables {
+		add("role %q owns (or inherits the owner of) tables in schema public", f.CurrentUser)
 	}
-	if canCreate {
-		add("role %q can create objects in schema public", id.CurrentUser)
+	if f.canCreate {
+		add("role %q can create objects in schema public", f.CurrentUser)
 	}
-	if auditUpdate || auditDelete || auditTruncate {
-		add("role %q can modify or truncate audit_events (must be append-only)", id.CurrentUser)
+	if f.auditUpdate || f.auditDelete || f.auditTruncate {
+		add("role %q can modify or truncate audit_events (must be append-only)", f.CurrentUser)
 	}
-	if len(problems) > 0 {
-		return id, fmt.Errorf("refusing to run: the database role is not the least-privilege runtime role "+
-			"(connect with a login role that is a member of %s, not the owner of the schema): %w",
-			RuntimeRole, errors.Join(problems...))
-	}
-	return id, nil
+	return problems
 }
