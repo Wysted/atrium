@@ -87,32 +87,34 @@ func create(t testing.TB, from string) *pgxpool.Pool {
 	if err != nil {
 		t.Fatalf("random name: %v", err)
 	}
+	start := time.Now()
 	admin, err := pgx.Connect(ctx, "") // PGDATABASE from env; used only for CREATE/DROP DATABASE
 	if err != nil {
-		t.Fatalf("connect admin: %v", err)
+		t.Fatalf("%v", stepError("connect admin", name, start, err))
 	}
 	defer closeConn(ctx, admin)
 	if err := createDatabase(ctx, admin, name, from); err != nil {
-		t.Fatalf("create database: %v", err)
+		t.Fatalf("%v", stepError("create database", name, start, err))
 	}
 
 	t.Cleanup(func() {
+		dstart := time.Now()
 		cctx, ccancel := context.WithTimeout(context.Background(), timeout)
 		defer ccancel()
 		c, err := pgx.Connect(cctx, "")
 		if err != nil {
-			t.Errorf("connect for drop: %v", err)
+			t.Errorf("%v", stepError("connect for drop", name, dstart, err))
 			return
 		}
 		defer closeConn(cctx, c)
 		if err := dropDatabase(cctx, c, name); err != nil {
-			t.Errorf("drop database: %v", err)
+			t.Errorf("%v", stepError("drop database", name, dstart, err))
 		}
 	})
 
 	pool, err := openPool(ctx, name)
 	if err != nil {
-		t.Fatalf("open pool: %v", err)
+		t.Fatalf("%v", stepError("open pool", name, start, err))
 	}
 	t.Cleanup(pool.Close) // runs before the drop above (LIFO)
 	return pool
@@ -292,6 +294,12 @@ func Portal(t testing.TB, owner *pgxpool.Pool) *pgxpool.Pool {
 	}
 	t.Cleanup(pool.Close) // registered after owner's cleanups, so it runs before the DROP DATABASE
 	return pool
+}
+
+// stepError names the failing step, the database and how long the step ran: a bare "context deadline exceeded"
+// does not say where the time went (DROP DATABASE waits for an immediate checkpoint, see the testdb notes in go.md).
+func stepError(step, database string, start time.Time, err error) error {
+	return fmt.Errorf("%s %s (after %s): %w", step, database, time.Since(start).Round(time.Millisecond), err)
 }
 
 // closeConn closes an admin connection; a failed close of a short-lived test connection carries no information.
