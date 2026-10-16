@@ -4,6 +4,7 @@
 package portalhttp
 
 import (
+	"context"
 	"log/slog"
 	"mime"
 	"net/http"
@@ -116,39 +117,60 @@ func SecurityHeaders(next http.Handler) http.Handler {
 	})
 }
 
-// statusRecorder remembers the status code of a response. Unwrap keeps http.ResponseController working.
-type statusRecorder struct {
-	http.ResponseWriter
-	status int
-}
-
-func (s *statusRecorder) WriteHeader(code int) {
-	if s.status == 0 {
-		s.status = code
-	}
-	s.ResponseWriter.WriteHeader(code)
-}
-
-func (s *statusRecorder) Write(b []byte) (int, error) {
-	if s.status == 0 {
-		s.status = http.StatusOK
-	}
-	return s.ResponseWriter.Write(b)
-}
-
-func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter }
-
 // RequestLog writes one log line per request: method, path, status and duration. The query string, headers
 // and cookies are never logged.
 func RequestLog(log *slog.Logger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		rec := &statusRecorder{ResponseWriter: w}
+		rec := &httpx.StatusRecorder{ResponseWriter: w}
 		next.ServeHTTP(rec, r)
-		status := rec.status
-		if status == 0 {
-			status = http.StatusOK
-		}
+		status := rec.StatusOrOK()
 		log.Info("request", "method", r.Method, "path", r.URL.Path, "status", status, "duration_ms", time.Since(start).Milliseconds())
+	})
+}
+
+// routeKey carries a routeHolder through the request context.
+type routeKey struct{}
+
+// routeHolder lets the router tell the outermost middleware which pattern served the request. ServeMux sets
+// Request.Pattern on the request it hands to the matched handler, which is a copy by the time the guards (deadline,
+// authentication) have wrapped the context, so the outer request never sees it.
+type routeHolder struct{ pattern string }
+
+// observe reports every request to obs once it is done, whatever stopped it: guards, authentication or a handler.
+// A panic that Recover answers is counted as the 503 it writes; only a re-panicked http.ErrAbortHandler is reported as a 500.
+func observe(obs Observer, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		holder := &routeHolder{}
+		rec := &httpx.StatusRecorder{ResponseWriter: w}
+		finished := false
+		defer func() {
+			status := http.StatusInternalServerError
+			if finished {
+				status = rec.StatusOrOK()
+			}
+			route := holder.pattern
+			if route == "" {
+				route = RouteUnmatched
+			}
+			obs.Request(r.Method, route, status, time.Since(start))
+		}()
+		next.ServeHTTP(rec, r.WithContext(context.WithValue(r.Context(), routeKey{}, holder)))
+		finished = true
+	})
+}
+
+// recordRoute wraps the router: after it routed a request, the matched ServeMux pattern goes to the holder of
+// observe. The pattern comes from the program's own route table, never from the request.
+func recordRoute(mux *http.ServeMux) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Deferred so that a panic, which the recovery middleware outside answers, still leaves its route.
+		defer func() {
+			if holder, ok := r.Context().Value(routeKey{}).(*routeHolder); ok {
+				holder.pattern = r.Pattern
+			}
+		}()
+		mux.ServeHTTP(w, r)
 	})
 }

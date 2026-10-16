@@ -40,11 +40,18 @@ type Store interface {
 	MarkSeen(ctx context.Context, seen []Seen) (skipped []string, err error)
 }
 
-// Config wires a Recorder. Interval, Now and Logger are optional.
+// Observer is told about the events metrics count. Nil in Config means none.
+type Observer interface {
+	// FlushFailed is called when a flush statement fails (its batch goes back to memory).
+	FlushFailed()
+}
+
+// Config wires a Recorder. Interval, Now, Observer and Logger are optional.
 type Config struct {
 	Store    Store
 	Interval time.Duration
 	Now      func() time.Time
+	Observer Observer
 	Logger   *slog.Logger
 }
 
@@ -53,6 +60,7 @@ type Recorder struct {
 	store    Store
 	interval time.Duration
 	now      func() time.Time
+	obs      Observer
 	log      *slog.Logger
 
 	flushMu sync.Mutex // serializes flushes so a failed one restores its batch before the next starts
@@ -66,18 +74,25 @@ func New(cfg Config) (*Recorder, error) {
 	if cfg.Store == nil {
 		return nil, errors.New("lastseen: store is required")
 	}
-	r := &Recorder{store: cfg.Store, interval: cfg.Interval, now: cfg.Now, log: cfg.Logger, pending: map[string]time.Time{}}
+	r := &Recorder{store: cfg.Store, interval: cfg.Interval, now: cfg.Now, obs: cfg.Observer, log: cfg.Logger, pending: map[string]time.Time{}}
 	if r.interval <= 0 {
 		r.interval = DefaultInterval
 	}
 	if r.now == nil {
 		r.now = time.Now
 	}
+	if r.obs == nil {
+		r.obs = noObserver{}
+	}
 	if r.log == nil {
 		r.log = slog.Default()
 	}
 	return r, nil
 }
+
+type noObserver struct{}
+
+func (noObserver) FlushFailed() {}
 
 // Touch notes that host just received an authorized request. host must be a known deployment host.
 func (r *Recorder) Touch(host string) {
@@ -118,6 +133,7 @@ func (r *Recorder) Flush(ctx context.Context) error {
 	skipped, err := r.store.MarkSeen(ctx, seen)
 	if err != nil {
 		r.restore(batch)
+		r.obs.FlushFailed()
 		return fmt.Errorf("lastseen: flush %d hosts: %w", len(batch), err)
 	}
 	if len(skipped) > 0 {

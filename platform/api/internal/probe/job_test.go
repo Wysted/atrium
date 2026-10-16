@@ -362,3 +362,83 @@ func TestControlSample(t *testing.T) {
 		}
 	})
 }
+
+// recordingObserver keeps what the job reported.
+type recordingObserver struct {
+	mu      sync.Mutex
+	results []string
+}
+
+func (o *recordingObserver) Round(result string, _ time.Duration) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.results = append(o.results, result)
+}
+
+func TestObserverSeesTheResultOfEveryKindOfRound(t *testing.T) {
+	t.Parallel()
+	due := []Target{{Host: "a.example.test", AppID: "app_a"}}
+	tests := []struct {
+		name  string
+		store *fakeStore
+		prob  *fakeProber
+		want  string
+	}{
+		{"written", &fakeStore{targets: due}, &fakeProber{}, RoundWritten},
+		{"skipped by the lock", &fakeStore{skip: true, targets: due}, &fakeProber{}, RoundSkipped},
+		{"idle", &fakeStore{}, &fakeProber{}, RoundIdle},
+		{"failing control", &fakeStore{targets: due}, &fakeProber{controlSeq: []Status{StatusUnprotected}}, RoundInconclusive},
+		{"no control deployment", &fakeStore{targets: due, noControl: true}, &fakeProber{}, RoundInconclusive},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			obs := &recordingObserver{}
+			j, _ := newJob(t, tt.store, tt.prob, func(c *Config) { c.Observer = obs })
+			if _, err := j.RunOnce(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if len(obs.results) != 1 || obs.results[0] != tt.want {
+				t.Fatalf("results = %v, want [%s]", obs.results, tt.want)
+			}
+		})
+	}
+}
+
+type failingStore struct{}
+
+func (*failingStore) Round(context.Context, time.Duration, string, func(context.Context, []Target, []Target) []Result) (Report, error) {
+	return Report{}, context.DeadlineExceeded
+}
+
+func TestFailedRoundIsReported(t *testing.T) {
+	t.Parallel()
+	obs := &recordingObserver{}
+	j, _ := newJob(t, &failingStore{}, &fakeProber{}, func(c *Config) { c.Observer = obs })
+	if _, err := j.RunOnce(context.Background()); err == nil {
+		t.Fatal("the failure was hidden")
+	}
+	if len(obs.results) != 1 || obs.results[0] != RoundError {
+		t.Fatalf("results %v", obs.results)
+	}
+}
+
+// A round cut short by the end of the context is not idle and not an error: it is not reported.
+func TestCancelledRoundIsNotReported(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	for name, store := range map[string]Store{
+		"idle after cancellation":  &fakeStore{targets: []Target{{Host: "a.example.test"}}},
+		"error after cancellation": &failingStore{},
+	} {
+		t.Run(name, func(t *testing.T) {
+			obs := &recordingObserver{}
+			j, _ := newJob(t, store, &fakeProber{}, func(c *Config) { c.Observer = obs })
+			_, _ = j.RunOnce(ctx)
+			if len(obs.results) != 0 {
+				t.Fatalf("reported %v", obs.results)
+			}
+		})
+	}
+}

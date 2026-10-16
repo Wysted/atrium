@@ -14,9 +14,11 @@ import (
 const (
 	envPublicAddr   = "PORTAL_PUBLIC_ADDR"
 	envInternalAddr = "PORTAL_INTERNAL_ADDR"
-	envAppID        = "PORTAL_APP_ID"
-	envIssuer       = "PORTAL_ISSUER"
-	envJWKSURL      = "PORTAL_JWKS_URL"
+	// envMetricsAddr is the listener of /metrics alone, like in platform-api: a NetworkPolicy filters by port.
+	envMetricsAddr = "PORTAL_METRICS_ADDR"
+	envAppID       = "PORTAL_APP_ID"
+	envIssuer      = "PORTAL_ISSUER"
+	envJWKSURL     = "PORTAL_JWKS_URL"
 	// envAllowPrivilegedDBLogin is a DEVELOPMENT-ONLY escape hatch (default false), like in platform-api: the
 	// portal role is assumed with a startup parameter, so a privileged login role could undo it with
 	// RESET ROLE. Setting it only downgrades the refusal to a loud WARN. Never set it in production.
@@ -30,6 +32,7 @@ var appIDPattern = regexp.MustCompile(`^app_[0-9A-HJKMNP-TV-Z]{26}$`)
 type config struct {
 	PublicAddr   string
 	InternalAddr string
+	MetricsAddr  string
 	AppID        string // the portal's own app id: the aud of its assertions
 	Issuer       string // https://<auth host>, exact match on iss
 	JWKSURL      string // in-cluster URL of platform-api's JWKS (internal listener)
@@ -52,12 +55,18 @@ func loadConfig(getenv func(string) string) (config, error) {
 	c := config{
 		PublicAddr:   required(envPublicAddr),
 		InternalAddr: required(envInternalAddr),
+		MetricsAddr:  required(envMetricsAddr),
 		AppID:        required(envAppID),
 		Issuer:       required(envIssuer),
 		JWKSURL:      required(envJWKSURL),
 	}
 	if c.PublicAddr != "" && c.PublicAddr == c.InternalAddr {
 		errs = append(errs, fmt.Errorf("%s and %s must differ: the probes must never share a listener with the public routes", envPublicAddr, envInternalAddr))
+	}
+	for _, other := range []struct{ name, addr string }{{envPublicAddr, c.PublicAddr}, {envInternalAddr, c.InternalAddr}} {
+		if c.MetricsAddr != "" && c.MetricsAddr == other.addr {
+			errs = append(errs, fmt.Errorf("%s and %s must differ: /metrics must have a listener of its own", envMetricsAddr, other.name))
+		}
 	}
 	if c.AppID != "" && !appIDPattern.MatchString(c.AppID) {
 		errs = append(errs, fmt.Errorf("%s must match %s", envAppID, appIDPattern))

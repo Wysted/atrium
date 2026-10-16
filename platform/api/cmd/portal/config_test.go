@@ -13,7 +13,7 @@ const (
 
 func env(overrides map[string]string) func(string) string {
 	base := map[string]string{
-		envPublicAddr: ":8080", envInternalAddr: ":8081", envAppID: okAppID, envIssuer: okIssuer, envJWKSURL: okJWKS,
+		envPublicAddr: ":8080", envInternalAddr: ":8081", envMetricsAddr: ":9090", envAppID: okAppID, envIssuer: okIssuer, envJWKSURL: okJWKS,
 		envProbeAddr: "traefik.traefik.svc.cluster.local:443",
 	}
 	for k, v := range overrides {
@@ -34,6 +34,9 @@ func TestLoadConfig(t *testing.T) {
 		{"missing everything", map[string]string{envPublicAddr: "", envInternalAddr: "", envAppID: "", envIssuer: "", envJWKSURL: ""},
 			[]string{envPublicAddr, envInternalAddr, envAppID, envIssuer, envJWKSURL}},
 		{"same addr", map[string]string{envInternalAddr: ":8080"}, []string{"must differ"}},
+		{"missing metrics addr", map[string]string{envMetricsAddr: ""}, []string{envMetricsAddr}},
+		{"metrics on the public addr", map[string]string{envMetricsAddr: ":8080"}, []string{"must differ"}},
+		{"metrics on the internal addr", map[string]string{envMetricsAddr: ":8081"}, []string{"must differ"}},
 		{"app id not a ulid", map[string]string{envAppID: "portal"}, []string{envAppID}},
 		{"app id lowercase ulid", map[string]string{envAppID: "app_0000000000000000000000000p"}, []string{envAppID}},
 		{"issuer over http", map[string]string{envIssuer: "http://auth.apps.example.test"}, []string{envIssuer}},

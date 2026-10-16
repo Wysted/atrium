@@ -89,6 +89,9 @@ platform-api serves two listeners so that `/forwardauth` is never reachable thro
 |---|---|---|
 | internal | `/forwardauth`, `/.well-known/jwks.json`, `/healthz`, `/readyz` | Traefik (ForwardAuth) and app namespaces (JWKS) via NetworkPolicy |
 | public | auth host browser routes: `/login`, `/oauth2/callback`, `/logout`, signed-out page, `/.well-known/jwks.json` | Traefik IngressRoute for the auth host only |
+| metrics | `/metrics` only (`PLATFORM_METRICS_ADDR`, required) | the monitoring namespace only, via NetworkPolicy |
+
+A NetworkPolicy filters by port, never by path, so `/metrics` has a listener of its own: it cannot share one that Traefik or the app namespaces reach.
 
 `/readyz` fails when the database is unreachable, when no signer is loaded, or on `KEKMismatch`.
 
@@ -565,8 +568,73 @@ Everything critical works inside the portal, with no external tool; standard out
 | Integration health (per app) | Deployments never or no longer seen (`last_seen_at`); result of the last probe; apps without grants or without a manager; disabled apps and inactive initiatives |
 | Integration health (platform) | Orphan hosts: `unknown_host` denials of a host routed by Traefik with no deployment |
 | Logs | JSON on stdout (already the case), for any collector |
-| Metrics | `/metrics` in Prometheus format on the internal listener of each process: decisions by host and reason, logins by outcome, JWKS fetches, key state |
+| Metrics | `/metrics` in Prometheus format on a dedicated metrics listener of each process: decisions by reason, logins by outcome, JWKS fetches, key state, probe results (catalog below) |
 | Dashboards and alerts | Optional Grafana dashboards and alert rules versioned in `platform-gitops/`; the local overlay adds Prometheus and Grafana |
+
+#### Metrics
+
+Both processes (`platform-api` and `portal`) serve `GET /metrics` in the Prometheus text format on a **dedicated
+metrics listener** (`PLATFORM_METRICS_ADDR`, `PORTAL_METRICS_ADDR`; both required and different from the other
+addresses of the process; same server timeouts). One rule for both: `/metrics` is never served on the public or the
+internal listener, which answer 404 (tests per process enforce it), because a NetworkPolicy cannot filter by path.
+There is no authentication: the NetworkPolicy must allow only the monitoring namespace to reach the metrics port, and
+no IngressRoute may route to it. Each process uses its own registry (never the global default one) with the Go runtime and process
+collectors, built with `github.com/prometheus/client_golang` (pinned in `go.mod`).
+
+**Cardinality rule (hard).** No label takes a value supplied by a client: not the Host, the path, the user agent,
+the query, an email or a user id. Labels take a value from a closed set (decision, reason, outcome, result, status
+class), a `ServeMux` route pattern (`Request.Pattern`, never `URL.Path`; a request rejected before the router is
+`unmatched`) or a fixed text. The code that records an event clamps its strings to the closed set and reports
+anything else as `other`, and a test per process sends thousands of requests with random hosts, paths, methods and
+cookies and asserts that the number of series does not move and that none of those values is exposed.
+`app_id` is **not** a label anywhere: the set of apps grows with every company that adopts the portal, it would
+multiply every other label, and the per-app view already exists (decision log line, `last_seen_at`, probe status).
+
+platform-api (`platform_`):
+
+| Metric | Type | Labels |
+|---|---|---|
+| `platform_forwardauth_decisions_total` | counter | `decision`, `reason` (the values of the decision log line) |
+| `platform_forwardauth_decision_duration_seconds` | histogram | `decision` |
+| `platform_forwardauth_cache_lookups_total` | counter | `cache` (`decision`, `host`, `negative_host`), `result` (`hit`, `miss`) |
+| `platform_logins_total` | counter | `outcome` (a fake login, development only, counts as `success`): `success`, `provider_refused`, `rejected`, `invalid_flow`, `failed`, `provider_unavailable`, `user_disabled`, `rate_limited`, `invalid_request`, `error` |
+| `platform_logouts_total` | counter | `via` (`app`, `auth_host`); only logouts that revoked a session |
+| `platform_jwks_requests_total` | counter | `listener` (`internal`, `public`), `status_class` |
+| `platform_signing_key_loaded` | gauge | none; 1 when this replica can sign |
+| `platform_signing_key_active_age_seconds` | gauge | none; absent while no signer is loaded |
+| `platform_signing_key_kek_mismatch` | gauge | none; 1 when the KEK does not match the active or next keys |
+| `platform_lastseen_pending_hosts` | gauge | none |
+| `platform_lastseen_flush_errors_total` | counter | none |
+| `platform_unknown_host_drops_total` | counter | `reason` (`invalid`, `budget`, `marker`, `queue`) |
+| `platform_db_pool_{acquired,idle,total,max}_connections` | gauge | none |
+| `platform_db_pool_{acquires,acquires_waited,acquires_canceled}_total`, `platform_db_pool_acquire_wait_seconds_total` | counter | none |
+
+portal (`portal_`):
+
+| Metric | Type | Labels |
+|---|---|---|
+| `portal_http_requests_total` | counter | `method` (standard methods, else `other`), `route`, `status_class` |
+| `portal_http_request_duration_seconds` | histogram | `route` |
+| `portal_contention_responses_total` | counter | none |
+| `portal_probe_rounds_total` | counter | `result`: `written`, `inconclusive`, `skipped` (another replica holds the lock), `idle` (nothing due), `error` |
+| `portal_probe_round_duration_seconds` | histogram | `result` |
+| `portal_deployments_by_probe_status` | gauge | `status` (`ok`, `unprotected`, `unexpected`, `unreachable`, `never`) |
+| `portal_probe_status_count_errors_total` | counter | none |
+| `portal_db_pool_*` | as above | none |
+
+Notes:
+
+- `portal_deployments_by_probe_status` is a scrape-time collector: it counts `deployments` by `last_probe_status`
+  (`never` for none yet) with a 30 s cache and a 2 s timeout, on every replica and whether or not the probe runs, so
+  any replica reports the state of the database. It has no host label. If the count fails the gauge is absent for
+  that scrape (a stale value would hide the problem), `portal_probe_status_count_errors_total` grows, and the failure
+  is cached for the TTL.
+- Counters of a vector with open label combinations (decisions, requests) appear with their first event;
+  the small closed sets (logins, logouts, caches, probe rounds) start at zero.
+- The pool metrics are read from `pool.Stat()` at scrape time.
+- Audit write failures are not a metric: the portal writes the audit row in the same transaction as the change, so a
+  failure is the failure of the request itself (`portal_http_requests_total` with `5xx`), and platform-api logs
+  the best-effort session audit failures.
 
 #### `last_seen_at`
 

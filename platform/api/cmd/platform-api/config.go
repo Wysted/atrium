@@ -19,11 +19,14 @@ import (
 const (
 	envInternalAddr = "PLATFORM_INTERNAL_ADDR"
 	envPublicAddr   = "PLATFORM_PUBLIC_ADDR"
-	envAuthHost     = "PLATFORM_AUTH_HOST"
-	envIssuer       = "PLATFORM_ISSUER"
-	envKEKFile      = keys.KEKFileEnv // PLATFORM_KEK_FILE
-	envIdleTimeout  = "PLATFORM_IDLE_TIMEOUT"
-	envFakeLogin    = "PLATFORM_FAKE_LOGIN"
+	// envMetricsAddr is the listener of /metrics alone: a NetworkPolicy filters by port, so it cannot share one
+	// with ForwardAuth or the JWKS.
+	envMetricsAddr = "PLATFORM_METRICS_ADDR"
+	envAuthHost    = "PLATFORM_AUTH_HOST"
+	envIssuer      = "PLATFORM_ISSUER"
+	envKEKFile     = keys.KEKFileEnv // PLATFORM_KEK_FILE
+	envIdleTimeout = "PLATFORM_IDLE_TIMEOUT"
+	envFakeLogin   = "PLATFORM_FAKE_LOGIN"
 	// envPortalAppID is the optional id of the portal app, the one app any active user may open (block 6).
 	envPortalAppID = "PLATFORM_PORTAL_APP_ID"
 	// Google login. All three are set together or none is (see loadConfig).
@@ -51,6 +54,7 @@ var hostPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`)
 type config struct {
 	InternalAddr string
 	PublicAddr   string
+	MetricsAddr  string
 	AuthHost     string
 	Issuer       string
 	KEKFile      string
@@ -86,6 +90,7 @@ func loadConfig(getenv func(string) string) (config, error) {
 	c := config{
 		InternalAddr: required(envInternalAddr),
 		PublicAddr:   required(envPublicAddr),
+		MetricsAddr:  required(envMetricsAddr),
 		AuthHost:     required(envAuthHost),
 		Issuer:       required(envIssuer),
 		KEKFile:      required(envKEKFile),
@@ -93,6 +98,11 @@ func loadConfig(getenv func(string) string) (config, error) {
 	}
 	if c.InternalAddr != "" && c.InternalAddr == c.PublicAddr {
 		errs = append(errs, fmt.Errorf("%s and %s must differ: /forwardauth must never share a listener with the public routes", envInternalAddr, envPublicAddr))
+	}
+	for _, other := range []struct{ name, addr string }{{envInternalAddr, c.InternalAddr}, {envPublicAddr, c.PublicAddr}} {
+		if c.MetricsAddr != "" && c.MetricsAddr == other.addr {
+			errs = append(errs, fmt.Errorf("%s and %s must differ: /metrics must have a listener of its own", envMetricsAddr, other.name))
+		}
 	}
 	if c.AuthHost != "" && !hostPattern.MatchString(c.AuthHost) {
 		errs = append(errs, fmt.Errorf("%s must be a lowercase host without scheme, port or path", envAuthHost))

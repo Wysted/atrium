@@ -19,11 +19,13 @@ import (
 	"platform/api/internal/jwks"
 	"platform/api/internal/keys"
 	"platform/api/internal/lastseen"
+	"platform/api/internal/metrics"
 	"platform/api/internal/postgres"
 	"platform/api/internal/ratelimit"
 	"platform/api/internal/session"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // Config describes one platform-api instance.
@@ -61,6 +63,11 @@ type App struct {
 	// LastSeen aggregates the authorized requests per deployment host. The caller must run LastSeen.Run in the
 	// background: it flushes last_seen_at once per minute and once more when its context ends.
 	LastSeen *lastseen.Recorder
+	// MetricsHandler serves /metrics on its own listener (PLATFORM_METRICS_ADDR): the NetworkPolicy filters by port,
+	// not by path, so the metrics cannot share a listener that Traefik or the app namespaces reach.
+	MetricsHandler http.Handler
+	// Metrics is the registry behind /metrics: one per App, never the global default.
+	Metrics *prometheus.Registry
 	// RunUnknownHosts writes the queued unknown_host denials (forwardauth.Handler.Run). Run it in the background.
 	RunUnknownHosts func(ctx context.Context)
 }
@@ -90,13 +97,23 @@ func New(cfg Config) (*App, error) {
 	users := postgres.NewUserRepo(cfg.Pool)
 	auditLog := postgres.NewAuditRepo(cfg.Pool)
 
-	seen, err := lastseen.New(lastseen.Config{Store: deployments, Logger: log})
+	reg, err := metrics.NewRegistry()
+	if err != nil {
+		return nil, err
+	}
+	pm, err := metrics.NewPlatform(reg)
+	if err != nil {
+		return nil, err
+	}
+
+	seen, err := lastseen.New(lastseen.Config{Store: deployments, Observer: pm, Logger: log})
 	if err != nil {
 		return nil, err
 	}
 	fa, err := forwardauth.New(forwardauth.Config{
 		AuthHost:       cfg.AuthHost,
 		Seen:           seen,
+		Observer:       pm,
 		Apps:           deployments,
 		Sessions:       sessions,
 		Evaluator:      access.NewEvaluator(postgres.NewAccessRepository(cfg.Pool), access.WithPortalApp(cfg.PortalAppID)),
@@ -129,6 +146,7 @@ func New(cfg Config) (*App, error) {
 		Limiter:        ratelimit.New(ratelimit.Config{}),
 		Audit:          auditLog,
 		FakeLogin:      cfg.FakeLogin,
+		Observer:       pm,
 		RequestTimeout: cfg.RequestTimeout,
 		Logger:         log,
 	})
@@ -136,15 +154,24 @@ func New(cfg Config) (*App, error) {
 		return nil, err
 	}
 
+	err = metrics.RegisterPlatformState(reg, metrics.PlatformSources{
+		Pool: cfg.Pool, Keys: cfg.Keyring, Pending: seen.Pending, UnknownDrops: fa.UnknownHostDrops,
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	internal := http.NewServeMux()
 	internal.Handle("/forwardauth", fa) // Traefik always uses GET, but any method must reach the decision code
-	internal.Handle(jwks.Route, jwks.Handler(cfg.Keyring))
+	internal.Handle(jwks.Route, pm.CountJWKS(metrics.ListenerInternal, jwks.Handler(cfg.Keyring)))
 	internal.Handle("GET "+health.PathLive, health.Live())
 	internal.Handle("GET "+health.PathReady, health.Ready(cfg.Pool, cfg.Keyring, log))
+	mux := http.NewServeMux()
+	mux.Handle(metrics.Route, metrics.Handler(reg))
 
 	public := http.NewServeMux()
 	ah.Register(public)
-	public.Handle(jwks.Route, jwks.Handler(cfg.Keyring))
+	public.Handle(jwks.Route, pm.CountJWKS(metrics.ListenerPublic, jwks.Handler(cfg.Keyring)))
 
 	return &App{
 		Internal:         httpx.Recover(log, internal),
@@ -153,6 +180,8 @@ func New(cfg Config) (*App, error) {
 		Login:            login,
 		InvalidateAccess: fa.Invalidate,
 		LastSeen:         seen,
+		MetricsHandler:   httpx.Recover(log, mux),
+		Metrics:          reg,
 		RunUnknownHosts:  fa.Run,
 	}, nil
 }

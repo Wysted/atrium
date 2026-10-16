@@ -134,7 +134,7 @@ func TestNewProbeJob(t *testing.T) {
 	t.Run("interval 0 builds nothing", func(t *testing.T) {
 		t.Parallel()
 		log, _ := newLog()
-		job, err := newProbeJob(probeConfig{}, okIssuer, okAppID, nil, log)
+		job, err := newProbeJob(probeConfig{}, okIssuer, okAppID, nil, nil, log)
 		if err != nil || job != nil {
 			t.Fatalf("job %v, err %v: a disabled probe must not exist", job, err)
 		}
@@ -143,7 +143,7 @@ func TestNewProbeJob(t *testing.T) {
 	t.Run("enabled", func(t *testing.T) {
 		t.Parallel()
 		log, logs := newLog()
-		job, err := newProbeJob(probeConfig{Interval: probe.DefaultInterval, Addr: "traefik:443"}, okIssuer, okAppID, nil, log)
+		job, err := newProbeJob(probeConfig{Interval: probe.DefaultInterval, Addr: "traefik:443"}, okIssuer, okAppID, nil, nil, log)
 		if err != nil || job == nil {
 			t.Fatalf("job %v, err %v", job, err)
 		}
@@ -155,7 +155,7 @@ func TestNewProbeJob(t *testing.T) {
 	t.Run("the insecure flag is logged at Error level", func(t *testing.T) {
 		t.Parallel()
 		log, logs := newLog()
-		if _, err := newProbeJob(probeConfig{Interval: probe.DefaultInterval, InsecureTLS: true}, okIssuer, okAppID, nil, log); err != nil {
+		if _, err := newProbeJob(probeConfig{Interval: probe.DefaultInterval, InsecureTLS: true}, okIssuer, okAppID, nil, nil, log); err != nil {
 			t.Fatal(err)
 		}
 		if !strings.Contains(logs.String(), `"level":"ERROR"`) || !strings.Contains(logs.String(), envProbeInsecureTLS) {
@@ -166,7 +166,7 @@ func TestNewProbeJob(t *testing.T) {
 	t.Run("a bad issuer is refused", func(t *testing.T) {
 		t.Parallel()
 		log, _ := newLog()
-		if _, err := newProbeJob(probeConfig{Interval: probe.DefaultInterval, Addr: "traefik:443"}, "not a url", okAppID, nil, log); err == nil {
+		if _, err := newProbeJob(probeConfig{Interval: probe.DefaultInterval, Addr: "traefik:443"}, "not a url", okAppID, nil, nil, log); err == nil {
 			t.Fatal("accepted an issuer without host")
 		}
 	})

@@ -292,6 +292,39 @@ func TestProbeRound(t *testing.T) {
 	}
 }
 
+func TestProbeStatusCounts(t *testing.T) {
+	t.Parallel()
+	owner := newTestDB(t)
+	portalPool := testdb.Portal(t, owner)
+	w := world{pool: owner}
+	in := w.initiative(t, "alpha", "active")
+	w.app(t, in, "a.example.test")
+	w.app(t, in, "b.example.test")
+	w.app(t, in, "c.example.test")
+	w.app(t, in, "d.example.test")
+	repo := postgres.NewProbeRepo(portalPool)
+	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
+	defer cancel()
+
+	counts, err := repo.StatusCounts(ctx)
+	if err != nil || len(counts) != 1 || counts[probe.StatusNever] != 4 {
+		t.Fatalf("counts = %v, %v, want the four deployments as never probed", counts, err)
+	}
+
+	mustExec(t, owner, `UPDATE deployments SET last_probe_status = 'ok', last_probe_at = now() WHERE host IN ('a.example.test', 'b.example.test')`)
+	mustExec(t, owner, `UPDATE deployments SET last_probe_status = 'unprotected', last_probe_at = now() WHERE host = 'c.example.test'`)
+	counts, err = repo.StatusCounts(ctx)
+	want := map[probe.Status]int{probe.StatusOK: 2, probe.StatusUnprotected: 1, probe.StatusNever: 1}
+	if err != nil || len(counts) != len(want) {
+		t.Fatalf("counts = %v, %v, want %v", counts, err, want)
+	}
+	for status, n := range want {
+		if counts[status] != n {
+			t.Fatalf("counts = %v, want %v", counts, want)
+		}
+	}
+}
+
 func TestPortalPoolIsLargeEnoughForTheProbe(t *testing.T) {
 	t.Parallel()
 	for _, tt := range []struct{ configured, want int32 }{{4, postgres.MinPortalPoolConns}, {1, postgres.MinPortalPoolConns}, {32, 32}} {

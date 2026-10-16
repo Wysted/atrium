@@ -55,7 +55,31 @@ type Store interface {
 		run func(ctx context.Context, due, control []Target) []Result) (Report, error)
 }
 
-// Config wires a Job. Concurrency, Jitter and Logger are optional.
+// Results of a round, as reported to the Observer. A closed set.
+const (
+	RoundWritten      = "written"      // hosts were probed and their results stored
+	RoundInconclusive = "inconclusive" // the control sample failed (or the portal app has no deployment): nothing stored
+	RoundSkipped      = "skipped"      // another replica holds the lock of the round
+	RoundIdle         = "idle"         // nothing was due
+	RoundError        = "error"
+)
+
+// Observer receives the events metrics count. Nil in Config means none.
+type Observer interface {
+	// Round reports a finished round (Round* constants) and how long it took.
+	Round(result string, elapsed time.Duration)
+}
+
+type noObserver struct{}
+
+func (noObserver) Round(string, time.Duration) {}
+
+// StatusCounter counts deployments (the metrics collector reads it at scrape time) by last probe status (StatusNever for those never probed).
+type StatusCounter interface {
+	StatusCounts(ctx context.Context) (map[Status]int, error)
+}
+
+// Config wires a Job. Concurrency, Jitter, Observer and Logger are optional.
 type Config struct {
 	Store    Store
 	Checker  Prober
@@ -67,8 +91,9 @@ type Config struct {
 	Concurrency  int
 	// Jitter returns the wait before the next round for the given interval; nil means interval plus or minus
 	// 10 percent at random.
-	Jitter func(interval time.Duration) time.Duration
-	Logger *slog.Logger
+	Jitter   func(interval time.Duration) time.Duration
+	Observer Observer
+	Logger   *slog.Logger
 }
 
 // Job is the periodic probe.
@@ -79,6 +104,7 @@ type Job struct {
 	controlApp  string
 	concurrency int
 	jitter      func(time.Duration) time.Duration
+	obs         Observer
 	log         *slog.Logger
 }
 
@@ -96,7 +122,10 @@ func NewJob(cfg Config) (*Job, error) {
 	}
 	j := &Job{
 		store: cfg.Store, checker: cfg.Checker, interval: cfg.Interval, concurrency: cfg.Concurrency,
-		jitter: cfg.Jitter, log: cfg.Logger, controlApp: cfg.ControlAppID,
+		jitter: cfg.Jitter, log: cfg.Logger, controlApp: cfg.ControlAppID, obs: cfg.Observer,
+	}
+	if j.obs == nil {
+		j.obs = noObserver{}
 	}
 	if j.concurrency <= 0 {
 		j.concurrency = DefaultConcurrency
@@ -119,8 +148,35 @@ func randomJitter(interval time.Duration) time.Duration {
 	return interval + time.Duration(rand.Int64N(2*spread+1)-spread) //nolint:gosec // G404: scheduling jitter, not a secret
 }
 
-// RunOnce executes one round.
+// RunOnce executes one round and reports it to the Observer.
 func (j *Job) RunOnce(ctx context.Context) (Report, error) {
+	start := time.Now()
+	rep, err := j.runRound(ctx)
+	result := roundResult(rep, err)
+	// A round cut short by the end of ctx proves nothing: it is neither idle nor a failure of the probe.
+	if ctx.Err() == nil || (result != RoundIdle && result != RoundError) {
+		j.obs.Round(result, time.Since(start))
+	}
+	return rep, err
+}
+
+// roundResult classifies a finished round.
+func roundResult(rep Report, err error) string {
+	switch {
+	case err != nil:
+		return RoundError
+	case rep.Skipped:
+		return RoundSkipped
+	case rep.Inconclusive:
+		return RoundInconclusive
+	case rep.Probed == 0:
+		return RoundIdle
+	default:
+		return RoundWritten
+	}
+}
+
+func (j *Job) runRound(ctx context.Context) (Report, error) {
 	dueAfter := time.Duration(float64(j.interval) * dueFraction)
 	var probed int
 	var inconclusive bool

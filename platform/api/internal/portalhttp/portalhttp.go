@@ -24,6 +24,25 @@ const (
 // rejected before it reaches SQL.
 var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
+// RouteUnmatched is the route reported for a request that never reached the router: one a guard or the
+// authentication rejected first.
+const RouteUnmatched = "unmatched"
+
+// Observer receives the events metrics count. Nil in Config means none.
+type Observer interface {
+	// Request reports a finished request. route is the ServeMux pattern that served it (RouteUnmatched when none
+	// did), never the request path: the path is client input and would make label cardinality unbounded. method
+	// is the request method, which the implementation must bound itself.
+	Request(method, route string, status int, elapsed time.Duration)
+	// Contention reports a request answered 503 because it lost against concurrent transactions.
+	Contention()
+}
+
+type noObserver struct{}
+
+func (noObserver) Request(string, string, int, time.Duration) {}
+func (noObserver) Contention()                                {}
+
 // Service is the use-case port the handlers call (implemented by portal.Service).
 type Service interface {
 	Me(ctx context.Context, userID string) (portal.Permissions, error)
@@ -41,6 +60,8 @@ type Config struct {
 	// Web serves everything outside /api/ (the SPA, a later part). Nil answers 404 problem documents. A
 	// handler that serves HTML must set its own Content-Security-Policy, replacing the API one.
 	Web http.Handler
+	// Observer counts the requests; nil means none.
+	Observer Observer
 	// RequestTimeout is the per-request deadline; zero means httpx.RequestTimeout.
 	RequestTimeout time.Duration
 	Logger         *slog.Logger
@@ -48,7 +69,7 @@ type Config struct {
 
 // New builds the public handler with the middleware chain of the contract, outermost first:
 //
-//	response headers -> request log -> recover -> read isolation (/api/*) -> CrossOriginProtection ->
+//	metrics -> response headers -> request log -> recover -> read isolation (/api/*) -> CrossOriginProtection ->
 //	JSON content type (mutations) -> assertion validation (SDK) -> deadline -> routes
 //
 // The guards run before authentication on purpose: a cross-site request is rejected without learning
@@ -61,7 +82,11 @@ func New(cfg Config) (http.Handler, error) {
 	if log == nil {
 		log = slog.Default()
 	}
-	a := &api{svc: cfg.Service, admin: cfg.Admin, log: log}
+	obs := cfg.Observer
+	if obs == nil {
+		obs = noObserver{}
+	}
+	a := &api{svc: cfg.Service, admin: cfg.Admin, obs: obs, log: log}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET "+PathMe, a.me)
@@ -74,7 +99,7 @@ func New(cfg Config) (http.Handler, error) {
 	}
 	mux.Handle("/", web)
 
-	return protect(cfg.Auth, cfg.RequestTimeout, log, mux), nil
+	return observe(obs, protect(cfg.Auth, cfg.RequestTimeout, log, recordRoute(mux))), nil
 }
 
 // protect wraps routes with the middleware chain, innermost last.
@@ -96,6 +121,7 @@ func notFound(w http.ResponseWriter, _ *http.Request) {
 type api struct {
 	svc   Service
 	admin AdminService
+	obs   Observer
 	log   *slog.Logger
 }
 
@@ -127,6 +153,7 @@ func (a *api) fail(w http.ResponseWriter, r *http.Request, op string, err error)
 		v, _ := errors.AsType[*portal.ValidationError](err)
 		writeValidation(w, v.Problems)
 	case errors.Is(err, portal.ErrContention):
+		a.obs.Contention()
 		a.log.Warn("request lost to contention", "op", op, "path", r.URL.Path, "error", err.Error())
 		w.Header().Set("Retry-After", retryAfterSeconds)
 		httpx.WriteProblem(w, httpx.Problem{Status: http.StatusServiceUnavailable})

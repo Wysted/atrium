@@ -29,6 +29,8 @@ const (
 	StatusUnexpected Status = "unexpected"
 	// StatusUnreachable means a DNS, TCP, TLS or timeout failure: nothing could be said about the host.
 	StatusUnreachable Status = "unreachable"
+	// StatusNever is only used to count deployments (StatusCounter): no result is stored yet. It is never stored.
+	StatusNever Status = "never"
 )
 
 const (

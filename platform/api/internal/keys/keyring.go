@@ -33,8 +33,10 @@ type KeyringConfig struct {
 
 // snapshot is the immutable state served to readers.
 type snapshot struct {
-	signer    *Signer
-	published []PublicKey
+	signer *Signer
+	// activeSince is when the key of signer became active (the creation time if the row has no activation time).
+	activeSince time.Time
+	published   []PublicKey
 }
 
 // Keyring is the read side used by every replica: it caches the active signer and the published
@@ -74,6 +76,16 @@ func (k *Keyring) Signer() (Signer, error) {
 		return Signer{}, ErrNoActiveKey
 	}
 	return *s.signer, nil
+}
+
+// ActiveSince returns when the loaded signing key became active, and false while no signer is loaded. It lets
+// metrics report the age of the key without touching the key itself.
+func (k *Keyring) ActiveSince() (time.Time, bool) {
+	s := k.snap.Load()
+	if s == nil || s.signer == nil {
+		return time.Time{}, false
+	}
+	return s.activeSince, true
 }
 
 // KEKMismatch reports whether the last successful reload found active or next keys sealed under a KEK
@@ -134,8 +146,12 @@ func (k *Keyring) Reload(ctx context.Context) error {
 		if rec.State != StateActive || kekErr != nil {
 			continue
 		}
+		since := rec.CreatedAt
+		if rec.ActivatedAt != nil {
+			since = *rec.ActivatedAt
+		}
 		if prev != nil && prev.signer != nil && prev.signer.KID == rec.KID {
-			next.signer = prev.signer // already unsealed
+			next.signer, next.activeSince = prev.signer, since // already unsealed
 			continue
 		}
 		signer, err := unseal(k.kek, rec)
@@ -145,7 +161,7 @@ func (k *Keyring) Reload(ctx context.Context) error {
 				"kid", rec.KID, "error", err)
 			continue
 		}
-		next.signer = &signer
+		next.signer, next.activeSince = &signer, since
 	}
 	slices.SortFunc(next.published, func(a, b PublicKey) int {
 		return cmp.Or(cmp.Compare(stateOrder(a.State), stateOrder(b.State)), cmp.Compare(a.KID, b.KID))

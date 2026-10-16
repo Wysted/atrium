@@ -333,3 +333,30 @@ func TestConcurrentTouchAndFlush(t *testing.T) {
 		t.Fatalf("%d hosts written, want %d", len(written), hosts)
 	}
 }
+
+// countingObserver counts failed flushes.
+type countingObserver struct{ failed int }
+
+func (o *countingObserver) FlushFailed() { o.failed++ }
+
+func TestObserverSeesFailedFlushesOnly(t *testing.T) {
+	t.Parallel()
+	store := &fakeStore{err: errors.New("database down")}
+	obs := &countingObserver{}
+	r, err := New(Config{Store: store, Observer: obs, Logger: slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// An empty flush writes nothing and fails nothing.
+	if err := r.Flush(context.Background()); err != nil || obs.failed != 0 {
+		t.Fatalf("empty flush: err %v, failed %d", err, obs.failed)
+	}
+	r.Touch("a.example.test")
+	if err := r.Flush(context.Background()); err == nil || obs.failed != 1 {
+		t.Fatalf("failing flush: err %v, failed %d, want 1", err, obs.failed)
+	}
+	store.setErr(nil)
+	if err := r.Flush(context.Background()); err != nil || obs.failed != 1 {
+		t.Fatalf("recovered flush: err %v, failed %d, want still 1", err, obs.failed)
+	}
+}

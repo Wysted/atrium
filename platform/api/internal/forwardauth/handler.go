@@ -88,6 +88,31 @@ const (
 	ReasonAssertion       = "assertion_failure"
 )
 
+// Caches whose lookups are reported to the Observer.
+const (
+	CacheDecision     = "decision"      // access decision per (user, host)
+	CacheHost         = "host"          // host -> app of known deployments
+	CacheNegativeHost = "negative_host" // valid hosts without deployment
+)
+
+// Observer receives the events metrics count. Every string it gets is one of this package's constants (or an
+// access.Reason*), never a value taken from a request: the implementation relies on that to keep label
+// cardinality bounded. Nil in Config means none.
+type Observer interface {
+	// Decision reports a finished decision and how long it took.
+	Decision(decision, reason string, elapsed time.Duration)
+	// CacheLookup reports one lookup in the named cache (Cache* constants).
+	CacheLookup(cache string, hit bool)
+	// AppLogout reports a session revoked through the app-host logout.
+	AppLogout()
+}
+
+type noObserver struct{}
+
+func (noObserver) Decision(string, string, time.Duration) {}
+func (noObserver) CacheLookup(string, bool)               {}
+func (noObserver) AppLogout()                             {}
+
 // AppDirectory resolves a host to its app.
 type AppDirectory interface {
 	AppForHost(ctx context.Context, host string) (appID string, found bool, err error)
@@ -126,7 +151,7 @@ type SeenRecorder interface {
 	Touch(host string)
 }
 
-// Config wires a Handler. Seen, CacheTTL, RequestTimeout, Now and Logger are optional.
+// Config wires a Handler. Seen, Observer, CacheTTL, RequestTimeout, Now and Logger are optional.
 type Config struct {
 	AuthHost  string // lowercase, no scheme or port
 	Apps      AppDirectory
@@ -139,6 +164,7 @@ type Config struct {
 	// Seen receives the host of every authorized decision (a 200 with assertion), for last_seen_at. Nil
 	// disables it.
 	Seen     SeenRecorder
+	Observer Observer
 	CacheTTL time.Duration
 	// RequestTimeout bounds each request, database calls included; on expiry the decision is the explicit
 	// 503. Default httpx.RequestTimeout.
@@ -189,6 +215,9 @@ func New(cfg Config) (*Handler, error) {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
+	if cfg.Observer == nil {
+		cfg.Observer = noObserver{}
+	}
 	h := &Handler{cfg: cfg, log: cfg.Logger}
 	if h.log == nil {
 		h.log = slog.Default()
@@ -225,7 +254,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r = r.WithContext(ctx)
 	w.Header().Set(httpx.HeaderCacheControl, httpx.CacheNoStore)
 	host := access.NormalizeHost(r.Header.Get(headerForwardedHost))
-	out := h.decide(w, r, host)
+	start := time.Now() // real clock: cfg.Now may be a test clock
+	// Counted in a defer: a panic in decide (recovered further out, answered 503) still counts as a backend error.
+	out := outcome{decision: DecisionError, reason: ReasonBackend}
+	defer func() { h.cfg.Observer.Decision(out.decision, out.reason, time.Since(start)) }()
+	out = h.decide(w, r, host)
 	h.logOutcome(host, out)
 }
 
@@ -338,10 +371,12 @@ func (h *Handler) decide(w http.ResponseWriter, r *http.Request, host string) ou
 
 func (h *Handler) lookupApp(ctx context.Context, host string) (string, bool, error) {
 	v, ok, gen := h.hosts.get(host)
+	h.cfg.Observer.CacheLookup(CacheHost, ok)
 	if ok {
 		return v.appID, v.found, nil
 	}
 	_, missing, ngen := h.noHosts.get(host)
+	h.cfg.Observer.CacheLookup(CacheNegativeHost, missing)
 	if missing {
 		return "", false, nil
 	}
@@ -361,6 +396,7 @@ func (h *Handler) lookupApp(ctx context.Context, host string) (string, bool, err
 func (h *Handler) authorize(ctx context.Context, userID, host string) (cd cachedDecision, fresh bool, err error) {
 	key := decisionKey{userID: userID, host: host}
 	cached, ok, gen := h.decisions.get(key)
+	h.cfg.Observer.CacheLookup(CacheDecision, ok)
 	if ok {
 		return cached, false, nil
 	}
@@ -448,6 +484,7 @@ func (h *Handler) logout(w http.ResponseWriter, r *http.Request, host, appID, me
 				return h.unavailable(w, false, ReasonBackend, err)
 			}
 			if revoked {
+				h.cfg.Observer.AppLogout()
 				audit.Write(r.Context(), h.cfg.Audit, h.log, audit.Event{
 					ActorID: as.UserID, Action: audit.ActionLogout, TargetType: audit.TargetSession, TargetID: as.SessionID,
 					After: map[string]string{"via": "app", "host": host, "app_id": appID},

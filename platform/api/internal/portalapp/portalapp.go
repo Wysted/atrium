@@ -12,12 +12,15 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus"
 
 	"platform/api/internal/health"
 	"platform/api/internal/httpx"
+	"platform/api/internal/metrics"
 	"platform/api/internal/portal"
 	"platform/api/internal/portalhttp"
 	"platform/api/internal/postgres"
+	"platform/api/internal/probe"
 	platformauth "platform/sdk/go"
 )
 
@@ -47,8 +50,14 @@ type Config struct {
 type App struct {
 	// Public is reached through Traefik with the ForwardAuth middleware: the API (and, later, the SPA).
 	Public http.Handler
-	// Internal serves the probes (and, later, metrics) to the cluster only.
+	// Internal serves the probes to the cluster only.
 	Internal http.Handler
+	// MetricsHandler serves /metrics on its own listener (PORTAL_METRICS_ADDR), never on Public or Internal.
+	MetricsHandler http.Handler
+	// Metrics is the registry behind /metrics: one per App, never the global default.
+	Metrics *prometheus.Registry
+	// ProbeObserver is the observer to hand to the probe job (probe.Config.Observer).
+	ProbeObserver probe.Observer
 	// Store runs units of work; the mutation use cases of later parts take it.
 	Store portal.Store
 }
@@ -82,6 +91,18 @@ func New(cfg Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+	reg, err := metrics.NewRegistry()
+	if err != nil {
+		return nil, err
+	}
+	pm, err := metrics.NewPortal(reg)
+	if err != nil {
+		return nil, err
+	}
+	if err := metrics.RegisterPortalState(reg, metrics.PortalSources{Pool: cfg.Pool, ProbeStatus: postgres.NewProbeRepo(cfg.Pool)}); err != nil {
+		return nil, err
+	}
+
 	store := postgres.NewPortalStore(cfg.Pool)
 	svc, err := portal.NewService(portal.Config{
 		Permissions:   postgres.NewPermissionsRepo(cfg.Pool),
@@ -108,6 +129,7 @@ func New(cfg Config) (*App, error) {
 			})
 		},
 		Web:            cfg.Web,
+		Observer:       pm,
 		RequestTimeout: cfg.RequestTimeout,
 		Logger:         log,
 	})
@@ -118,10 +140,16 @@ func New(cfg Config) (*App, error) {
 	internal := http.NewServeMux()
 	internal.Handle("GET "+health.PathLive, health.Live())
 	internal.Handle("GET "+health.PathReady, health.ReadyDB(cfg.Pool, log))
+	mux := http.NewServeMux()
+	mux.Handle(metrics.Route, metrics.Handler(reg))
 
 	return &App{
-		Public:   public,
-		Internal: httpx.Recover(log, internal),
-		Store:    store,
+		Public:         public,
+		Internal:       httpx.Recover(log, internal),
+		MetricsHandler: httpx.Recover(log, mux),
+		Metrics:        reg,
+		// The probe job is built by the binary, which owns the probe configuration.
+		ProbeObserver: pm,
+		Store:         store,
 	}, nil
 }

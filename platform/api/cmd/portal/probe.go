@@ -119,7 +119,7 @@ func loadCABundle(path string) (*x509.CertPool, error) {
 
 // newProbeJob builds the probe job, or returns nil when the probe is disabled. authHost is the host of the
 // issuer: a deployment is protected when it redirects to https://<authHost>/login.
-func newProbeJob(cfg probeConfig, issuer, portalAppID string, pool *pgxpool.Pool, log *slog.Logger) (*probe.Job, error) {
+func newProbeJob(cfg probeConfig, issuer, portalAppID string, pool *pgxpool.Pool, obs probe.Observer, log *slog.Logger) (*probe.Job, error) {
 	if cfg.Interval <= 0 {
 		log.Info("integration probe disabled", "env", envProbeInterval)
 		return nil, nil
@@ -138,8 +138,9 @@ func newProbeJob(cfg probeConfig, issuer, portalAppID string, pool *pgxpool.Pool
 	if err != nil {
 		return nil, err
 	}
+	repo := postgres.NewProbeRepo(pool)
 	job, err := probe.NewJob(probe.Config{
-		Store: postgres.NewProbeRepo(pool), Checker: checker, Interval: cfg.Interval, ControlAppID: portalAppID, Logger: log,
+		Store: repo, Checker: checker, Interval: cfg.Interval, ControlAppID: portalAppID, Observer: obs, Logger: log,
 	})
 	if err != nil {
 		return nil, err

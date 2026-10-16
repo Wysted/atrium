@@ -71,6 +71,33 @@ WITH probed AS (
 )
 UPDATE deployments d SET last_probe_at = now(), last_probe_status = todo.status FROM todo WHERE d.id = todo.id`
 
+// statusCountsSQL counts deployments by last probe status; those never probed are reported as 'never'.
+const statusCountsSQL = `SELECT coalesce(last_probe_status, $1), count(*) FROM deployments GROUP BY 1`
+
+var _ probe.StatusCounter = (*ProbeRepo)(nil)
+
+// StatusCounts implements probe.StatusCounter.
+func (r *ProbeRepo) StatusCounts(ctx context.Context) (map[probe.Status]int, error) {
+	rows, err := r.pool.Query(ctx, statusCountsSQL, string(probe.StatusNever))
+	if err != nil {
+		return nil, fmt.Errorf("count deployments by probe status: %w", err)
+	}
+	defer rows.Close()
+	counts := map[probe.Status]int{}
+	for rows.Next() {
+		var status string
+		var n int
+		if err := rows.Scan(&status, &n); err != nil {
+			return nil, fmt.Errorf("count deployments by probe status: %w", err)
+		}
+		counts[probe.Status(status)] = n
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("count deployments by probe status: %w", err)
+	}
+	return counts, nil
+}
+
 // Round implements probe.Store. The lock is a session-level advisory lock on a dedicated connection, held while
 // the (slow) HTTP probes run: unlike a transaction-level lock it leaves no transaction open for minutes, and it
 // is released by the database if the connection dies.

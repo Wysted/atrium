@@ -53,6 +53,33 @@ const (
 	providerRetryAfterSeconds = 5
 )
 
+// Outcomes of a login attempt at /oauth2/callback, reported to the Observer. A closed set: never a request value.
+const (
+	LoginSuccess             = "success"
+	LoginProviderRefused     = "provider_refused"     // Google redirected back with ?error=
+	LoginRejected            = "rejected"             // a valid ID token whose identity the platform refuses
+	LoginInvalidFlow         = "invalid_flow"         // no flow matches the cookie and state
+	LoginFailed              = "failed"               // no code, failed code exchange or invalid ID token
+	LoginProviderUnavailable = "provider_unavailable" // discovery not done or Google unreachable
+	LoginUserDisabled        = "user_disabled"
+	LoginRateLimited         = "rate_limited"
+	LoginInvalidRequest      = "invalid_request" // the stored destination is no longer valid
+	LoginError               = "error"           // anything else: the platform failed
+)
+
+// Observer receives the events metrics count. Nil in Config means none.
+type Observer interface {
+	// Login reports the outcome of a callback (Login* constants); a fake login that succeeds reports LoginSuccess.
+	Login(outcome string)
+	// AuthHostLogout reports a session revoked through POST /logout on the auth host.
+	AuthHostLogout()
+}
+
+type noObserver struct{}
+
+func (noObserver) Login(string)    {}
+func (noObserver) AuthHostLogout() {}
+
 // Sessions is the part of session.Service the auth host needs.
 type Sessions interface {
 	ValidateRD(ctx context.Context, raw string) (session.RD, error)
@@ -84,7 +111,7 @@ type Limiter interface {
 	Allow(key string) (ok bool, retryAfter time.Duration)
 }
 
-// Config wires a Handler. RequestTimeout (default httpx.RequestTimeout) and Logger are optional.
+// Config wires a Handler. Observer, RequestTimeout (default httpx.RequestTimeout) and Logger are optional.
 type Config struct {
 	AuthHost string
 	Sessions Sessions
@@ -95,6 +122,7 @@ type Config struct {
 	// Login enables Google login and disables FakeLogin. Nil means no Google.
 	Login          Login
 	FakeLogin      bool
+	Observer       Observer
 	RequestTimeout time.Duration
 	Logger         *slog.Logger
 }
@@ -113,6 +141,9 @@ func New(cfg Config) (*Handler, error) {
 	h := &Handler{cfg: cfg, log: cfg.Logger}
 	if h.log == nil {
 		h.log = slog.Default()
+	}
+	if h.cfg.Observer == nil {
+		h.cfg.Observer = noObserver{}
 	}
 	if cfg.Login != nil && cfg.FakeLogin {
 		h.log.Warn("PLATFORM_FAKE_LOGIN ignored: Google login is configured and the fake login is disabled")
@@ -269,6 +300,7 @@ func (h *Handler) fakeLogin(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, err)
 		return
 	}
+	h.cfg.Observer.Login(LoginSuccess)
 	h.log.Warn("fake login", "user_id", userID, "sid", sess.ID, "host", p.rd.Host)
 }
 
@@ -328,7 +360,10 @@ func (h *Handler) startGoogle(w http.ResponseWriter, r *http.Request, p loginPar
 // deleted whenever the flow was burned, and only then: not on 429, not on a state mismatch, not while the
 // provider is unavailable before the exchange.
 func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
+	outcome := LoginError // every return path below sets the real one
+	defer func() { h.cfg.Observer.Login(outcome) }()
 	if !h.allow(w, r) {
+		outcome = LoginRateLimited
 		return
 	}
 	ctx := r.Context()
@@ -340,6 +375,7 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 			httpx.ClearCookie(w, session.CookieLogin)
 		}
 		h.log.Info("google login refused by the provider")
+		outcome = LoginProviderRefused
 		signInFailed(w)
 		return
 	}
@@ -353,58 +389,78 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case err == nil:
 	case errors.Is(err, googlelogin.ErrNotReady):
+		outcome = LoginProviderUnavailable
 		h.providerUnavailable(w)
 		return
 	case errors.Is(err, googlelogin.ErrProviderUnavailable):
 		// Transient, not a verdict on the user: 503 + Retry-After. The flow is burned, so the user starts again.
 		h.log.Warn("google login: provider unavailable", "error", err.Error())
+		outcome = LoginProviderUnavailable
 		h.providerUnavailable(w)
 		return
 	case errors.As(err, &rejected):
 		// Contract (Open items): rejections log hd and email; the user sees nothing specific.
 		h.log.Warn("google login rejected", "reason", rejected.Reason, "hd", rejected.HD, "email", rejected.Email)
+		outcome = LoginRejected
 		accessDenied(w)
 		return
 	case errors.Is(err, googlelogin.ErrInvalidFlow):
 		h.log.Warn("google login failed: no matching flow", "error", err.Error())
+		outcome = LoginInvalidFlow
 		signInFailed(w)
 		return
 	case errors.Is(err, googlelogin.ErrNoCode), errors.Is(err, googlelogin.ErrExchange), errors.Is(err, googlelogin.ErrIDToken):
 		h.log.Warn("google login failed: rejected", "error", err.Error())
+		outcome = LoginFailed
 		signInFailed(w)
 		return
 	default:
+		outcome = failOutcome(err)
 		h.fail(w, err)
 		return
 	}
 
 	rd, appID, err := h.resolveTarget(ctx, res.RD)
 	if err != nil {
+		outcome = failOutcome(err)
 		h.fail(w, err)
 		return
 	}
 	id := res.Identity
 	userID, active, err := h.cfg.Users.UpsertUser(ctx, id.Subject, id.Email, id.Name)
 	if err != nil {
+		outcome = failOutcome(err)
 		h.fail(w, err)
 		return
 	}
 	if !active {
 		h.log.Warn("google login refused: user is disabled", "user_id", userID)
+		outcome = LoginUserDisabled
 		accessDenied(w)
 		return
 	}
 	p := loginParams{rd: rd, appID: appID, bindHash: res.BindHash}
 	sess, err := h.establishSession(ctx, w, r, userID, map[string]string{"provider": "google", "host": rd.Host})
 	if err != nil {
+		outcome = failOutcome(err)
 		h.fail(w, err)
 		return
 	}
 	if err := h.redirectWithCode(ctx, w, sess, p); err != nil {
+		outcome = failOutcome(err)
 		h.fail(w, err)
 		return
 	}
+	outcome = LoginSuccess
 	h.log.Info("google login", "user_id", userID, "sid", sess.ID, "host", rd.Host)
+}
+
+// failOutcome is the login outcome of an error that fail turns into a page: a bad destination or a platform failure.
+func failOutcome(err error) string {
+	if errors.Is(err, errBadRequest) || errors.Is(err, session.ErrInvalidRD) {
+		return LoginInvalidRequest
+	}
+	return LoginError
 }
 
 // flowBurned reports whether the outcome of Complete means the flow was consumed: success, or any failure
@@ -444,6 +500,7 @@ func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if rev.SessionID != "" {
+		h.cfg.Observer.AuthHostLogout()
 		audit.Write(r.Context(), h.cfg.Audit, h.log, audit.Event{
 			ActorID: rev.UserID, Action: audit.ActionLogout, TargetType: audit.TargetSession, TargetID: rev.SessionID,
 			After: map[string]string{"via": "auth_host"},

@@ -112,6 +112,7 @@ func serve(ctx context.Context, cfg config, log *slog.Logger) error {
 	servers := map[string]*http.Server{
 		"internal": httpx.NewServer(cfg.InternalAddr, a.Internal),
 		"public":   httpx.NewServer(cfg.PublicAddr, a.Public),
+		"metrics":  httpx.NewServer(cfg.MetricsAddr, a.MetricsHandler),
 	}
 	failed := make(chan error, len(servers))
 	for name, srv := range servers {

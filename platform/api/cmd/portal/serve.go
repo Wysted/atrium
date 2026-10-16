@@ -59,7 +59,7 @@ func serve(ctx context.Context, cfg config, log *slog.Logger) error {
 
 	checkPortalApp(ctx, postgres.NewAccessRepository(pool), cfg.AppID, log)
 
-	probeJob, err := newProbeJob(cfg.Probe, cfg.Issuer, cfg.AppID, pool, log)
+	probeJob, err := newProbeJob(cfg.Probe, cfg.Issuer, cfg.AppID, pool, a.ProbeObserver, log)
 	if err != nil {
 		return err
 	}
@@ -73,6 +73,7 @@ func serve(ctx context.Context, cfg config, log *slog.Logger) error {
 	servers := map[string]*http.Server{
 		"internal": httpx.NewServer(cfg.InternalAddr, a.Internal),
 		"public":   httpx.NewServer(cfg.PublicAddr, a.Public),
+		"metrics":  httpx.NewServer(cfg.MetricsAddr, a.MetricsHandler),
 	}
 	failed := make(chan error, len(servers))
 	for name, srv := range servers {
