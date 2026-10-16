@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Run a Node/npm command inside the portal node container, in the current subdirectory (no args opens a shell).
+# Examples: ./nk npm --version | (cd platform/web && ../../nk npm ci)
+set -euo pipefail
+
+root="$(cd "$(dirname "$0")" && pwd)"
+rel="$(realpath --relative-to="$root" "$PWD")"
+case "$rel" in
+  ..*) rel="." ;;
+esac
+
+cd "$root"
+mkdir -p .tools/home .tools/npm/cache
+
+export LOCAL_UID="$(id -u)"
+export LOCAL_GID="$(id -g)"
+
+if [ "$#" -eq 0 ]; then
+  set -- bash
+fi
+
+exec docker compose run --rm -w "/workspace/$rel" node "$@"
