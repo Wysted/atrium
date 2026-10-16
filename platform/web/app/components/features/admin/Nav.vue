@@ -1,8 +1,8 @@
 <script setup lang="ts">
 /**
  * Navigation of the administration area. The UI only hides what the caller cannot use; the API enforces.
- * Only screens that exist are listed. Planned: Groups (platform admin and managers), Users (platform admin),
- * Audit (both); each is added with its screen, with a `visible` rule from /me.
+ * Initiatives (admin and managers), Groups and Users (platform admin only: managers list groups only inside the
+ * grant dialog), Audit (admin and managers; the API scopes it to their initiatives).
  */
 const props = defineProps<{
   isPlatformAdmin: boolean
@@ -13,6 +13,9 @@ interface NavItem { label: string, to: string, visible: boolean }
 
 const items = computed<NavItem[]>(() => [
   { label: 'Initiatives', to: '/admin/initiatives', visible: props.isPlatformAdmin || props.isManager },
+  { label: 'Groups', to: '/admin/groups', visible: props.isPlatformAdmin },
+  { label: 'Users', to: '/admin/users', visible: props.isPlatformAdmin },
+  { label: 'Audit', to: '/admin/audit', visible: props.isPlatformAdmin || props.isManager },
 ].filter(item => item.visible))
 
 const route = useRoute()

@@ -5,10 +5,11 @@ import type { ApiError } from '~/composables/useApi'
  * echoed back (URL-encoded). A failed first page leaves `items` empty and sets `error`; a failed "load more"
  * keeps the items already shown and sets `error` too (the UI tells them apart by `items.length`).
  * A newer request wins over an older one still in flight (`reload()` after a mutation).
+ * `path` may be a getter (e.g. one that reads a filter) and may already carry a query string; the cursor is appended.
  * `{ immediate: false }` skips the load on mount (the caller runs `reload()` itself, e.g. when a dialog opens).
  */
 export function usePagedList<TPage extends { next_cursor?: string }, TItem>(
-  path: string,
+  path: string | (() => string),
   select: (page: TPage) => TItem[],
   options: { immediate?: boolean } = {},
 ) {
@@ -20,8 +21,9 @@ export function usePagedList<TPage extends { next_cursor?: string }, TItem>(
   let generation = 0
 
   async function fetchPage(cursor: string | null): Promise<TPage> {
-    const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''
-    return await apiGet<TPage>(`${path}${query}`)
+    const base = typeof path === 'function' ? path() : path
+    if (!cursor) return await apiGet<TPage>(base)
+    return await apiGet<TPage>(`${base}${base.includes('?') ? '&' : '?'}cursor=${encodeURIComponent(cursor)}`)
   }
 
   /**

@@ -233,3 +233,79 @@ export interface PatchAppBody {
 export interface CreateDeploymentBody {
   host: string
 }
+
+/** POST /api/v1/groups. `key` follows the initiative key pattern (<= 63); `name` <= 200 bytes, may be empty. */
+export interface CreateGroupBody {
+  key: string
+  name?: string
+}
+
+/** `users.status` (portal.UserStatusActive / UserStatusDisabled). */
+export type UserStatus = 'active' | 'disabled'
+
+/** One member of a group (platform admins only). `user_id` is the member's id; disabled users are listed too. */
+export interface GroupMember {
+  user_id: string
+  email: string
+  name: string
+  status: UserStatus
+  added_at: string
+}
+
+/** GET /api/v1/groups/{id}/members?cursor=&limit= (ordered by user id). */
+export interface GroupMemberList {
+  members: GroupMember[]
+  next_cursor?: string
+}
+
+/** POST /api/v1/groups/{id}/members (201 answers a `GroupMember`). The email must match exactly one active user. */
+export interface AddMemberBody {
+  email: string
+}
+
+/** A user as the administration API shows it (`adminUserJSON`). */
+export interface AdminUser {
+  id: string
+  email: string
+  name: string
+  status: UserStatus
+  created_at: string
+}
+
+/** GET /api/v1/users?email= . Never paged: every user with that email (not unique), at most 50. */
+export interface AdminUserList {
+  users: AdminUser[]
+}
+
+/** PATCH /api/v1/users/{id} (answers an `AdminUser`). Disabling also deletes the user's sessions. */
+export interface PatchUserBody {
+  status: UserStatus
+}
+
+/** DELETE /api/v1/users/{id}/sessions answers 200 with the number of central sessions removed. */
+export interface RevokeSessionsResult {
+  revoked: number
+}
+
+/**
+ * One audit row (`auditEventJSON`). `actor_*` and `initiative_id` are null when unknown or global. `before` and
+ * `after` are arbitrary JSON documents (or null): data, never markup.
+ */
+export interface AuditEvent {
+  id: string
+  occurred_at: string
+  actor_id: string | null
+  actor_email: string | null
+  initiative_id: string | null
+  action: string
+  target_type: string
+  target_id: string
+  before: unknown
+  after: unknown
+}
+
+/** GET /api/v1/audit?initiative_id=&cursor=&limit= (newest first). */
+export interface AuditList {
+  events: AuditEvent[]
+  next_cursor?: string
+}
