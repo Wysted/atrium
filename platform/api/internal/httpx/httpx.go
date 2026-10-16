@@ -33,7 +33,9 @@ const (
 	contentTypeHTML    = "text/html; charset=utf-8"
 
 	// pageCSP is restrictive on purpose: the pages carry no script, style or subresource. form-action is
-	// left out because the login form answers with a redirect to an app host, which Chrome checks against it.
+	// left out on purpose: Chrome also checks the redirect that answers a form POST against it, and both the
+	// login form (to an app host) and the app-host Sign out form (303 to the auth host) end in a cross-origin
+	// redirect, so 'self' would block them.
 	pageCSP = "default-src 'none'; base-uri 'none'; frame-ancestors 'none'"
 )
 

@@ -713,3 +713,61 @@ func TestLoginRateLimit(t *testing.T) {
 		t.Fatalf("no 429 after 100 requests: %+v", limited.status)
 	}
 }
+
+func TestDeniedPageSignOut(t *testing.T) {
+	e := newEnv(t, envOptions{})
+	const nasty = `<b>"x"&'y'@example.test`
+	b := e.newBrowser()
+	b.login(hostA, "/", "nogrant@example.test") // session exists, no grant
+	e.exec(`UPDATE users SET email = $1 WHERE id = $2::uuid`, nasty, e.userID("nogrant@example.test"))
+	e.app.InvalidateAccess()
+
+	page := b.forward(fwd{host: hostA, uri: "/?x=<script>", headers: navHeaders})
+	if page.status != http.StatusForbidden || !strings.HasPrefix(page.header.Get("Content-Type"), "text/html") {
+		t.Fatalf("status %d, type %q", page.status, page.header.Get("Content-Type"))
+	}
+	for _, want := range []string{
+		"<h1>Access denied</h1>",
+		"You are signed in as &lt;b&gt;&#34;x&#34;&amp;&#39;y&#39;@example.test, which does not have access to this application.",
+		`<form method="post" action="/_platform/logout"><button type="submit">Sign out</button></form>`,
+	} {
+		if !strings.Contains(page.body, want) {
+			t.Errorf("page lacks %q:\n%s", want, page.body)
+		}
+	}
+	if strings.Contains(page.body, "<b>") || strings.Contains(page.body, "<script") || strings.Contains(page.body, "<script>") {
+		t.Errorf("unescaped content:\n%s", page.body)
+	}
+	csp := page.header.Get("Content-Security-Policy")
+	if !strings.Contains(csp, "default-src 'none'") || strings.Contains(csp, "form-action") || page.header.Get("X-Frame-Options") != "DENY" {
+		t.Errorf("security headers: CSP %q XFO %q", csp, page.header.Get("X-Frame-Options"))
+	}
+
+	// The API variant is unchanged.
+	if api := b.forward(fwd{host: hostA, headers: apiHeaders}); api.header.Get("Content-Type") != "application/problem+json" || strings.Contains(api.body, "Sign out") {
+		t.Errorf("api 403: %q %q", api.header.Get("Content-Type"), api.body)
+	}
+
+	// The button works for a denied session: 303 to the signed-out page and the session is gone.
+	out := b.forward(fwd{host: hostA, method: http.MethodPost, uri: "/_platform/logout", headers: map[string]string{"Origin": "https://" + hostA}})
+	if out.status != http.StatusSeeOther || out.location() != "https://"+authHost+"/signed-out" {
+		t.Fatalf("logout: %d %q", out.status, out.location())
+	}
+	if n := e.count(`SELECT count(*) FROM sessions`) + e.count(`SELECT count(*) FROM app_sessions`); n != 0 {
+		t.Fatalf("%d session rows left", n)
+	}
+	if r := b.forward(fwd{host: hostA, headers: navHeaders}); r.status != http.StatusFound {
+		t.Fatalf("after logout: %d", r.status)
+	}
+
+	t.Run("unknown host and no session show no email or button", func(t *testing.T) {
+		for name, r := range map[string]result{
+			"unknown host": b.forward(fwd{host: "unknown.apps.example.test", headers: navHeaders}),
+			"no session":   e.newBrowser().forward(fwd{host: hostA, headers: navHeaders}),
+		} {
+			if strings.Contains(r.body, "Sign out") || strings.Contains(r.body, "signed in as") || strings.Contains(r.body, "<form") {
+				t.Errorf("%s: status %d body %q", name, r.status, r.body)
+			}
+		}
+	})
+}

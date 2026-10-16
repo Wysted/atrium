@@ -4,9 +4,11 @@
 package forwardauth
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
+	"html/template"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -283,7 +285,7 @@ func (h *Handler) decide(w http.ResponseWriter, r *http.Request, host string) ou
 		if fresh {
 			h.recordDenial(ctx, as, host, d)
 		}
-		h.respondError(w, nav, http.StatusForbidden, "Access denied", "")
+		h.respondDenied(w, nav, cd.profile.Email)
 		return outcome{decision: DecisionDeny, reason: d.Reason, appID: d.AppID, sid: as.SessionID, userID: as.UserID}
 	}
 	issued, err := h.cfg.Issuer.Issue(assertion.Request{
@@ -337,6 +339,9 @@ func (h *Handler) authorize(ctx context.Context, userID, host string) (cd cached
 		if cd.profile, err = h.cfg.Profiles.Profile(ctx, userID); err != nil {
 			return cachedDecision{}, false, err
 		}
+	} else if p, perr := h.cfg.Profiles.Profile(ctx, userID); perr == nil {
+		// Informational only (the denied page names the account); a failure must not change the decision.
+		cd.profile = p
 	}
 	h.decisions.put(key, cd, gen)
 	return cd, true, nil
@@ -474,6 +479,32 @@ func (h *Handler) respondError(w http.ResponseWriter, nav bool, status int, titl
 		msg = http.StatusText(status)
 	}
 	httpx.WritePage(w, status, title, msg)
+}
+
+// deniedPage is the 403 shown to a signed-in user without access to the app. It reflects nothing from the
+// request: the only dynamic value is the account email from the database (html/template escapes it). The
+// Sign out form posts to the same host, where the logout path is served by this handler, so it works without
+// JavaScript and even though the user never reaches the app.
+var deniedPage = template.Must(template.New("denied").Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Access denied</title></head><body>
+<h1>Access denied</h1>
+<p>{{if .Email}}You are signed in as {{.Email}}, which does not have access to this application.{{else}}You do not have access to this application.{{end}}</p>
+<form method="post" action="` + PathLogout + `"><button type="submit">Sign out</button></form>
+</body></html>`))
+
+// respondDenied answers an authenticated user without access: the page with the Sign out button for
+// navigations, the usual problem+json otherwise.
+func (h *Handler) respondDenied(w http.ResponseWriter, nav bool, email string) {
+	if !nav {
+		h.respondError(w, nav, http.StatusForbidden, "Access denied", "")
+		return
+	}
+	var buf bytes.Buffer
+	if err := deniedPage.Execute(&buf, struct{ Email string }{email}); err != nil {
+		h.respondError(w, nav, http.StatusForbidden, "Access denied", "")
+		return
+	}
+	httpx.SetPageHeaders(w.Header())
+	httpx.WriteHTML(w, http.StatusForbidden, buf.String())
 }
 
 // isNavigation reports whether the request is a browser navigation, i.e. one that can follow a login
