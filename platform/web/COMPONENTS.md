@@ -99,6 +99,16 @@ All accept `as` (tag name, default `div`) and a default slot.
 - Example: `<BaseIcon name="alert-triangle" label="Warning" />` (meaningful) or `<BaseIcon name="check" />` (decorative).
 - A11y: without `label` the icon is `aria-hidden`; with `label` it is `role="img"` and `aria-label`. An icon that is the only content of a control must carry the label. In dev (`import.meta.dev`) it warns on an unknown `name`, an empty `label`, and a `role="img"`/`aria-label` attribute without the `label` prop.
 
+## Error page
+
+### app/error.vue
+- Purpose: the app-wide error page (client-side 404 and runtime errors). Required under the strict CSP: Nuxt's default error page injects an inline `<style>` and `<script>`, both blocked, leaving the page unstyled.
+- Props: `error: NuxtError` (supplied by Nuxt).
+- Composition: `NuxtLayout` + `BaseStack`, `BaseText`, `BaseHeading`, `BaseCluster`, `BaseButton` only. Title via `useHead({ title })`.
+- Copy: 404 shows "Page not found"; any other status shows "Something went wrong". Only the status code and fixed copy are shown; `error.message` is rendered in dev only (`import.meta.dev`), never the stack.
+- Action: "Go to home" calls `clearError({ redirect: '/' })`.
+- Note: `NUXT_E1005` ("Error caught during app initialization") in the console on a direct visit to an unknown route is Nuxt's own `app:error` diagnostic for the 404 raised during startup; it is expected and not a CSP issue.
+
 ## TODO (priority order)
 
 1. Card, Badge, Input, Field (label + hint + error), Select. TODO
