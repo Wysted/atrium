@@ -1,10 +1,26 @@
 # syntax=docker/dockerfile:1
 # Build context is platform/ (go.work spans api, sdk/go and examples/hello; the portal imports sdk/go through it):
 #   docker build -f platform/api/Dockerfile.portal -t portal-app:dev platform
+# The SPA is generated in its own stage and embedded in the binary (internal/webui); check:csp fails the build if the
+# generated HTML needs anything the strict CSP does not allow. Install scripts are off (nuxt generate prepares itself).
+FROM node:24.22.0-trixie@sha256:ff054b356ab93ed540518ca23cfcd9840e5256dd04db5a8d8afc43f4ecc7c9f8 AS web
+ENV NUXT_TELEMETRY_DISABLED=1
+WORKDIR /src/web
+COPY web/package.json web/package-lock.json ./
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --ignore-scripts
+COPY web/ ./
+RUN npm run generate && npm run check:csp
+
 FROM golang:1.27.2-trixie@sha256:47667934874913a449b96faa7ef4777fa285d9ec29126ee80ed61c45b7cccf0e AS build
 ENV CGO_ENABLED=0 GOTOOLCHAIN=local
 WORKDIR /src
-COPY . .
+COPY go.work go.work.sum ./
+COPY api api
+COPY sdk sdk
+COPY examples examples
+COPY --from=web /src/web/.output/public/ api/internal/webui/dist/
+RUN test -f api/internal/webui/dist/200.html
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     cd api && go build -trimpath -ldflags "-s -w" -o /out/portal ./cmd/portal

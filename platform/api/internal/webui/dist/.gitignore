@@ -1,0 +1,4 @@
+# Build output of platform/web (copied here by Dockerfile.portal); only .gitkeep is tracked.
+*
+!.gitignore
+!.gitkeep

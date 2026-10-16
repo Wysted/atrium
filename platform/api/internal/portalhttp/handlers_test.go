@@ -311,3 +311,30 @@ func TestWriteJSONFailureIsAClean500(t *testing.T) {
 		t.Fatalf("status %d content type %q", w.Code, w.Header().Get("Content-Type"))
 	}
 }
+
+// With a web handler set, only paths outside /api/ reach it: an unknown API path stays a JSON 404.
+func TestUnknownAPIPathNeverReachesWebHandler(t *testing.T) {
+	t.Parallel()
+	web := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("<html>spa</html>"))
+	})
+	h, err := New(Config{
+		Service: fakeService{}, Admin: &fakeAdmin{}, Web: web, Logger: discardLog,
+		Auth: func(next http.Handler) http.Handler { return next },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/api/unknown", "/api/", "/api/v1/nope"} {
+		w := get(h, path, nil)
+		if w.Code != http.StatusNotFound || !strings.HasPrefix(w.Header().Get("Content-Type"), "application/problem+json") {
+			t.Errorf("%s: status = %d, Content-Type = %q", path, w.Code, w.Header().Get("Content-Type"))
+		}
+		if strings.Contains(w.Body.String(), "spa") {
+			t.Errorf("%s: served the web handler", path)
+		}
+	}
+	if w := get(h, "/some/route", nil); w.Body.String() != "<html>spa</html>" {
+		t.Errorf("web route body = %q", w.Body.String())
+	}
+}

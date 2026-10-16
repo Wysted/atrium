@@ -1,12 +1,20 @@
 .git
 **/.git
-# Only the Go modules listed in go.work are needed to build
-web
+# The Go modules listed in go.work and web/ (built in its own stage) are all that is needed
 docs
+# Frontend build state (web/dist is an absolute symlink created by nuxt generate)
+web/node_modules
+web/.nuxt
+web/.output
+web/.data
+web/.nitro
+web/.cache
+web/dist
 **/node_modules
 **/*.md
 # Local build output
 **/bin
+# (also the SPA copy in api/internal/webui/dist: the Dockerfile fills it from the web stage, never from the host)
 **/dist
 **/*.test
 **/*.out

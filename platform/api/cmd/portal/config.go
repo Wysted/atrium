@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"platform/api/internal/webui"
 )
 
 // Environment variables read by "serve". The database comes from the standard PG* variables, connecting
@@ -72,8 +74,8 @@ func loadConfig(getenv func(string) string) (config, error) {
 		errs = append(errs, fmt.Errorf("%s must match %s", envAppID, appIDPattern))
 	}
 	if c.Issuer != "" {
-		if u, err := url.Parse(c.Issuer); err != nil || u.Scheme != "https" || u.Host == "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.User != nil {
-			errs = append(errs, fmt.Errorf("%s must be an https origin such as https://auth.apps.example.com", envIssuer))
+		if _, err := webui.ParseAuthOrigin(c.Issuer); err != nil {
+			errs = append(errs, fmt.Errorf("%s must be an https origin (host[:port] with a port in 1-65535) such as https://auth.apps.example.com: %w", envIssuer, err))
 		}
 	}
 	if c.JWKSURL != "" {

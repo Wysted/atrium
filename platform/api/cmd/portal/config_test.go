@@ -41,6 +41,13 @@ func TestLoadConfig(t *testing.T) {
 		{"app id lowercase ulid", map[string]string{envAppID: "app_0000000000000000000000000p"}, []string{envAppID}},
 		{"issuer over http", map[string]string{envIssuer: "http://auth.apps.example.test"}, []string{envIssuer}},
 		{"issuer with path", map[string]string{envIssuer: "https://auth.apps.example.test/x"}, []string{envIssuer}},
+		{"issuer with empty port", map[string]string{envIssuer: "https://auth.apps.example.test:"}, []string{envIssuer}},
+		{"issuer with port 0", map[string]string{envIssuer: "https://auth.apps.example.test:0"}, []string{envIssuer}},
+		{"issuer with port 65536", map[string]string{envIssuer: "https://auth.apps.example.test:65536"}, []string{envIssuer}},
+		{"issuer with port 99999", map[string]string{envIssuer: "https://auth.apps.example.test:99999"}, []string{envIssuer}},
+		{"issuer with signed port", map[string]string{envIssuer: "https://auth.apps.example.test:+1"}, []string{envIssuer}},
+		{"issuer with port 443", map[string]string{envIssuer: "https://auth.apps.example.test:443"}, nil},
+		{"issuer with query", map[string]string{envIssuer: "https://auth.apps.example.test?a=b"}, []string{envIssuer}},
 		{"issuer without host", map[string]string{envIssuer: "https://"}, []string{envIssuer}},
 		{"issuer with credentials", map[string]string{envIssuer: "https://u:p@auth.apps.example.test"}, []string{envIssuer}}, //nolint:gosec // invalid input on purpose
 		{"jwks relative", map[string]string{envJWKSURL: "/.well-known/jwks.json"}, []string{envJWKSURL}},
