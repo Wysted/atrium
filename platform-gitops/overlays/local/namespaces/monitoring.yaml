@@ -1,0 +1,8 @@
+# Local only: adopters bring their own monitoring namespace (often with privileged components such as node-exporter),
+# so base/ does not create it. Pod Security "restricted" holds for the stack installed here. Not an app namespace: it must
+# never reach platform-api's internal port, only the metrics port of the pods it scrapes.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  labels: {app.kubernetes.io/part-of: portal-platform, pod-security.kubernetes.io/enforce: restricted}

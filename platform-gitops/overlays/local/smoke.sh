@@ -24,6 +24,8 @@ PROBE_DEADLINE_S=300 # the local portal probes every minute (PORTAL_PROBE_INTERV
 CURL_IMG=curlimages/curl:8.11.1
 REVOKE_DEADLINE_MS=5000
 WORK="$(mktemp -d)"
+mkdir -p "$ROOT/.tools/tmp"
+GW="$(mktemp -d -p "$ROOT/.tools/tmp")" # shared with the toolbox container (/workspace): Grafana checks and its credentials file
 FAILS=0
 FAILED=()
 CURRENT_SECTION=""
@@ -91,7 +93,9 @@ cleanup() {
   $K delete namespace smoke-app --ignore-not-found --wait=false >/dev/null 2>&1
   $K delete -f "$REL/smoke-whoami.yaml" --ignore-not-found --wait=false >/dev/null 2>&1
   drop_smoke_groups
-  rm -rf "$WORK"
+  $K -n monitoring delete pod probe-prom probe-grafana probe-other --ignore-not-found --wait=false >/dev/null 2>&1
+  $K -n monitoring delete networkpolicy smoke-allow-egress --ignore-not-found >/dev/null 2>&1
+  rm -rf "$WORK" "$GW"
 }
 trap cleanup EXIT
 
@@ -111,6 +115,27 @@ $K -n smoke-app run probe-open --image="$CURL_IMG" --restart=Never --command -- 
 $K wait --for=condition=Ready pod/probe-default --timeout=120s >/dev/null
 $K -n smoke-app wait --for=condition=Ready pod/probe-open --timeout=120s >/dev/null
 $K -n hello-a wait --for=condition=Ready pod/probe-hello --timeout=120s >/dev/null
+# Pods in the monitoring namespace (restricted Pod Security) for section 19, created now for the same reason as the others.
+# probe-prom and probe-grafana carry the label the real pods are selected by (and only the policies of that label apply);
+# probe-other has neither and gets its own allow-all EGRESS policy so that the INGRESS policy of the target decides.
+mon_pod() { # mon_pod <name> <labels>
+  $K -n monitoring delete pod "$1" --ignore-not-found >/dev/null 2>&1
+  $K -n monitoring run "$1" --image="$CURL_IMG" --restart=Never --labels="$2" \
+    --overrides='{"spec":{"automountServiceAccountToken":false,"securityContext":{"runAsNonRoot":true,"runAsUser":65532,"seccompProfile":{"type":"RuntimeDefault"}},"containers":[{"name":"'"$1"'","image":"'"$CURL_IMG"'","command":["sleep","900"],"securityContext":{"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]}}}]}}' >/dev/null
+}
+$K -n monitoring apply -f - >/dev/null <<'YAML'
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: smoke-allow-egress, namespace: monitoring}
+spec:
+  podSelector: {matchLabels: {smoke.wysted.dev/egress: all}}
+  policyTypes: [Egress]
+  egress: [{}]
+YAML
+mon_pod probe-prom app.kubernetes.io/name=prometheus
+mon_pod probe-grafana app.kubernetes.io/name=grafana
+mon_pod probe-other smoke.wysted.dev/egress=all
+for p in probe-prom probe-grafana probe-other; do $K -n monitoring wait --for=condition=Ready pod/$p --timeout=120s >/dev/null; done
 
 section "1. Unauthenticated: navigation -> 302 with bind cookie; API -> 401 problem+json"
 J1="$WORK/j1"
@@ -485,6 +510,118 @@ $K -n portal logs -l app.kubernetes.io/name=portal -c portal --prefix=false --ta
 echo "  lines since section 13: $(wc -l < "$WORK/portal-since.log")"
 check_not "no WARN since section 13 besides the rejected preflight (probe findings, inconclusive rounds)" "$(grep '"level":"WARN"' "$WORK/portal-since.log" | grep -v 'platform assertion rejected')" '"level":"WARN"'
 check_not "no ERROR level (PORTAL_PROBE_INSECURE_TLS and PORTAL_ALLOW_PRIVILEGED_DB_LOGIN are off)" "$(cat "$WORK/portal.log")" '"level":"ERROR"'
+
+section "19. Monitoring: both processes scraped, rules loaded and healthy, Grafana up with the dashboard; the metrics port is Prometheus-only"
+PROM=/api/v1/namespaces/monitoring/services/monitoring-prometheus:9090/proxy # apiserver service proxy: from the node, never filtered
+prom_get() { $K get --raw "$PROM$1" 2>/dev/null; }
+prom_value() { # prom_value <promql>: first sample value, empty when there is none
+  prom_get "/api/v1/query?query=$(python3 -c 'import sys,urllib.parse as u;print(u.quote(sys.argv[1]))' "$1")" > "$WORK/q" && json_get "$WORK/q" 'd["data"]["result"][0]["value"][1]'
+}
+check "Prometheus is ready" "$(prom_get /-/ready)" "Ready"
+WANT_PA="$($K -n platform get deploy platform-api -o jsonpath='{.status.readyReplicas}')"
+WANT_PO="$($K -n portal get deploy portal -o jsonpath='{.status.readyReplicas}')"
+# Section 12 replaced a platform-api pod: wait for the target list to follow the pods (service discovery + first scrape).
+end=$(( $(date +%s) + 150 )); up_pa=""; up_po=""
+while (( $(date +%s) < end )); do
+  prom_get "/api/v1/targets?state=active" > "$WORK/targets"
+  up_pa="$(json_get "$WORK/targets" 'sum(1 for t in d["data"]["activeTargets"] if t["labels"].get("job")=="platform-api" and t["health"]=="up")')"
+  up_po="$(json_get "$WORK/targets" 'sum(1 for t in d["data"]["activeTargets"] if t["labels"].get("job")=="portal" and t["health"]=="up")')"
+  all_pa="$(json_get "$WORK/targets" 'sum(1 for t in d["data"]["activeTargets"] if t["labels"].get("job")=="platform-api")')"
+  all_po="$(json_get "$WORK/targets" 'sum(1 for t in d["data"]["activeTargets"] if t["labels"].get("job")=="portal")')"
+  [[ "$up_pa" == "$WANT_PA" && "$all_pa" == "$WANT_PA" && "$up_po" == "$WANT_PO" && "$all_po" == "$WANT_PO" ]] && break
+  sleep 3
+done
+echo "  targets: platform-api up=$up_pa/$all_pa (ready pods $WANT_PA), portal up=$up_po/$all_po (ready pods $WANT_PO)"
+check "platform-api targets: one per ready pod, all up" "$up_pa/$all_pa" "$WANT_PA/$WANT_PA"
+check "portal targets: one per ready pod, all up" "$up_po/$all_po" "$WANT_PO/$WANT_PO"
+check "scrape jobs: only the two processes and Prometheus itself" "$(json_get "$WORK/targets" 'sorted(set(t["labels"]["job"] for t in d["data"]["activeTargets"]))')" "['monitoring-prometheus', 'platform-api', 'portal']"
+check "both processes are scraped on the metrics port" "$(json_get "$WORK/targets" 'all(t["scrapeUrl"].endswith(":9090/metrics") for t in d["data"]["activeTargets"] if t["labels"]["job"] in ("platform-api","portal"))')" True
+
+WANT_RULES="$(grep -c '^ *- alert:' platform-gitops/monitoring/rules/portal-platform.rules.yaml)"
+end=$(( $(date +%s) + 240 )); loaded=""; bad=""
+while (( $(date +%s) < end )); do
+  prom_get /api/v1/rules > "$WORK/rules"
+  loaded="$(json_get "$WORK/rules" 'sum(len(g["rules"]) for g in d["data"]["groups"] if g["name"].startswith("portal-platform."))')"
+  bad="$(json_get "$WORK/rules" 'sum(1 for g in d["data"]["groups"] for r in g["rules"] if r["health"]!="ok" or r.get("lastError"))')"
+  [[ "$loaded" == "$WANT_RULES" && "$bad" == 0 ]] && break
+  sleep 3
+done
+echo "  rules loaded: $loaded (rules file: $WANT_RULES), unhealthy: $bad"
+check "alert rules loaded (as many as the plain rules file)" "$loaded" "$WANT_RULES"
+check "no rule in error or never evaluated" "$bad" 0
+firing="$(json_get "$WORK/rules" '[r["name"] for g in d["data"]["groups"] for r in g["rules"] if r["state"]=="firing"]')"
+echo "  alerts firing now (informational): $firing"
+for a in UnprotectedDeployment ForwardAuthDown ForwardAuthErrorsHigh SigningKeyNotLoaded SigningKeyKEKMismatch; do
+  check_not "critical alert $a is not firing in a healthy platform" "$firing" "$a"
+done
+# Samples really flow: the traffic of the sections above is visible in both processes (30 s scrape interval).
+for q in 'sum(platform_forwardauth_decisions_total)' 'sum(portal_http_requests_total{route="GET /api/v1/me"})'; do
+  v="$(prom_value "$q")"; echo "  $q = ${v:-<none>}"
+  if [[ -n "$v" ]] && python3 -c 'import sys;sys.exit(0 if float(sys.argv[1])>0 else 1)' "$v"; then pass "$q > 0"; else fail "$q is not > 0 (got '${v:-none}')"; fi
+done
+
+echo "  -- Grafana (port-forward inside the toolbox, polled until it answers; admin password from .tools/secrets via a 0600 curl config)"
+umask 077; printf 'user = "admin:%s"\n' "$(<.tools/secrets/k3d-grafana-admin-password)" > "$GW/curlrc"; umask 022
+$K -n monitoring rollout status deploy/monitoring-grafana --timeout=120s >/dev/null
+./tk sh -c 'cd /workspace/.tools/tmp/'"$(basename "$GW")"' && rm -f health.json dash.json ds.json anon.code
+  kubectl -n monitoring port-forward deploy/monitoring-grafana 13000:3000 >pf.log 2>&1 &
+  pf=$!
+  B=http://127.0.0.1:13000
+  for i in $(seq 1 60); do curl -s -o health.json --max-time 2 "$B/api/health" && break; sleep 0.5; done
+  curl -s -o /dev/null -w "%{http_code}" "$B/api/dashboards/uid/portal-platform" > anon.code
+  curl -s -K curlrc -o dash.json "$B/api/dashboards/uid/portal-platform"
+  curl -s -K curlrc -o ds.json "$B/api/datasources/uid/prometheus/health"
+  kill $pf' >/dev/null 2>&1
+check "Grafana health: database ok" "$(json_get "$GW/health.json" 'd["database"]')" ok
+check "Grafana API without credentials" "$(<"$GW/anon.code")" 401
+check "dashboard 'Portal platform' is provisioned" "$(json_get "$GW/dash.json" 'd["dashboard"]["title"] + " provisioned=" + str(d["meta"]["provisioned"])')" "Portal platform provisioned=True"
+check "dashboard has every panel of the versioned JSON" "$(json_get "$GW/dash.json" 'len(d["dashboard"]["panels"])')" "$(json_get platform-gitops/monitoring/dashboards/portal-platform.json 'len(d["panels"])')"
+check "Grafana reaches Prometheus (datasource health)" "$(json_get "$GW/ds.json" 'd["status"]')" OK
+
+echo "  -- NetworkPolicy of the monitoring namespace. probe-other has an allow-all EGRESS policy of its own, so what it cannot reach"
+echo "     is blocked by the INGRESS policy of the destination (positive controls first); probe-prom / probe-grafana wear the labels of"
+echo "     the real pods and exercise their EGRESS policies"
+PROM_IP="$(pod_ip monitoring prometheus-monitoring-prometheus-0)"
+API_IP="$($K get endpoints kubernetes -o jsonpath='{.subsets[0].addresses[0].ip}' 2>/dev/null)"
+TRAEFIK_IP="$($K -n traefik get pod -l app.kubernetes.io/name=traefik -o jsonpath='{.items[0].status.podIP}')"
+echo "  prometheus=$PROM_IP kube-apiserver=$API_IP traefik pod=$TRAEFIK_IP"
+# The source of every destination-ingress negative must be able to send: probe-other reaches ports that are open and
+# unfiltered by any ingress policy (the API server, a Traefik pod).
+check "probe-other (allow-all egress) -> kube-apiserver $API_IP:6443 (positive: it can send)" "$(probe_tcp monitoring probe-other "$API_IP" 6443)" connected
+check "probe-other (allow-all egress) -> Traefik pod :8443 (positive: it can send)" "$(probe_tcp monitoring probe-other "$TRAEFIK_IP" 8443)" connected
+for pod in $PA_PODS; do
+  ip="$(pod_ip platform "$pod")"
+  check "monitoring Prometheus-labelled pod -> platform-api $pod:9090/metrics (positive)" "$(wait_probe monitoring probe-prom http://$ip:9090/metrics 200)" 200
+  check "[ingress] probe-other -> platform-api $pod:9090 (not a Prometheus pod)" "$(probe monitoring probe-other http://$ip:9090/metrics)" 000
+  check "[ingress] probe-other -> platform-api $pod:8081 (internal listener: app namespaces only)" "$(probe monitoring probe-other http://$ip:8081/.well-known/jwks.json)" 000
+  check "[ingress] probe-other -> platform-api $pod:8080 (public listener: Traefik only)" "$(probe monitoring probe-other http://$ip:8080/login)" 000
+  check "[egress] Prometheus-labelled pod -> platform-api $pod:8081 (internal listener)" "$(probe monitoring probe-prom http://$ip:8081/.well-known/jwks.json)" 000
+  check "[egress] Prometheus-labelled pod -> platform-api $pod:8080 (public listener)" "$(probe monitoring probe-prom http://$ip:8080/login)" 000
+  check "[egress] Grafana-labelled pod -> platform-api $pod:9090" "$(probe monitoring probe-grafana http://$ip:9090/metrics)" 000
+done
+for pod in $PO_PODS; do
+  ip="$(pod_ip portal "$pod")"
+  check "monitoring Prometheus-labelled pod -> portal $pod:9090/metrics (positive)" "$(wait_probe monitoring probe-prom http://$ip:9090/metrics 200)" 200
+  check "[ingress] probe-other -> portal $pod:9090 (not a Prometheus pod)" "$(probe monitoring probe-other http://$ip:9090/metrics)" 000
+  check "[ingress] probe-other -> portal $pod:8080 (public listener: Traefik only)" "$(probe monitoring probe-other http://$ip:8080/api/v1/me)" 000
+  check "[ingress] probe-other -> portal $pod:8081 (internal listener: kubelet only)" "$(probe monitoring probe-other http://$ip:8081/healthz)" 000
+  check "[egress] Prometheus-labelled pod -> portal $pod:8080 (public listener)" "$(probe monitoring probe-prom http://$ip:8080/api/v1/me)" 000
+  check "[egress] Grafana-labelled pod -> portal $pod:9090" "$(probe monitoring probe-grafana http://$ip:9090/metrics)" 000
+done
+check "Grafana-labelled pod -> Prometheus $PROM_IP:9090 (positive)" "$(wait_probe monitoring probe-grafana http://$PROM_IP:9090/-/ready 200)" 200
+check "[ingress] non-Grafana pod (probe-other) -> Prometheus:9090" "$(probe monitoring probe-other http://$PROM_IP:9090/-/ready)" 000
+# Egress, each with a positive from an unrestricted pod (smoke-app has no policies): Traefik pod port 8443 and the API.
+check "smoke-app (no policies) -> Traefik pod :8443 (positive)" "$(probe_tcp smoke-app probe-open "$TRAEFIK_IP" 8443)" connected
+check "[egress] Prometheus-labelled pod -> Traefik pod :8443 (egress is minimal)" "$(probe_tcp monitoring probe-prom "$TRAEFIK_IP" 8443)" blocked
+check "[egress] Grafana-labelled pod -> Traefik pod :8443 (egress is minimal)" "$(probe_tcp monitoring probe-grafana "$TRAEFIK_IP" 8443)" blocked
+check "smoke-app (no policies) -> kube-apiserver $API_IP:6443 (positive)" "$(probe_tcp smoke-app probe-open "$API_IP" 6443)" connected
+check "Prometheus-labelled pod -> kube-apiserver :6443 (discovery)" "$(probe_tcp monitoring probe-prom "$API_IP" 6443)" connected
+check "[egress] Grafana-labelled pod -> kube-apiserver :6443" "$(probe_tcp monitoring probe-grafana "$API_IP" 6443)" blocked
+echo "  -- Hardening of the stack"
+check_not "Prometheus runs without --web.enable-lifecycle" "$($K -n monitoring get sts prometheus-monitoring-prometheus -o jsonpath='{.spec.template.spec.containers[*].args}')" "enable-lifecycle"
+check "POST /-/reload is refused (lifecycle API off; a Grafana-labelled pod asks)" "$($K -n monitoring exec probe-grafana -- curl -s -o /dev/null --max-time 4 -w '%{http_code}' -X POST "http://$PROM_IP:9090/-/reload" 2>/dev/null || true)" 403
+check "Grafana pod mounts no ServiceAccount token" "$($K -n monitoring get deploy monitoring-grafana -o jsonpath='{.spec.template.spec.automountServiceAccountToken}')" false
+check "API egress policy lists /32 endpoints only" "$($K -n monitoring get networkpolicy allow-egress-apiserver -o jsonpath='{.spec.egress[0].to[*].ipBlock.cidr}' | tr ' ' '\n' | grep -vc '/32$' || true)" 0
 
 echo
 if (( FAILS == 0 )); then echo "ALL CHECKS PASSED"; else

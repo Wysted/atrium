@@ -6,7 +6,7 @@ spec:
   policyTypes: [Ingress, Egress]
 ---
 # Public listener: Traefik only. Kubelet probes (internal listener) come from the node, which kube-router never
-# filters; the metrics port (9090) has no rule on purpose (monitoring is allowed in separately).
+# filters; the metrics port (9090) has its own rule below (allow-ingress-metrics).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata: {name: allow-ingress-traefik}
@@ -51,3 +51,17 @@ spec:
           podSelector: {matchLabels: {app.kubernetes.io/name: traefik}}
       ports:
         - {protocol: TCP, port: 8443}
+---
+# Metrics listener: the Prometheus pods of the monitoring namespace only (see platform-api's allow-ingress-metrics).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: allow-ingress-metrics}
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: portal}}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: monitoring}}
+          podSelector: {matchLabels: {app.kubernetes.io/name: prometheus}}
+      ports:
+        - {protocol: TCP, port: 9090}

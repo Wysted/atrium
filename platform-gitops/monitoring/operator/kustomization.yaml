@@ -1,0 +1,7 @@
+# PodMonitors and PrometheusRule for the Prometheus Operator (CRDs required). Applied after the operator is installed.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: monitoring
+resources:
+  - podmonitors.yaml
+  - prometheusrule.yaml

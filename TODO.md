@@ -12,6 +12,10 @@ Pending work and open questions for the portal platform. Detailed context lives 
 - [ ] **Suspended Workspace users.** Today access is cut by the local `disabled` flag plus the 8 h session cap.
   A faster cutoff needs the Admin SDK Directory API (`users.get`, `admin.directory.user.readonly`, domain-wide
   delegation granted by a super admin). Decide together with the company's offboarding process.
+- [ ] **KEK readable through cluster-wide Secret access.** The KEK is a Kubernetes Secret, so any principal with
+  cluster-wide `secrets get` (operators such as the Prometheus Operator, which grants it by default) can read it and
+  unseal every signing key. Production should keep the KEK in an external KMS (envelope decryption via the KMS API),
+  or at least audit which ClusterRoles can read Secrets in `platform`.
 - [ ] **Real client IP.** In k3d, Traefik sees every client as `10.42.0.1`, so the `/login` rate limit acts as a
   global bucket. Verify the client IP behind the production load balancer.
 - [ ] **Egress filtering.** The `local-google` overlay allows platform-api HTTPS egress to any public address.
@@ -51,6 +55,13 @@ Pending work and open questions for the portal platform. Detailed context lives 
   and a NetworkPolicy filters by port, not path, so they also reach `/forwardauth` and `/readyz`. Not exploitable
   today (an app holds no valid cookies for other hosts and app sessions are host-bound), but serving the JWKS on its
   own port would keep `/forwardauth` reachable only from Traefik.
+- [ ] **Probe interval gauge for alert rules.** `ProbeNotWriting` fires forever when the probe is disabled
+  (`PORTAL_PROBE_INTERVAL=0`) because the round counters are initialized at 0. Expose the configured interval as a
+  gauge (e.g. `portal_probe_interval_seconds`) and gate the rule on it (and scale its window to the interval).
 - [ ] **Reduce `platform_runtime`.** Once the portal owns administration, drop its write access to the authorization
   tables except what ForwardAuth and login need.
 - [ ] **Cookie prefix support in Safari.** `__Host-Http-` is enforced by Chrome 140+ and Firefox 143+; revisit Safari.
+- [ ] **Grafana behind ForwardAuth (auth.jwt validating `Platform-Assertion`: verify ES256 and `typ` support).** Grafana is
+  only reachable by port-forward with a generated admin password. To publish it through Traefik as a regular app, Grafana's
+  `auth.jwt` must validate the `Platform-Assertion` (header_name, JWKS URL of platform-api, ES256 signature) and its `typ`
+  header; verify both are supported before relying on it, and keep the admin login off the public path.

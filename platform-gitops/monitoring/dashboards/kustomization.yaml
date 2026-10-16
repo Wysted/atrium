@@ -1,0 +1,14 @@
+# Grafana dashboards as a ConfigMap. Two ways to load it:
+#   - sidecar (kube-prometheus-stack default): the `grafana_dashboard: "1"` label is what it discovers;
+#   - plain volume (what the local overlay does, no sidecar): mount the ConfigMap in a file provider.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: monitoring
+configMapGenerator:
+  - name: portal-grafana-dashboards
+    files: [portal-platform.json]
+    options:
+      disableNameSuffixHash: true
+      labels:
+        grafana_dashboard: "1"
+        app.kubernetes.io/part-of: portal-platform

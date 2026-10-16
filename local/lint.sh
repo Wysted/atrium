@@ -3,6 +3,7 @@
 #   local/lint.sh            # golangci-lint + govulncheck on every module
 #   local/lint.sh lint       # only golangci-lint (config: .golangci.yml)
 #   local/lint.sh vuln       # only govulncheck
+#   local/lint.sh rules      # only the alert rules (promtool in the pinned Prometheus image; `all` runs it too)
 # Covers every tracked go.mod except spikes/ (disposable code, never promoted to platform/).
 # The tools run with `go run <pkg>@<version>` so they are built by the same Go as the code (a prebuilt golangci-lint
 # image older than the module's Go version refuses to lint it). Builds are cached in .tools/go/.
@@ -14,13 +15,18 @@ readonly GOVULNCHECK=golang.org/x/vuln/cmd/govulncheck@v1.9.0
 
 mode="${1:-all}"
 case "$mode" in
-  all | lint | vuln) ;;
-  *) echo "usage: $0 [all|lint|vuln]" >&2; exit 2 ;;
+  all | lint | vuln | rules) ;;
+  *) echo "usage: $0 [all|lint|vuln|rules]" >&2; exit 2 ;;
 esac
 
 cd "$ROOT"
 failed=0
 modules=0
+if [ "$mode" = all ] || [ "$mode" = rules ]; then
+  echo "== platform-gitops/monitoring (alert rules)"
+  platform-gitops/monitoring/test-rules.sh || failed=1
+fi
+[ "$mode" = rules ] && exit "$failed"
 while IFS= read -r gomod; do
   module="$(dirname "$gomod")"
   modules=$((modules + 1))

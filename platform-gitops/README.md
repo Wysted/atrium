@@ -3,13 +3,15 @@
 Kustomize manifests of the platform for the local k3d cluster `portal`. Everything runs through `./tk`.
 
 ```
-base/namespaces    platform-db, platform, portal, hello-a, hello-b (Pod Security restricted)
+base/namespaces    platform-db, platform, portal, hello-a, hello-b (Pod Security restricted); `monitoring` lives in overlays/local/namespaces
 base/postgres      StatefulSet postgres:18.6 (digest = compose.yaml), initdb.sh, NetworkPolicy
 base/migrate       Job `platform-api migrate` as platform_owner
 base/platform-api  Deployment x2, Services internal:8081 / public:8080, Middlewares, auth-host IngressRoute, NetworkPolicy
 base/portal        Deployment x2 (cmd/portal), Service, IngressRoute (passHostHeader), NetworkPolicies
 base/hello         reference app (one instance per namespace via overlay)
-overlays/local     domain/app-id patches, scripts, seed, traefik values (fake login)
+base/monitoring    NetworkPolicies of the monitoring namespace (default deny; Prometheus, Grafana)
+monitoring/        adopter artifacts: alert rules (plain + PrometheusRule), PodMonitors, Grafana dashboard, promtool tests
+overlays/local     domain/app-id patches, scripts, seed, traefik values (fake login), monitoring stack values
 overlays/local-google  real Google login on top of overlays/local: image tag, client secret, env, egress policy, grant/revoke
 ```
 
@@ -17,11 +19,12 @@ overlays/local-google  real Google login on top of overlays/local: image tag, cl
 
 | Script | Purpose |
 |---|---|
-| `up.sh` | secrets (`.tools/secrets/k3d-*`, generated once), image import (`BUILD=1` rebuilds the three images), apply in order (namespaces, DB, portal roles, migrate Job, seed, platform-api, hello-a/b, portal), `down-spike.sh`, Traefik helm upgrade |
+| `up.sh` | secrets (`.tools/secrets/k3d-*`, generated once), image import (`BUILD=1` rebuilds the three images), apply in order (namespaces, DB, portal roles, migrate Job, seed, platform-api, hello-a/b, portal, monitoring), `down-spike.sh`, Traefik helm upgrade |
 | `roles.sh` / `roles.sql` | `platform_portal` (NOLOGIN) and the `portal_app` login role (member of `platform_portal` only) as the bootstrap superuser; idempotent, works on an existing volume (initdb.sh only runs once) |
 | `seed.sh` / `seed.sql` | dev data as platform_owner; idempotent, also restores grants revoked by the smoke |
 | `smoke.sh` | end-to-end checks with curl from the host; leaves the cluster as found |
 | `down-spike.sh` | deletes spike-authz / spike-app1 / spike-app2 (manifests stay in `spikes/`) |
+| `down-monitoring.sh` | removes PodMonitors/rules, the Helm release and the `monitoring` namespace (`DROP_CRDS=1` also the Operator CRDs); the platform keeps running |
 
 Order matters: the Middlewares must exist before Traefik is upgraded with `traefik/entrypoint-values.yaml`.
 Rollback of the edge: `./tk helm upgrade traefik traefik/traefik --version 41.7.1 -n traefik -f local/traefik-values.yaml`.
@@ -47,9 +50,80 @@ the local overlay's `seed.sql`, never in base.
   system roots verify it: no `PORTAL_PROBE_CA_FILE` and no `PORTAL_PROBE_INSECURE_TLS`. Local interval 1m (`PORTAL_PROBE_INTERVAL`).
 - NetworkPolicies (default deny both ways): ingress only from Traefik to 8080 (kubelet probes on 8081 come from the node and are
   never filtered); egress to DNS, PostgreSQL 5432, platform-api 8081 (JWKS) and Traefik pods on 8443. Policies see the POD port: the
-  Service port 443 of Traefik is `websecure` = 8443. The metrics port 9090 of platform-api and portal has no allow rule (monitoring
-  gets its own in part 4b). The internal and metrics listeners have no Service.
+  Service port 443 of Traefik is `websecure` = 8443. The metrics port 9090 is open only to the Prometheus pods of the `monitoring`
+  namespace (`allow-ingress-metrics`, same rule in `base/platform-api`). The internal and metrics listeners have no Service.
 - IngressRoute: exact `Host()`, `passHostHeader: true`; ForwardAuth and strip-assertion come from the entrypoint.
+
+## Monitoring
+
+Prometheus and Grafana for the platform, in the `monitoring` namespace of the local cluster, plus the artifacts an adopter
+takes to their own stack. The metric catalog and the cardinality rule (no client-supplied label values, no `app_id`) are in
+`platform/docs/contract.md`, block 6 "Metrics"; read the rule before adding a metric or a dashboard query.
+
+**Local stack.** `up.sh` installs `kube-prometheus-stack` 92.10.0 (Prometheus Operator v0.94.1, Prometheus v3.15.0, Grafana
+13.2.4) as release `monitoring`, with values in `overlays/local/monitoring/values.yaml`. Chosen over the plain prometheus +
+grafana charts because PodMonitor and PrometheusRule (what adopters with the Operator apply) can then be tested for real; the
+weight is one operator pod (~20 MiB). Everything else is off: Alertmanager, node-exporter, kube-state-metrics, kubelet and
+control-plane scrapes, default rules, the admission webhook, Grafana sidecars. Prometheus keeps 2 days in an emptyDir (disposable). Hardening: images pinned by tag and digest, Prometheus reloads by
+SIGHUP (`reloadStrategy: ProcessSignal`, so `/-/reload` and `/-/quit` are off), Grafana mounts no ServiceAccount token, the
+`monitoring` namespace (Pod Security restricted) is created by the local overlay, not by `base/`.
+
+**Accepted local risk: operator RBAC.** The chart installs the Prometheus Operator with a ClusterRole that can get/list/watch
+Secrets cluster-wide (the platform KEK among them) and delete Pods; the chart has no option to make it namespaced
+(`prometheusOperator.namespaces` only narrows the namespaces the operator reconciles, it does not shrink the ClusterRole).
+Fine for a disposable cluster; in production use RBAC your security team reviews or a Prometheus without an operator (plain
+rules file). Prometheus's own ClusterRole is read-only (pods, services, endpoints, nodes metrics).
+Alertmanager is disabled and has no receivers: alerts are evaluated and visible in Prometheus (`/alerts`) and Grafana, and go
+nowhere. `down-monitoring.sh` tears it down.
+
+**Grafana access (not exposed through Traefik).** The toolbox runs in a container, so `./tk` can publish the forwarded port on the
+host loopback with `TK_PUBLISH`; leave the command running and open http://127.0.0.1:3000 (user `admin`):
+
+```
+TK_PUBLISH=127.0.0.1:3000:3000 ./tk kubectl -n monitoring port-forward --address 0.0.0.0 deploy/monitoring-grafana 3000:3000
+TK_PUBLISH=127.0.0.1:9090:9090 ./tk kubectl -n monitoring port-forward --address 0.0.0.0 svc/monitoring-prometheus 9090:9090   # Prometheus
+```
+
+While a port-forward runs with `--address 0.0.0.0`, the forwarded port is also reachable from any container on `portal-net`
+(the toolbox, the k3d nodes); stop it when you are done. `TK_PUBLISH` only accepts `127.0.0.1:<port>:<port>` (exit 2 otherwise).
+
+The admin password is generated once into `.tools/secrets/k3d-grafana-admin-password` (gitignored, loaded as Secret
+`monitoring/grafana-admin`); read it on your own terminal when you log in, never paste it anywhere. The dashboard "Portal platform"
+is provisioned read-only from `monitoring/dashboards/portal-platform.json` (folder "Portal"). TODO.md tracks putting Grafana
+behind ForwardAuth.
+
+**NetworkPolicies.** `monitoring` is default deny both ways. Prometheus: ingress from Grafana (9090) and itself; egress to
+the metrics port 9090 of platform-api and portal pods only, itself, DNS and the Kubernetes API (`up.sh` renders
+`overlays/local/monitoring/networkpolicy-apiserver.tpl.yaml` with one /32 per endpoint of the `kubernetes` Service, port 6443). Grafana: egress to Prometheus 9090 and DNS only (no sidecars, so it never needs the API). On the
+other side, `allow-ingress-metrics` in `platform` and `portal` admits only pods labelled `app.kubernetes.io/name=prometheus` from the
+`monitoring` namespace to port 9090; the app-namespace label does NOT grant it. Anything that can run a pod with that label in
+`monitoring` joins the set: keep the namespace to the stack.
+
+**Adopter artifacts (`monitoring/`).** Nothing there is specific to k3d:
+
+| File | Use |
+|---|---|
+| `rules/portal-platform.rules.yaml` | alert rules, plain Prometheus format (the source) |
+| `operator/prometheusrule.yaml` | the same rules as a `PrometheusRule`, generated by `gen-prometheusrule.sh` |
+| `operator/podmonitors.yaml` | scrape of `platform-api` and `portal` on the pod port named `metrics` (`job` = app name) |
+| `dashboards/portal-platform.json` | Grafana dashboard (datasource picked by variable); `dashboards/kustomization.yaml` wraps it in a ConfigMap labelled `grafana_dashboard` for a sidecar |
+| `rules/tests/portal-platform.test.yaml` | `promtool` unit tests: every rule has a firing and a not-firing case |
+| `test-rules.sh` | sync check + `promtool check rules` + `promtool test rules` (pinned `prom/prometheus` through Docker); also `local/lint.sh rules` |
+
+Assumptions for adopters:
+- Rules and dashboard expect `job="platform-api"` and `job="portal"` (the PodMonitors set it with `jobLabel`); edit
+  `namespaceSelector` in the PodMonitors for your namespaces.
+- The per-replica rules (`SigningKeyNotLoaded`, `SigningKeyKEKMismatch`, `DBPoolSaturated`) put `{{ $labels.pod }}` in their text; the
+  PodMonitor adds `pod`. A scrape config that does not must relabel it.
+- Here Prometheus selects every PodMonitor, ServiceMonitor, ScrapeConfig, Probe and PrometheusRule (selectors `{}`) of the
+  namespaces the operator reconciles (`monitoring`, `platform`, `portal`). Anyone who can create those objects there changes what
+  is scraped or alerted: restrict creation by RBAC, or label-select in your own installation.
+- Reload latency: with `reloadStrategy: ProcessSignal` the config-reloader's first reload check after a Prometheus pod start
+  can time out (~3 min) before it starts watching the rule files, so rules applied just after a restart load late; later changes
+  take ~40 s. The alternative is the HTTP reload, which needs `--web.enable-lifecycle` (open `/-/quit` and `/-/reload`).
+- `ProbeNotWriting` assumes the default probe interval (5 minutes) against a 30 minute window; widen it if you raise
+  `PORTAL_PROBE_INTERVAL`. After changing
+the plain rules run `monitoring/gen-prometheusrule.sh`; `test-rules.sh` fails if the generated file is stale.
 
 ## Notes
 

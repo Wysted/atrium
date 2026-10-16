@@ -1,0 +1,488 @@
+# Unit tests of ../portal-platform.rules.yaml, run with promtool by ../../test-rules.sh. Every rule has a case that
+# fires and cases that must not: below the threshold, shorter than `for:`, and (where it matters) the failure that the
+# rule must stay silent about.
+rule_files:
+  - ../portal-platform.rules.yaml
+
+evaluation_interval: 1m
+
+tests:
+  # ---- UnprotectedDeployment -------------------------------------------------------------------------------------
+  - name: UnprotectedDeployment fires once for two replicas that report the same state
+    interval: 1m
+    input_series:
+      - series: 'portal_deployments_by_probe_status{status="unprotected", pod="portal-a", job="portal"}'
+        values: '0x2 1x20'
+      - series: 'portal_deployments_by_probe_status{status="unprotected", pod="portal-b", job="portal"}'
+        values: '0x2 1x20'
+      - series: 'portal_deployments_by_probe_status{status="ok", pod="portal-a", job="portal"}'
+        values: '3x22'
+    alert_rule_test:
+      - eval_time: 5m # unprotected since minute 2: still inside `for: 5m`
+        alertname: UnprotectedDeployment
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: UnprotectedDeployment
+        exp_alerts:
+          - exp_labels: {severity: critical}
+            exp_annotations:
+              summary: "A deployment is reachable without ForwardAuth"
+              description: "1 deployment(s) answered the integration probe without the login redirect. Open the app health view in the portal: `unprotected` on a host that was seen means a route without the ForwardAuth middleware; never seen plus unprotected means a missing or wrong route."
+
+  - name: UnprotectedDeployment stays quiet when every deployment is protected
+    interval: 1m
+    input_series:
+      - series: 'portal_deployments_by_probe_status{status="unprotected", pod="portal-a", job="portal"}'
+        values: '0x30'
+      - series: 'portal_deployments_by_probe_status{status="ok", pod="portal-a", job="portal"}'
+        values: '3x30'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: UnprotectedDeployment
+        exp_alerts: []
+
+  - name: UnprotectedDeployment ignores a transient unprotected status shorter than for
+    interval: 1m
+    input_series:
+      - series: 'portal_deployments_by_probe_status{status="unprotected", pod="portal-a", job="portal"}'
+        values: '0x2 1x3 0x25'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: UnprotectedDeployment
+        exp_alerts: []
+
+  - name: UnprotectedDeployment is silent when the gauge is absent (ProbeStatusCountErrors covers that)
+    interval: 1m
+    input_series:
+      - series: 'portal_deployments_by_probe_status{status="ok", pod="portal-a", job="portal"}'
+        values: '3x30'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: UnprotectedDeployment
+        exp_alerts: []
+
+  # ---- ProbeInconclusive (input every 5 minutes: the default probe cadence) ---------------------------------------
+  - name: ProbeInconclusive fires when rounds keep coming back inconclusive
+    interval: 5m
+    input_series:
+      - series: 'portal_probe_rounds_total{result="inconclusive", pod="portal-a", job="portal"}'
+        values: '0+1x20'
+      - series: 'portal_probe_rounds_total{result="written", pod="portal-a", job="portal"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: ProbeInconclusive
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: "The integration probe has been inconclusive for 30 minutes"
+              description: "Probe rounds keep failing their control sample, so deployment statuses are not being refreshed. Check that the portal can reach the public entrypoint (PORTAL_PROBE_ADDR) and that platform-api answers a navigation with the login redirect."
+
+  - name: ProbeInconclusive ignores one inconclusive round
+    interval: 5m
+    input_series:
+      - series: 'portal_probe_rounds_total{result="inconclusive", pod="portal-a", job="portal"}'
+        values: '0x3 1x30'
+      - series: 'portal_probe_rounds_total{result="written", pod="portal-a", job="portal"}'
+        values: '0+1x33'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: ProbeInconclusive
+        exp_alerts: []
+
+  - name: ProbeInconclusive stays quiet when every round is written
+    interval: 5m
+    input_series:
+      - series: 'portal_probe_rounds_total{result="inconclusive", pod="portal-a", job="portal"}'
+        values: '0x30'
+      - series: 'portal_probe_rounds_total{result="written", pod="portal-a", job="portal"}'
+        values: '0+1x30'
+    alert_rule_test:
+      - eval_time: 120m
+        alertname: ProbeInconclusive
+        exp_alerts: []
+
+  # ---- ProbeNotWriting (input every 5 minutes) -------------------------------------------------------------------
+  - name: ProbeNotWriting fires when every round ends in error
+    interval: 5m
+    input_series:
+      - series: 'portal_probe_rounds_total{result="written", pod="portal-a", job="portal"}'
+        values: '0+1x4 4x20'
+      - series: 'portal_probe_rounds_total{result="error", pod="portal-a", job="portal"}'
+        values: '0x4 0+1x20'
+      - series: 'up{job="portal", pod="portal-a"}'
+        values: '1x25'
+    alert_rule_test:
+      - eval_time: 40m # last write at minute 20: the 30 minute window is not empty yet
+        alertname: ProbeNotWriting
+        exp_alerts: []
+      - eval_time: 80m
+        alertname: ProbeNotWriting
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: "The integration probe has not written a result for 40 minutes"
+              description: "No probe round wrote deployment statuses although the portal is up: rounds are failing (result=\"error\"), skipped by every replica or not running. Statuses are frozen, so UnprotectedDeployment reflects an old state. Check the portal logs and portal_probe_rounds_total by result."
+
+  - name: ProbeNotWriting fires when no round runs at all
+    interval: 5m
+    input_series:
+      - series: 'portal_probe_rounds_total{result="written", pod="portal-a", job="portal"}'
+        values: '5x25'
+      - series: 'portal_probe_rounds_total{result="idle", pod="portal-a", job="portal"}'
+        values: '9x25'
+      - series: 'up{job="portal", pod="portal-a"}'
+        values: '1x25'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: ProbeNotWriting
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: "The integration probe has not written a result for 40 minutes"
+              description: "No probe round wrote deployment statuses although the portal is up: rounds are failing (result=\"error\"), skipped by every replica or not running. Statuses are frozen, so UnprotectedDeployment reflects an old state. Check the portal logs and portal_probe_rounds_total by result."
+
+  - name: ProbeNotWriting stays quiet while rounds are written, even if another replica skips
+    interval: 5m
+    input_series:
+      - series: 'portal_probe_rounds_total{result="written", pod="portal-a", job="portal"}'
+        values: '0+1x25'
+      - series: 'portal_probe_rounds_total{result="skipped", pod="portal-b", job="portal"}'
+        values: '0+1x25'
+      - series: 'portal_probe_rounds_total{result="written", pod="portal-b", job="portal"}'
+        values: '0x25'
+      - series: 'up{job="portal", pod="portal-a"}'
+        values: '1x25'
+    alert_rule_test:
+      - eval_time: 100m
+        alertname: ProbeNotWriting
+        exp_alerts: []
+
+  - name: ProbeNotWriting ignores a pause shorter than the window, and stays silent when the portal is down
+    interval: 5m
+    input_series:
+      - series: 'portal_probe_rounds_total{result="written", pod="portal-a", job="portal"}'
+        values: '0+1x6 6x4 6+1x14'
+      - series: 'up{job="portal", pod="portal-a"}'
+        values: '1x25'
+      - series: 'portal_probe_rounds_total{result="written", pod="portal-z", job="portal"}'
+        values: '3x25'
+    alert_rule_test:
+      - eval_time: 85m
+        alertname: ProbeNotWriting
+        exp_alerts: []
+
+  - name: ProbeNotWriting is silent when the portal is down (PortalDown covers that)
+    interval: 5m
+    input_series:
+      - series: 'portal_probe_rounds_total{result="written", pod="portal-a", job="portal"}'
+        values: '5x25'
+      - series: 'up{job="portal", pod="portal-a"}'
+        values: '0x25'
+    alert_rule_test:
+      - eval_time: 100m
+        alertname: ProbeNotWriting
+        exp_alerts: []
+
+  # ---- ProbeStatusCountErrors --------------------------------------------------------------------------------------
+  - name: ProbeStatusCountErrors fires while the count keeps failing
+    interval: 1m
+    input_series:
+      - series: 'portal_probe_status_count_errors_total{pod="portal-a", job="portal"}'
+        values: '0+1x30'
+    alert_rule_test:
+      - eval_time: 5m # inside `for: 10m`
+        alertname: ProbeStatusCountErrors
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ProbeStatusCountErrors
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: "The portal cannot count deployments by probe status"
+              description: "portal_deployments_by_probe_status is missing while the database count fails, so UnprotectedDeployment cannot fire. Check the portal database connection and the portal logs."
+
+  - name: ProbeStatusCountErrors stays quiet without errors, and after a single one
+    interval: 1m
+    input_series:
+      - series: 'portal_probe_status_count_errors_total{pod="portal-a", job="portal"}'
+        values: '0x30'
+      - series: 'portal_probe_status_count_errors_total{pod="portal-b", job="portal"}'
+        values: '0x5 1x30'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: ProbeStatusCountErrors
+        exp_alerts: []
+
+  # ---- ForwardAuthDown ---------------------------------------------------------------------------------------------
+  - name: ForwardAuthDown fires when every platform-api target is down
+    interval: 1m
+    input_series:
+      - series: 'up{job="platform-api", pod="platform-api-a"}'
+        values: '1x2 0x20'
+      - series: 'up{job="platform-api", pod="platform-api-b"}'
+        values: '1x2 0x20'
+    alert_rule_test:
+      - eval_time: 4m # down since minute 2, inside `for: 3m`
+        alertname: ForwardAuthDown
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: ForwardAuthDown
+        exp_alerts:
+          - exp_labels: {severity: critical}
+            exp_annotations:
+              summary: "platform-api is not being scraped or is down"
+              description: "No platform-api target is up. ForwardAuth decisions, logins and JWKS depend on it: every protected app fails. If the pods are running, check the scrape configuration and the NetworkPolicy to the metrics port."
+
+  - name: ForwardAuthDown fires when there is no platform-api target at all (absent)
+    interval: 1m
+    input_series:
+      - series: 'up{job="portal", pod="portal-a"}'
+        values: '1x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: ForwardAuthDown
+        exp_alerts:
+          - exp_labels: {severity: critical, job: platform-api}
+            exp_annotations:
+              summary: "platform-api is not being scraped or is down"
+              description: "No platform-api target is up. ForwardAuth decisions, logins and JWKS depend on it: every protected app fails. If the pods are running, check the scrape configuration and the NetworkPolicy to the metrics port."
+
+  - name: ForwardAuthDown stays quiet while one replica is up, and for a brief outage
+    interval: 1m
+    input_series:
+      - series: 'up{job="platform-api", pod="platform-api-a"}'
+        values: '0x20'
+      - series: 'up{job="platform-api", pod="platform-api-b"}'
+        values: '1x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: ForwardAuthDown
+        exp_alerts: []
+
+  - name: ForwardAuthDown ignores a rollout shorter than for
+    interval: 1m
+    input_series:
+      - series: 'up{job="platform-api", pod="platform-api-a"}'
+        values: '1x5 0x2 1x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: ForwardAuthDown
+        exp_alerts: []
+
+  # ---- PortalDown --------------------------------------------------------------------------------------------------
+  - name: PortalDown fires when no portal target is up, and stays quiet with one up
+    interval: 1m
+    input_series:
+      - series: 'up{job="portal", pod="portal-a"}'
+        values: '0x20'
+      - series: 'up{job="portal", pod="portal-b"}'
+        values: '0x20'
+      - series: 'up{job="platform-api", pod="platform-api-a"}'
+        values: '1x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: PortalDown
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: "The portal is not being scraped or is down"
+              description: "No portal target is up. Administration, the user's home and the integration probe are unavailable (apps keep working: ForwardAuth does not depend on the portal)."
+
+  - name: PortalDown stays quiet while one replica is up
+    interval: 1m
+    input_series:
+      - series: 'up{job="portal", pod="portal-a"}'
+        values: '0x20'
+      - series: 'up{job="portal", pod="portal-b"}'
+        values: '1x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: PortalDown
+        exp_alerts: []
+
+  # ---- ForwardAuthErrorsHigh ---------------------------------------------------------------------------------------
+  # Counters grow per minute: +600 allow/min is 10 req/s.
+  - name: ForwardAuthErrorsHigh fires above 5% errors with real traffic
+    interval: 1m
+    input_series:
+      - series: 'platform_forwardauth_decisions_total{decision="allow", reason="granted", pod="platform-api-a", job="platform-api"}'
+        values: '0+600x30'
+      - series: 'platform_forwardauth_decisions_total{decision="error", reason="backend_failure", pod="platform-api-a", job="platform-api"}'
+        values: '0+60x30'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: ForwardAuthErrorsHigh
+        exp_alerts:
+          - exp_labels: {severity: critical}
+            exp_annotations:
+              summary: "More than 5% of ForwardAuth decisions are errors"
+              description: "9.091% of ForwardAuth decisions over the last 5 minutes ended in an error (a backend failure such as the database, or a panic). Check the platform-api logs and the database."
+
+  - name: ForwardAuthErrorsHigh stays quiet below 5% errors
+    interval: 1m
+    input_series:
+      - series: 'platform_forwardauth_decisions_total{decision="allow", reason="granted", pod="platform-api-a", job="platform-api"}'
+        values: '0+600x30'
+      - series: 'platform_forwardauth_decisions_total{decision="error", reason="backend_failure", pod="platform-api-a", job="platform-api"}'
+        values: '0+6x30'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: ForwardAuthErrorsHigh
+        exp_alerts: []
+
+  - name: ForwardAuthErrorsHigh stays quiet on a high ratio over almost no traffic
+    interval: 1m
+    input_series:
+      - series: 'platform_forwardauth_decisions_total{decision="allow", reason="granted", pod="platform-api-a", job="platform-api"}'
+        values: '0+1x30'
+      - series: 'platform_forwardauth_decisions_total{decision="error", reason="backend_failure", pod="platform-api-a", job="platform-api"}'
+        values: '0+1x30'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: ForwardAuthErrorsHigh
+        exp_alerts: []
+
+  - name: ForwardAuthErrorsHigh stays quiet when there are no error series at all
+    interval: 1m
+    input_series:
+      - series: 'platform_forwardauth_decisions_total{decision="allow", reason="granted", pod="platform-api-a", job="platform-api"}'
+        values: '0+600x30'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: ForwardAuthErrorsHigh
+        exp_alerts: []
+
+  - name: ForwardAuthErrorsHigh ignores an error burst shorter than for
+    interval: 1m
+    input_series:
+      - series: 'platform_forwardauth_decisions_total{decision="allow", reason="granted", pod="platform-api-a", job="platform-api"}'
+        values: '0+600x30'
+      - series: 'platform_forwardauth_decisions_total{decision="error", reason="backend_failure", pod="platform-api-a", job="platform-api"}'
+        values: '0x10 0+120x3 360x20'
+    alert_rule_test:
+      - eval_time: 29m
+        alertname: ForwardAuthErrorsHigh
+        exp_alerts: []
+
+  # ---- SigningKeyNotLoaded -----------------------------------------------------------------------------------------
+  - name: SigningKeyNotLoaded fires for the replica that cannot sign, not for the others
+    interval: 1m
+    input_series:
+      - series: 'platform_signing_key_loaded{pod="platform-api-a", job="platform-api"}'
+        values: '0x20'
+      - series: 'platform_signing_key_loaded{pod="platform-api-b", job="platform-api"}'
+        values: '1x20'
+    alert_rule_test:
+      - eval_time: 4m # inside `for: 5m`
+        alertname: SigningKeyNotLoaded
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: SigningKeyNotLoaded
+        exp_alerts:
+          - exp_labels: {severity: critical, pod: platform-api-a, job: platform-api}
+            exp_annotations:
+              summary: "platform-api-a has no signing key loaded"
+              description: "This platform-api replica cannot sign assertions. The usual causes are a KEK that does not open the stored keys (see SigningKeyKEKMismatch) or no active key in the database."
+
+  - name: SigningKeyNotLoaded ignores a start-up shorter than for
+    interval: 1m
+    input_series:
+      - series: 'platform_signing_key_loaded{pod="platform-api-a", job="platform-api"}'
+        values: '0x2 1x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: SigningKeyNotLoaded
+        exp_alerts: []
+
+  # ---- SigningKeyKEKMismatch ---------------------------------------------------------------------------------------
+  - name: SigningKeyKEKMismatch fires on a mismatched replica only
+    interval: 1m
+    input_series:
+      - series: 'platform_signing_key_kek_mismatch{pod="platform-api-a", job="platform-api"}'
+        values: '1x20'
+      - series: 'platform_signing_key_kek_mismatch{pod="platform-api-b", job="platform-api"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: SigningKeyKEKMismatch
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: SigningKeyKEKMismatch
+        exp_alerts:
+          - exp_labels: {severity: critical, pod: platform-api-a, job: platform-api}
+            exp_annotations:
+              summary: "platform-api-a has a KEK that does not match the signing keys"
+              description: "The KEK mounted on this replica does not open the active or next signing key. Restore the KEK the keys were sealed with."
+
+  - name: SigningKeyKEKMismatch stays quiet when the KEK matches, and for a blip
+    interval: 1m
+    input_series:
+      - series: 'platform_signing_key_kek_mismatch{pod="platform-api-a", job="platform-api"}'
+        values: '0x20'
+      - series: 'platform_signing_key_kek_mismatch{pod="platform-api-b", job="platform-api"}'
+        values: '0x5 1 0x14'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: SigningKeyKEKMismatch
+        exp_alerts: []
+
+  # ---- DBPoolSaturated ---------------------------------------------------------------------------------------------
+  - name: DBPoolSaturated fires for a saturated platform-api pool
+    interval: 1m
+    input_series:
+      - series: 'platform_db_pool_acquired_connections{pod="platform-api-a", job="platform-api"}'
+        values: '31x30'
+      - series: 'platform_db_pool_max_connections{pod="platform-api-a", job="platform-api"}'
+        values: '32x30'
+      - series: 'portal_db_pool_acquired_connections{pod="portal-a", job="portal"}'
+        values: '2x30'
+      - series: 'portal_db_pool_max_connections{pod="portal-a", job="portal"}'
+        values: '32x30'
+    alert_rule_test:
+      - eval_time: 5m # inside `for: 10m`
+        alertname: DBPoolSaturated
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: DBPoolSaturated
+        exp_alerts:
+          - exp_labels: {severity: warning, pod: platform-api-a, job: platform-api}
+            exp_annotations:
+              summary: "platform-api platform-api-a uses more than 90% of its database pool"
+              description: "96.88% of the connections of the pool are in use. Look for slow queries or raise the pool size (and PostgreSQL max_connections with it)."
+
+  - name: DBPoolSaturated fires for a saturated portal pool
+    interval: 1m
+    input_series:
+      - series: 'platform_db_pool_acquired_connections{pod="platform-api-a", job="platform-api"}'
+        values: '2x30'
+      - series: 'platform_db_pool_max_connections{pod="platform-api-a", job="platform-api"}'
+        values: '32x30'
+      - series: 'portal_db_pool_acquired_connections{pod="portal-a", job="portal"}'
+        values: '32x30'
+      - series: 'portal_db_pool_max_connections{pod="portal-a", job="portal"}'
+        values: '32x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: DBPoolSaturated
+        exp_alerts:
+          - exp_labels: {severity: warning, pod: portal-a, job: portal}
+            exp_annotations:
+              summary: "portal portal-a uses more than 90% of its database pool"
+              description: "100% of the connections of the pool are in use. Look for slow queries or raise the pool size (and PostgreSQL max_connections with it)."
+
+  - name: DBPoolSaturated stays quiet at normal use and for a short spike
+    interval: 1m
+    input_series:
+      - series: 'platform_db_pool_acquired_connections{pod="platform-api-a", job="platform-api"}'
+        values: '10x30'
+      - series: 'platform_db_pool_max_connections{pod="platform-api-a", job="platform-api"}'
+        values: '32x30'
+      - series: 'portal_db_pool_acquired_connections{pod="portal-a", job="portal"}'
+        values: '2x5 32x4 2x25'
+      - series: 'portal_db_pool_max_connections{pod="portal-a", job="portal"}'
+        values: '32x30'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: DBPoolSaturated
+        exp_alerts: []

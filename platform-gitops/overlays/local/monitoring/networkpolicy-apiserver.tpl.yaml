@@ -1,0 +1,20 @@
+# Rendered and applied by up.sh (the API_TO placeholder below becomes one ipBlock line per API endpoint); not in the kustomization.
+# The Prometheus Operator and Prometheus discover and watch objects through the Kubernetes API. In k3d the API server is
+# the K3s node itself, port 6443; the policy is evaluated after the kubernetes Service DNAT, so the destination is the node
+# address (the endpoints of the `kubernetes` Service), not 10.43.0.1:443. One /32 per endpoint, port 6443 only. Grafana is
+# not selected on purpose: it never talks to the API.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: allow-egress-apiserver, namespace: monitoring}
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: [prometheus, kube-prometheus-stack-prometheus-operator]
+  policyTypes: [Egress]
+  egress:
+    - to:
+${API_TO}
+      ports:
+        - {protocol: TCP, port: 6443}

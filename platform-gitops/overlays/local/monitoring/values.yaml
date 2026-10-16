@@ -1,0 +1,176 @@
+# kube-prometheus-stack 92.10.0 trimmed to what the portal platform needs locally: Prometheus Operator, one Prometheus
+# and Grafana. Installed by overlays/local/up.sh into the `monitoring` namespace as release `monitoring`.
+#
+# Why this chart and not the plain prometheus + grafana charts: PodMonitor and PrometheusRule are the artifacts adopters
+# with the Operator consume (platform-gitops/monitoring/operator), and this is the only way to test them for real.
+# The weight is paid by the operator pod (~50 MiB); everything else that makes the stack heavy is switched off below.
+fullnameOverride: monitoring
+
+crds:
+  enabled: true
+
+# --- Off: nothing the portal platform needs ---------------------------------------------------------------------------
+# Alertmanager is disabled and no receivers exist: alerts are evaluated and visible in Prometheus (/alerts) and Grafana,
+# and go nowhere. Receivers (Slack, mail, PagerDuty) are the adopter's decision.
+alertmanager:
+  enabled: false
+defaultRules:
+  create: false
+kubeStateMetrics:
+  enabled: false
+nodeExporter:
+  enabled: false
+kubernetesServiceMonitors:
+  enabled: false
+kubeApiServer: {enabled: false}
+kubelet: {enabled: false}
+kubeControllerManager: {enabled: false}
+coreDns: {enabled: false}
+kubeDns: {enabled: false}
+kubeEtcd: {enabled: false}
+kubeScheduler: {enabled: false}
+kubeProxy: {enabled: false}
+thanosRuler:
+  enabled: false
+
+prometheusOperator:
+  # The admission webhook needs a certificate job and an apiserver -> operator path; the rules are validated by
+  # promtool (monitoring/test-rules.sh) before they ever reach the cluster.
+  admissionWebhooks:
+    enabled: false
+  tls:
+    enabled: false
+  kubeletService:
+    enabled: false
+  serviceMonitor:
+    selfMonitor: false
+  # ACCEPTED LOCAL RISK (operator RBAC). The chart ships the operator only as a ClusterRole: cluster-wide get/list/watch
+  # on Secrets (the platform KEK included) and delete on Pods, and the chart has no option to make it namespaced
+  # (`namespaces` below only sets the operator's --namespaces flag, it does not shrink the ClusterRole). It is the upstream
+  # design of the operator, acceptable for a disposable local cluster. In production run the operator with the RBAC your
+  # security team reviews, or use a Prometheus without an operator (plain rules file in ../../../monitoring/rules).
+  # The allow-list at least stops the operator from reconciling PodMonitors/PrometheusRules of every other namespace.
+  namespaces:
+    releaseNamespace: true
+    additional: [platform, portal]
+  # Images pinned by tag AND digest (index digest, verified on pull); bump both together with the chart.
+  image:
+    tag: v0.94.1
+    sha: 7c88d4e7bae63bd8d0f8da986054337c23b4472fa8d3c6817f5bc4b8407a2d6a
+  prometheusConfigReloader:
+    image:
+      tag: v0.94.1
+      sha: 06b52bd4dbe3ed6dd5905aadaf8b9987d9da4c31d37bb86deaadae68cee2d26b
+    resources:
+      requests: {cpu: 10m, memory: 16Mi}
+      limits: {cpu: 100m, memory: 32Mi}
+  resources:
+    requests: {cpu: 20m, memory: 48Mi}
+    limits: {cpu: 200m, memory: 128Mi}
+
+prometheus:
+  serviceMonitor:
+    selfMonitor: true
+  prometheusSpec:
+    # Select every PodMonitor / PrometheusRule of the cluster, not only the ones labelled with the Helm release.
+    podMonitorSelectorNilUsesHelmValues: false
+    serviceMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    probeSelectorNilUsesHelmValues: false
+    scrapeConfigSelectorNilUsesHelmValues: false
+    scrapeInterval: 30s
+    evaluationInterval: 30s
+    retention: 2d
+    retentionSize: 1GB
+    replicas: 1
+    image:
+      tag: v3.15.0-distroless
+      sha: b2a413d5a03ea6a76782a508d1c7947440bba3b973931a25676e278431891b01
+    # Reload by SIGHUP: without it the operator starts Prometheus with --web.enable-lifecycle, which opens /-/quit and
+    # /-/reload to anything that reaches the pod on 9090 (Grafana, Prometheus itself).
+    reloadStrategy: ProcessSignal
+    resources:
+      requests: {cpu: 100m, memory: 128Mi}
+      limits: {cpu: 500m, memory: 512Mi}
+    # emptyDir: metrics are disposable locally (the platform state is in PostgreSQL).
+    storageSpec: {}
+
+grafana:
+  enabled: true
+  image:
+    tag: 13.2.4-distroless
+    sha: ae3d3add290adbe6a88412229f5d76fd7bb82743050881698642d3d62f277e35
+  # No sidecar talks to the API, so neither the pod nor its ServiceAccount mounts a token.
+  automountServiceAccountToken: false
+  serviceAccount:
+    create: true
+    autoMount: false
+    automountServiceAccountToken: false
+  defaultDashboardsEnabled: false
+  forceDeployDashboards: false
+  serviceMonitor:
+    enabled: false
+  # The admin password is generated once into .tools/secrets by up.sh and loaded as a Secret; never in values.
+  admin:
+    existingSecret: grafana-admin
+    userKey: admin-user
+    passwordKey: admin-password
+  # No sidecars: they watch ConfigMaps through the Kubernetes API, and Grafana's egress policy allows Prometheus only.
+  # The datasource is provisioned from values and the dashboard from the ConfigMap that kustomize generates
+  # (platform-gitops/monitoring/dashboards) mounted as a plain volume.
+  sidecar:
+    dashboards:
+      enabled: false
+    datasources:
+      enabled: false
+  datasources:
+    datasources.yaml:
+      apiVersion: 1
+      datasources:
+        - name: Prometheus
+          uid: prometheus
+          type: prometheus
+          access: proxy
+          url: http://monitoring-prometheus.monitoring.svc.cluster.local:9090
+          isDefault: true
+          editable: false
+  dashboardProviders:
+    dashboardproviders.yaml:
+      apiVersion: 1
+      providers:
+        - name: portal
+          orgId: 1
+          folder: Portal
+          type: file
+          disableDeletion: true
+          allowUiUpdates: false
+          options:
+            path: /var/lib/grafana/dashboards/portal
+  dashboardsConfigMaps:
+    portal: portal-grafana-dashboards
+  grafana.ini:
+    paths:
+      data: /var/lib/grafana/
+      logs: /var/log/grafana
+      plugins: /var/lib/grafana/plugins
+      provisioning: /etc/grafana/provisioning
+    unified_storage:
+      index_path: /var/lib/grafana-search/bleve
+    analytics:
+      check_for_updates: false
+      check_for_plugin_updates: false
+      reporting_enabled: false
+    log:
+      mode: console
+    users:
+      allow_sign_up: false
+    auth.anonymous:
+      enabled: false
+  # initChownData runs as root; the pod is non-root and the data dir is an emptyDir owned through fsGroup.
+  initChownData:
+    enabled: false
+  testFramework:
+    enabled: false
+  resources:
+    requests: {cpu: 50m, memory: 192Mi}
+    limits: {cpu: 300m, memory: 384Mi}

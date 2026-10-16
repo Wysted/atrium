@@ -1,0 +1,42 @@
+# Scrape of the two processes on their dedicated metrics listener (container port named `metrics`, 9090), for adopters
+# with the Prometheus Operator. Only pods of platform-api and portal: nothing else exposes this port.
+#
+# Adapt before applying: `namespaceSelector` (where you deployed each process) and, if your Prometheus selects monitors
+# by label, add the label it expects under metadata.labels. `jobLabel` makes the job name the value of the pod's
+# app.kubernetes.io/name, so job="platform-api" and job="portal": the alert rules and the dashboard rely on it.
+#
+# The metrics port has no authentication: the NetworkPolicy must let only your Prometheus pods reach it (see
+# base/platform-api and base/portal, allow-ingress-metrics) and no IngressRoute may route to it.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: platform-api
+  namespace: monitoring
+  labels: {app.kubernetes.io/part-of: portal-platform}
+spec:
+  jobLabel: app.kubernetes.io/name
+  namespaceSelector: {matchNames: [platform]}
+  selector:
+    matchLabels: {app.kubernetes.io/name: platform-api}
+  podMetricsEndpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: portal
+  namespace: monitoring
+  labels: {app.kubernetes.io/part-of: portal-platform}
+spec:
+  jobLabel: app.kubernetes.io/name
+  namespaceSelector: {matchNames: [portal]}
+  selector:
+    matchLabels: {app.kubernetes.io/name: portal}
+  podMetricsEndpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s

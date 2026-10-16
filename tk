@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Run a command inside the portal toolbox container (no args opens a shell).
 # Examples: ./tk kubectl get nodes | ./tk helm list -A | ./tk
+# TK_PUBLISH=127.0.0.1:3000:3000 publishes a container port on the host (for a long-running kubectl port-forward):
+#   TK_PUBLISH=127.0.0.1:3000:3000 ./tk kubectl -n monitoring port-forward --address 0.0.0.0 deploy/monitoring-grafana 3000:3000
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -14,4 +16,13 @@ export DOCKER_GID="$(stat -c '%g' /var/run/docker.sock)"
 readonly NETWORK=portal-net
 docker network inspect "$NETWORK" >/dev/null 2>&1 || docker network create "$NETWORK" >/dev/null
 
-exec docker compose run --rm tools "$@"
+# Only host-loopback publishing is accepted: a wider bind would expose the forwarded service to the LAN.
+publish=()
+if [[ -n "${TK_PUBLISH:-}" ]]; then
+  if [[ ! "$TK_PUBLISH" =~ ^127\.0\.0\.1:[0-9]{2,5}:[0-9]{2,5}$ ]]; then
+    echo "tk: TK_PUBLISH must look like 127.0.0.1:<host port>:<container port> (got '$TK_PUBLISH')" >&2
+    exit 2
+  fi
+  publish=(--publish "$TK_PUBLISH")
+fi
+exec docker compose run --rm "${publish[@]}" tools "$@"

@@ -1,0 +1,77 @@
+# Default deny, then exactly what the monitoring stack needs. Ports are POD ports (policies are evaluated after the
+# Service DNAT). The way into platform-api and portal (metrics port 9090) is granted on THEIR side
+# (base/platform-api and base/portal, allow-ingress-metrics); the way to the Kubernetes API is environment specific
+# (overlays/local/monitoring). Grafana is not exposed: port-forward and the apiserver proxy come from the node, which
+# kube-router never filters, so it needs no ingress rule.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: default-deny, namespace: monitoring}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: allow-egress-dns, namespace: monitoring}
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}
+          podSelector: {matchLabels: {k8s-app: kube-dns}}
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+---
+# Prometheus scrapes the metrics port of platform-api and portal, and itself (http-web 9090, config reloader 8080).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: allow-egress-prometheus, namespace: monitoring}
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: prometheus}}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: platform}}
+          podSelector: {matchLabels: {app.kubernetes.io/name: platform-api}}
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: portal}}
+          podSelector: {matchLabels: {app.kubernetes.io/name: portal}}
+      ports:
+        - {protocol: TCP, port: 9090}
+    - to:
+        - podSelector: {matchLabels: {app.kubernetes.io/name: prometheus}}
+      ports:
+        - {protocol: TCP, port: 9090}
+        - {protocol: TCP, port: 8080}
+---
+# Who may query Prometheus: Grafana, and Prometheus itself (self-scrape).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: allow-ingress-prometheus, namespace: monitoring}
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: prometheus}}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: {matchLabels: {app.kubernetes.io/name: grafana}}
+      ports:
+        - {protocol: TCP, port: 9090}
+    - from:
+        - podSelector: {matchLabels: {app.kubernetes.io/name: prometheus}}
+      ports:
+        - {protocol: TCP, port: 9090}
+        - {protocol: TCP, port: 8080}
+---
+# Grafana talks to Prometheus and nothing else (no sidecars: they would need the Kubernetes API).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: allow-egress-grafana, namespace: monitoring}
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: grafana}}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector: {matchLabels: {app.kubernetes.io/name: prometheus}}
+      ports:
+        - {protocol: TCP, port: 9090}
