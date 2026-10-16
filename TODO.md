@@ -22,15 +22,12 @@ Pending work and open questions for the portal platform. Detailed context lives 
 
 ## Next features
 
-- [ ] **Administration panel (next).** Manage initiatives, apps, deployments, roles, groups and grants, and browse the
-  audit log. Today this is done with `platform-gitops/overlays/local-google/grant.sh`, `revoke.sh` and SQL.
-  Define its contract before writing code (new block in `platform/docs/contract.md`), answering:
-  - Who administers what: platform admins (`platform_admins`) vs initiative owners (`initiative_roles.manages_access`),
-    and which actions each one can take.
-  - Shape: JSON API only, or API + web UI (`platform/web/`, React + Vite), and on which host (the auth host or a
-    dedicated admin app behind the same ForwardAuth).
-  - Authorization of admin calls: reuse the assertion and AuthZEN-shaped decision, CSRF protection for mutations.
-  - Every mutation writes `audit_events` with the acting user; grants by email only for users that already exist.
-  - Portal home ("which apps can I open"): AuthZEN `search/resource` over the same model.
-- [ ] **Audit for `RevokeUser` / `RevokeApp`.** Only login, logout and session replacement are audited today.
+- [ ] **Portal app (next).** Home, administration and integration health, defined in contract block 6
+  (`platform/docs/contract.md`). Replaces `platform-gitops/overlays/local-google/grant.sh`, `revoke.sh` and SQL.
+  Includes the schema changes of block 6, the `app_disabled` decision reason, the `platform_portal` database role,
+  `cmd/portal` with the embedded Nuxt 4 SPA (`platform/web/`), `/metrics`, the probe, and the audit of
+  `RevokeUser` / `RevokeApp`. Create the frontend subagents when the web work starts.
+- [ ] **Non-browser clients for the portal API.** CLI and automation have no way to authenticate yet (block 6 open items).
+- [ ] **Reduce `platform_runtime`.** Once the portal owns administration, drop its write access to the authorization
+  tables except what ForwardAuth and login need.
 - [ ] **Cookie prefix support in Safari.** `__Host-Http-` is enforced by Chrome 140+ and Firefox 143+; revisit Safari.

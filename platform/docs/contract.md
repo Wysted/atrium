@@ -1,14 +1,15 @@
 # platform-api contract
 
-Status: v1 complete (2026-10-14). Blocks were closed one at a time; research notes live in Engram (`architecture/portal-assertion-research`).
+Status: v1 complete (2026-10-14); block 6 added (2026-10-15). Blocks were closed one at a time; research notes live in Engram (`architecture/portal-assertion-research`).
 
 | Block | Topic | Status |
 |---|---|---|
 | 1 | Assertion JWT received by apps | Closed (2026-10-14) |
 | 2 | ForwardAuth contract (Traefik <-> platform-api) | Closed (2026-10-14), verified in spike |
 | 3 | Signing keys, rotation, JWKS | Closed (2026-10-14) |
-| 4 | PostgreSQL data model | Closed (2026-10-14) |
+| 4 | PostgreSQL data model | Closed (2026-10-14); amended by block 6 |
 | 5 | Google login and sessions | Closed (2026-10-14) |
+| 6 | Portal app: home, administration, observability | Closed (2026-10-15), not implemented |
 
 ## 1. Assertion JWT
 
@@ -105,7 +106,8 @@ The app is resolved only from `X-Forwarded-Host` (exact, lowercase) against `dep
 | `/_platform/callback?code=` with a valid one-time code bound to this host and to the browser's `__Host-Http-platform_bind` cookie | 302 to the stored `rd` + `Set-Cookie: __Host-Http-platform_app`, `Referrer-Policy: no-referrer` |
 | No or invalid app cookie, navigation (`GET`/`HEAD` + HTML signals) | 302 to `https://auth.apps.<domain>/login?rd=<original url>&bind=<hash>` + `Set-Cookie: __Host-Http-platform_bind` (short-lived random value) |
 | No or invalid app cookie, API/XHR | 401 |
-| Authenticated, no access to the app | 403 (HTML for navigation, JSON for API) |
+| Host belongs to the portal app (`PLATFORM_PORTAL_APP_ID`, block 6) | 200 + `Platform-Assertion` with empty `roles` for any active user, while the app is active and its initiative is active |
+| Authenticated, no access to the app (no grant, user disabled, app disabled, initiative inactive) | 403 (HTML for navigation, JSON for API) |
 | Authorized | 200 + `Platform-Assertion` |
 | platform-api or database failure | 503; fail closed, never 2xx |
 
@@ -207,17 +209,18 @@ users --< group_members >-- groups
 | `groups`, `group_members` | Internal groups; PK `(group_id, user_id)`. Google Workspace group sync is a later extension |
 | `initiatives` | `key` UNIQUE, `status` |
 | `initiative_roles` | `UNIQUE (initiative_id, key)` and `UNIQUE (initiative_id, id)` (target of the composite FK); `manages_access` flag for delegated administration |
-| `apps` | `id` = `app_<ulid>` (the `aud`); belongs to one initiative |
-| `deployments` | `host` UNIQUE, lowercase; maps a host to an app (an app may have several hosts) |
+| `apps` | `id` = `app_<ulid>` (the `aud`); belongs to one initiative; `status` active/disabled (block 6) |
+| `deployments` | `host` UNIQUE, lowercase; maps a host to an app (an app may have several hosts); `last_seen_at` and last probe result (block 6) |
 | `initiative_access` | Grant: initiative + role + exactly one of user/group (CHECK), optional `expires_at`, `granted_by`, `granted_at`; FK `(initiative_id, role_id)` -> `initiative_roles (initiative_id, id)` |
 | `platform_admins` | Platform-wide administrators, separate from initiative roles |
-| `audit_events` | Admin changes (actor, action, target, before/after jsonb). Append-only: the app role has INSERT and SELECT only |
+| `audit_events` | Admin changes (actor, action, target, before/after jsonb, nullable `initiative_id` for scoping, block 6). Append-only: the app role has INSERT and SELECT only |
 | `access_denials` | Deny decisions, partitioned by month; retention 365 days by dropping partitions |
 
 ### Rules
 
-1. Decision: allow iff the user is active, the host has a deployment, the app's initiative is active, and a non-expired
-   grant exists for the user directly or through a group. `roles` = union of the granted role keys for that initiative.
+1. Decision: allow iff the user is active, the host has a deployment, the app is active, the app's initiative is active,
+   and a non-expired grant exists for the user directly or through a group. `roles` = union of the granted role keys
+   for that initiative. The only exception is the portal app (block 6): any active user, empty `roles`.
 2. Fail closed by construction: no deployment or no grant means deny. Nothing is open by default.
 3. The composite FK makes it impossible to grant a role of initiative A on initiative B.
 4. No pre-provisioning by email: access binds to `google_sub`, which Google never reassigns. Users log in once
@@ -320,3 +323,176 @@ Research notes: Engram `architecture/portal-login-research`.
 - Suspended Workspace users: v1 relies on the local `disabled` flag plus the 8 h session cap. A faster cutoff needs the
   Admin SDK Directory API (`users.get`, scope `admin.directory.user.readonly`, domain-wide delegation granted by a super admin);
   decided later together with the company's offboarding process.
+
+## 6. Portal app: home, administration, observability
+
+The portal is a product adopted by many companies, so nothing here assumes a specific observability stack or VPN.
+Research notes: Engram `architecture/portal-web-stack-research`, `architecture/portal-web-csp-spike`,
+`architecture/portal-contract-admin-security`.
+
+### Shape and process
+
+- One web app, `portal`, on its own host behind the same ForwardAuth: the home ("which apps can I open") for every
+  user, plus administration screens shown according to the caller's permissions. The auth host never serves this UI:
+  an XSS there would compromise the login of every app.
+- Separate process from platform-api: same Go module, binary `cmd/portal`, its own Deployment, host and database role.
+  It never holds the KEK or any signing key.
+- It is an app like any other: registered in `apps`/`deployments` under the reserved initiative `platform`, and it
+  validates the assertion with `sdk/go` (`aud` = its app id). `PLATFORM_PORTAL_APP_ID` tells platform-api which app
+  gets the "any active user" rule (block 2); the id is used instead of a host because hosts can change and be several.
+- JSON API first (`/api/v1/*`, `application/problem+json` errors), web UI on top. The API also replaces
+  `grant.sh`/`revoke.sh`. Permissions are always resolved by the API; the UI only hides what the caller cannot do.
+- Web UI in `platform/web/`: Nuxt 4 with `ssr: false` + `nuxi generate` (and `experimental.entryImportMap: false`),
+  embedded in the Go binary with `embed.FS`, SPA fallback to `200.html`. No Node runtime in production.
+
+### Who administers what
+
+| Action | Platform admin | Initiative manager (holds a role with `manages_access`) |
+|---|---|---|
+| Create, rename, deactivate initiatives | Yes | No |
+| Apps (create, rename, disable) and deployments (add or remove hosts) | Yes | No |
+| Initiative roles (create, delete, `manages_access`) | Yes | No: role keys are part of the app's contract (`roles` claim) |
+| Grants in the initiative (user or group to role, `expires_at`), including `manages_access` roles | Yes | Yes, only in their initiatives |
+| Revoke grants in the initiative | Yes | Yes, except the last `manages_access` grant of the initiative |
+| Groups and members | Yes | No: groups are global, a change affects every initiative |
+| Disable users, revoke their sessions | Yes | No |
+| `platform_admins` | No: CLI or SQL only (bootstrap) | No |
+| Audit log | All | Only events of their initiatives |
+
+A manager can name another manager: they already control every grant of the initiative, so it adds no privilege.
+Roles, groups and hosts are the escalation paths, and they stay with platform admins.
+
+### Authorization of portal calls
+
+1. Identity comes only from the verified assertion (`sub`). Nothing about permissions travels in the assertion:
+   it would be stale for its whole lifetime.
+2. On every request the portal loads the caller's permissions from the database: platform admin or not, and the
+   initiatives where a non-expired grant with `manages_access` exists (directly or through a group).
+3. A pure function `adminz.Decide(subject, action, resource)` (AuthZEN-shaped, like `access.Decide`) answers each
+   call, with table tests. Actions are named `<resource>.<verb>`: `grant.create`, `app.disable`, `audit.list`.
+4. The permission check and the mutation run in the same transaction. The "last manager" rule takes a row lock on
+   the initiative's `manages_access` grants inside that transaction, so two managers revoking each other at the
+   same time cannot leave the initiative without one.
+5. 403 carries no detail about other resources. A resource of an initiative the caller does not manage answers 404,
+   so its existence is not confirmed.
+
+### Request protection (sibling apps are same-site)
+
+Every app lives under the same registrable domain, so `hello.apps.<domain>` and `portal.apps.<domain>` are same-site:
+`SameSite=Lax` cookies travel between them. The defense is same-origin, through Fetch Metadata. CSRF tokens are not
+used; this follows Go's `http.CrossOriginProtection` design and deliberately departs from the OWASP cheat sheet,
+which still suggests tokens as an extra layer.
+
+Middleware order:
+
+1. Recover and request logging.
+2. Read isolation for `/api/*`: reject `Sec-Fetch-Site` values `same-site` and `cross-site` before authenticating,
+   and send `Vary: Sec-Fetch-Dest, Sec-Fetch-Mode, Sec-Fetch-Site`. A missing header is allowed (non-browser client,
+   same choice as Go).
+3. `http.CrossOriginProtection` for non-safe methods. Verified in Go 1.27.2: `same-origin` and `none` pass, any other
+   `Sec-Fetch-Site` is rejected; without it, `Origin` must match `Host` (scheme not compared, so HSTS matters);
+   without both, the request passes.
+4. Mutations accept only `Content-Type: application/json` (parsed with `mime.ParseMediaType`, parameters allowed),
+   otherwise 415. Handlers never call `ParseForm` or `FormValue`.
+
+Response headers on every portal response:
+
+- `Content-Security-Policy: default-src 'none'; script-src 'self' 'sha256-<inline>'; style-src 'self';
+  img-src 'self'; font-src 'self'; connect-src 'self'; form-action 'self' https://auth.apps.<domain>;
+  frame-ancestors 'none'; base-uri 'none'`. At startup the server computes the SHA-256 of every inline script in the
+  embedded HTML (only `window.__NUXT__` remains, and it changes with every build). Hashing whatever is there is safe:
+  the HTML is a build artifact inside the binary and, without SSR, no user data ever reaches it. `form-action`
+  includes the auth host because Chrome applies it to the 303 that follows the logout POST.
+- `Strict-Transport-Security` with `includeSubDomains`, `X-Frame-Options: DENY`, `Cross-Origin-Opener-Policy: same-origin`,
+  `Cross-Origin-Resource-Policy: same-origin`, `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff`.
+- Never any `Access-Control-*` header.
+
+Rules:
+
+- No `GET`/`HEAD`/`OPTIONS` changes state.
+- A future WebSocket validates `Origin` explicitly: its handshake is a GET, which `CrossOriginProtection` skips.
+- The portal reads no cookies at all (Traefik turns the app cookie into the assertion). Any future cookie must use
+  the `__Host-` prefix: siblings can plant cookies on the parent domain.
+- `r.Host` is never rewritten from `X-Forwarded-Host`; Traefik keeps `passHostHeader: true` for the portal route.
+
+Required tests: POST with `Sec-Fetch-Site: same-site` or `cross-site` -> 403; POST with a sibling `Origin` and no
+`Sec-Fetch-Site` -> 403; `text/plain` -> 415; `application/json; charset=utf-8` -> accepted; GET `/api/*` with
+`same-site` -> 403; no response carries `Access-Control-*`; the CSP hash matches the embedded HTML.
+
+### Audit
+
+1. Every mutation writes one `audit_events` row in the same transaction: if the insert fails, the mutation rolls
+   back. (Login and logout audit stays best-effort: a login must not fail because of the audit.)
+2. Each row carries the acting user, `action` (same names as `adminz`), target, `before`/`after` and `initiative_id`
+   when the target belongs to one (NULL for groups, users and other global targets).
+3. Deletions keep the full `before`: revoking a grant deletes the row, removing a deployment deletes the host.
+4. Revoking sessions and disabling users from the portal are audited too, and so are `RevokeUser`/`RevokeApp`
+   from platform-api.
+
+### Data model changes
+
+| Change | Why |
+|---|---|
+| `audit_events.initiative_id uuid NULL` (no FK, like the rest of the table) + index `(initiative_id, occurred_at)` | Managers filter by column instead of parsing jsonb |
+| `apps.status` active/disabled; new decision reason `app_disabled` | Deactivate instead of delete |
+| `deployments.last_seen_at`, `last_probe_at`, `last_probe_status` | Integration health |
+| Role `platform_portal`: CRUD on authorization tables, SELECT+INSERT on `audit_events`, SELECT on `access_denials`, SELECT+DELETE on `sessions` and `app_sessions`; nothing on `signing_keys`, `oauth_flows` or `login_codes` | Least privilege for the admin process |
+
+Deactivate instead of delete: initiatives through `status` (already exists); apps through `status`; a deployment is
+deleted (nothing references it, the audit keeps it); a role is deleted only without grants (the FK already blocks
+it); a group is deleted only when it has no members and no grants. Grants by email resolve to exactly one active
+user: zero or several matches fail (`users.email` is not unique, `google_sub` is the identity).
+
+### API
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/v1/me` | Profile and permissions (platform admin, managed initiatives), so the UI can hide actions |
+| `GET /api/v1/me/apps` | Home: apps the caller can open, with host, initiative and roles |
+| `GET, POST /api/v1/initiatives`; `GET, PATCH /api/v1/initiatives/{id}` | Initiatives (`status`, `name`) |
+| `GET, POST /api/v1/initiatives/{id}/roles`; `PATCH, DELETE /api/v1/roles/{id}` | Roles |
+| `GET, POST /api/v1/initiatives/{id}/apps`; `PATCH /api/v1/apps/{id}` | Apps (`status`, `name`) |
+| `POST /api/v1/apps/{id}/deployments`; `DELETE /api/v1/deployments/{id}` | Hosts |
+| `GET, POST /api/v1/initiatives/{id}/grants`; `DELETE /api/v1/grants/{id}` | Grants (subject by email or group id, role, optional `expires_at` in the future) |
+| `GET, POST /api/v1/groups`; `DELETE /api/v1/groups/{id}`; `POST, DELETE /api/v1/groups/{id}/members` | Groups |
+| `GET /api/v1/users?email=`; `PATCH /api/v1/users/{id}`; `DELETE /api/v1/users/{id}/sessions` | Users (`status`) and session revocation |
+| `GET /api/v1/audit?initiative_id=&cursor=` | Audit log, newest first, keyset pagination |
+| `GET /api/v1/apps/{id}/health` | Integration health |
+
+URLs use ids, never keys. Lists use keyset pagination with an opaque cursor.
+
+### Home
+
+`GET /api/v1/me/apps` is one SQL query that applies exactly the rules of `access.Decide`: active user, active app,
+active initiative, non-expired grant (direct or through a group). Invariant, enforced by a test over the seed data:
+a deployment appears in the home if and only if `/forwardauth` would answer 200 for that user. Internally it has the
+shape of an AuthZEN resource search (subject + action -> resources); no public AuthZEN endpoint is exposed until an
+external consumer needs one.
+
+### Observability
+
+Everything critical works inside the portal, with no external tool; standard outputs feed whatever the adopter runs.
+
+| Layer | Provided |
+|---|---|
+| Audit | `audit_events`, browsable in the portal and scoped by initiative for managers |
+| Integration health (per app) | Orphan hosts (`unknown_host` denials, a host routed by Traefik with no deployment); deployments never seen (`last_seen_at`); apps without grants or without a manager; result of the last probe |
+| Logs | JSON on stdout (already the case), for any collector |
+| Metrics | `/metrics` in Prometheus format on the internal listener of each process: decisions by host and reason, logins by outcome, JWKS fetches, key state |
+| Dashboards and alerts | Optional Grafana dashboards and alert rules versioned in `platform-gitops/`; the local overlay adds Prometheus and Grafana |
+
+- `last_seen_at` is updated by platform-api from authorized requests, aggregated in memory and flushed at most once
+  per minute per deployment; never one write per request.
+- Probe: the portal periodically requests every deployment host through the public entrypoint without cookies and
+  expects a 302 to the auth host. Anything else means the app is reachable without ForwardAuth (for example an
+  IngressRoute without the middleware), the most dangerous failure and one platform-api logs can never show.
+  A matching check belongs in gitops CI.
+
+### Open items
+
+- Non-browser clients (CLI, automation replacing `grant.sh`) have no way to authenticate to the portal API yet:
+  today everything enters through the session cookie.
+- `platform_runtime` still has write access to the authorization tables; once the portal owns administration it
+  can be reduced to what ForwardAuth and login need (JIT users, sessions).
+- Reka UI injects `<style>` in some components: verify each one used against `style-src 'self'`.
+- The probe interval and its alerting threshold are set during implementation.
