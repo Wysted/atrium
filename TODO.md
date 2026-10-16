@@ -29,9 +29,11 @@ Pending work and open questions for the portal platform. Detailed context lives 
   `RevokeUser` / `RevokeApp`. Create the frontend subagents when the web work starts.
 - [ ] **Non-browser clients for the portal API.** CLI and automation have no way to authenticate yet (block 6 open items).
 - [ ] **Flaky test database cleanup.** Under `go test -race ./...` the `DROP DATABASE ... WITH (FORCE)` in
-  `internal/testdb` sometimes exceeds its 30 s timeout (seen 2 of ~6 full runs on 2026-10-15, once across every
-  package at the same instant), failing the test and leaving `platform_test_*` databases behind. Investigate
-  (PostgreSQL I/O stalls under Docker/WSL, checkpoint on drop) before it hides a real failure.
+  `internal/testdb` exceeded its 30 s timeout in 2 of ~6 full runs on 2026-10-15 (once across every package at
+  the same instant). After the migrated-template change (2026-10-15) 10 consecutive full `-race` runs of
+  `platform/api` did not reproduce it and left no `platform_test_*` databases; stale ones (older than 15 min) are now
+  swept at the start of each test binary. Root cause not proven: PostgreSQL requests an immediate checkpoint on every
+  `DROP DATABASE`, so parallel packages queue on checkpoint I/O (Docker/WSL). Keep open until it stays quiet in CI.
 - [ ] **Reduce `platform_runtime`.** Once the portal owns administration, drop its write access to the authorization
   tables except what ForwardAuth and login need.
 - [ ] **Cookie prefix support in Safari.** `__Host-Http-` is enforced by Chrome 140+ and Firefox 143+; revisit Safari.

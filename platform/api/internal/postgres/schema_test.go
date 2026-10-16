@@ -11,12 +11,12 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"platform/api/internal/postgres"
+	"platform/api/internal/testdb"
 )
 
 // pgErrCode extracts the SQLSTATE of err ("" if it is not a PostgreSQL error).
 func pgErrCode(err error) string {
-	var pe *pgconn.PgError
-	if errors.As(err, &pe) {
+	if pe, ok := errors.AsType[*pgconn.PgError](err); ok {
 		return pe.Code
 	}
 	return ""
@@ -243,9 +243,13 @@ func TestAccessDenialsPartitionRange(t *testing.T) {
 
 func TestMigrateIsIdempotent(t *testing.T) {
 	t.Parallel()
-	pool := newTestDB(t)
+	pool := testdb.Empty(t) // from scratch, unlike the migrated template behind newTestDB
 	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
 	defer cancel()
+	first, err := postgres.Migrate(ctx, pool)
+	if err != nil || len(first) == 0 {
+		t.Fatalf("first migrate applied=%v err=%v", first, err)
+	}
 	applied, err := postgres.Migrate(ctx, pool)
 	if err != nil || len(applied) != 0 {
 		t.Fatalf("second migrate applied=%v err=%v", applied, err)

@@ -3,7 +3,9 @@ package postgres
 
 import (
 	"context"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -33,9 +35,8 @@ func NewPool(ctx context.Context) (*pgxpool.Pool, error) {
 	return pgxpool.NewWithConfig(ctx, cfg)
 }
 
-// Migrate applies pending embedded migrations in filename order, each in its own transaction.
-// It returns the versions applied by this call. Concurrent callers are serialized by an advisory lock.
-func Migrate(ctx context.Context, pool *pgxpool.Pool) ([]string, error) {
+// migrationNames lists the embedded migration file names in apply order.
+func migrationNames() ([]string, error) {
 	entries, err := fs.ReadDir(migrationsFS, migrationsDir)
 	if err != nil {
 		return nil, fmt.Errorf("read migrations: %w", err)
@@ -47,6 +48,35 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) ([]string, error) {
 		}
 	}
 	sort.Strings(names)
+	return names, nil
+}
+
+// MigrationsFingerprint returns a hex SHA-256 over the names and bodies of the embedded migrations.
+// Tests use it to name a migrated template database that stays valid until a migration changes.
+func MigrationsFingerprint() (string, error) {
+	names, err := migrationNames()
+	if err != nil {
+		return "", err
+	}
+	h := sha256.New()
+	for _, name := range names {
+		body, err := migrationsFS.ReadFile(path.Join(migrationsDir, name))
+		if err != nil {
+			return "", fmt.Errorf("read migration %s: %w", name, err)
+		}
+		_, _ = fmt.Fprintf(h, "%s\x00%d\x00", name, len(body))
+		h.Write(body)
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// Migrate applies pending embedded migrations in filename order, each in its own transaction.
+// It returns the versions applied by this call. Concurrent callers are serialized by an advisory lock.
+func Migrate(ctx context.Context, pool *pgxpool.Pool) ([]string, error) {
+	names, err := migrationNames()
+	if err != nil {
+		return nil, err
+	}
 
 	conn, err := pool.Acquire(ctx)
 	if err != nil {
@@ -58,7 +88,7 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) ([]string, error) {
 		return nil, fmt.Errorf("lock migrations: %w", err)
 	}
 	defer func() {
-		// Best effort with a fresh context: ctx may already be cancelled.
+		// Best effort with a fresh context: ctx may already be canceled.
 		_, _ = conn.Exec(context.WithoutCancel(ctx), "SELECT pg_advisory_unlock($1)", migrationsLockKey)
 	}()
 
