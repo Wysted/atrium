@@ -18,7 +18,9 @@ const RENAMED = SEED_INITIATIVES[1]
 const MARKER = 'Demo (browser check)'
 // dave = manager of demo only (role "manager" with manages_access); not a platform admin; his only app is hello-a.
 const DAVE = { email: 'dave@example.com', name: 'dave' }
-const NOT_FOUND_TEXT = 'Page not found' // app/error.vue for a client route without a page
+const SMOKE_ROLE = 'smoke-role' // created and deleted on demo by the roles scenario
+const LAST_MANAGER_COPY = 'This is the last active manager of the initiative. Grant another manager first.'
+const NOT_FOUND_TEXT ='Page not found' // app/error.vue for a client route without a page
 
 // Console errors tolerated, by substring, ONLY in the unknown-route scenario. NUXT_E1005 ("Error caught during app
 // initialization") is logged by Nuxt when the 404 of a route without a page is raised while the app is still starting
@@ -312,6 +314,197 @@ try {
   await page.screenshot({ path: `${OUT}/manager-not-found.png`, fullPage: true })
   await checkStyled('/admin/initiatives/<other> (dave)')
   await report('/admin/initiatives/<other> (dave)', { tolerated: ['status of 404'], toleratedRequests: [`${BASE}/api/v1/initiatives/${otherId} HTTP 404`] })
+
+  // ---- 5d-2a: initiative sub-nav, roles, grants. Idempotent: leftovers of an interrupted run are removed first and the
+  // roles/grants of demo are compared (through the API) before and after.
+  console.log('  -- admin: demo sub-nav, roles (create/delete smoke-role, last-manager 409 on manager)')
+  await login(ADMIN.email)
+  await page.goto(`${BASE}/admin/initiatives`)
+  const aTable = page.getByRole('table')
+  await aTable.getByRole('row').nth(1).waitFor({ timeout: DATA_TIMEOUT })
+  const demoId = ((await aTable.getByRole('link', { name: 'Demo', exact: true }).getAttribute('href')) ?? '').split('/').pop()
+  check('demo initiative id captured', !!demoId)
+
+  // API reads/cleanup from inside the page (same-origin, the session cookie): the state is verified through the API, not the UI.
+  const apiCall = (method, path) => page.evaluate(async ([m, p]) => {
+    const r = await fetch(`/api/v1${p}`, { method: m, headers: { Accept: 'application/json', ...(m === 'GET' ? {} : { 'Content-Type': 'application/json' }) } })
+    return { status: r.status, body: r.status === 200 ? await r.json() : null }
+  }, [method, path])
+  const apiAll = async (path, key) => {
+    const items = []
+    let cursor = ''
+    do {
+      const r = await apiCall('GET', `${path}${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`)
+      if (r.status !== 200) throw new Error(`GET ${path} answered ${r.status}`)
+      items.push(...r.body[key])
+      cursor = r.body.next_cursor ?? ''
+    } while (cursor)
+    return items
+  }
+  const snapshot = async () => JSON.stringify({
+    roles: (await apiAll(`/initiatives/${demoId}/roles`, 'roles')).map((r) => `${r.key}:${r.manages_access}`).sort(),
+    grants: (await apiAll(`/initiatives/${demoId}/grants`, 'grants')).map((g) => `${g.user ? g.user.email : `group:${g.group.key}`}|${g.role.key}|${g.expires_at ?? 'never'}`).sort(),
+  })
+  for (const g of (await apiAll(`/initiatives/${demoId}/grants`, 'grants')).filter((g) => g.user?.email === CAROL.email)) await apiCall('DELETE', `/grants/${g.id}`)
+  for (const r of (await apiAll(`/initiatives/${demoId}/roles`, 'roles')).filter((r) => r.key === SMOKE_ROLE)) await apiCall('DELETE', `/roles/${r.id}`)
+  const startState = await snapshot()
+  console.log(`  (demo roles/grants at start: ${startState})`)
+  const managerRole = (await apiAll(`/initiatives/${demoId}/roles`, 'roles')).find((r) => r.key === 'manager')
+  check('seed: role "manager" exists on demo', !!managerRole)
+
+  reset()
+  const docs = []
+  page.on('request', (r) => { if (r.resourceType() === 'document') docs.push(new URL(r.url()).pathname) })
+  await aTable.getByRole('link', { name: 'Demo', exact: true }).click()
+  await page.getByRole('heading', { level: 1, name: 'Demo', exact: true }).waitFor({ timeout: DATA_TIMEOUT })
+  await page.evaluate(() => { window.__spa = 'alive' })
+  docs.length = 0
+  const subnav = page.getByRole('navigation', { name: 'Initiative', exact: true })
+  const currentLinks = async () => subnav.locator('[aria-current=page]').allInnerTexts()
+  check('sub-nav: links Overview, Grants, Roles', JSON.stringify(await subnav.getByRole('link').allInnerTexts().then((t) => t.map((s) => s.trim()))) === JSON.stringify(['Overview', 'Grants', 'Roles']))
+  check('sub-nav: Overview is current at /admin/initiatives/<id>', JSON.stringify(await currentLinks()) === '["Overview"]', JSON.stringify(await currentLinks()))
+  for (const [name, suffix] of [['Grants', '/grants'], ['Roles', '/roles'], ['Overview', '']]) {
+    await subnav.getByRole('link', { name, exact: true }).click()
+    await page.waitForURL(`${BASE}/admin/initiatives/${demoId}${suffix}`, { timeout: DATA_TIMEOUT })
+    await page.getByRole('heading', { level: 2, name: suffix ? name : 'Overview', exact: true }).waitFor({ timeout: DATA_TIMEOUT })
+    check(`sub-nav: ${name} -> ${suffix || '(overview)'} with aria-current on ${name} only`, JSON.stringify(await currentLinks()) === JSON.stringify([name]), JSON.stringify(await currentLinks()))
+  }
+  check('sub-nav: client-side (no document request, JS context alive)', docs.length === 0 && (await page.evaluate(() => window.__spa)) === 'alive', JSON.stringify(docs))
+  await report('sub-nav (admin)')
+
+  reset()
+  await subnav.getByRole('link', { name: 'Roles', exact: true }).click()
+  const rolesTable = page.getByRole('table')
+  const roleRow = (key) => rolesTable.getByRole('row').filter({ has: page.locator('code', { hasText: new RegExp(`^${key}$`) }) })
+  await roleRow('manager').waitFor({ timeout: DATA_TIMEOUT })
+  for (const k of ['viewer', 'editor', 'manager']) check(`roles: "${k}" listed once`, (await roleRow(k).count()) === 1, String(await roleRow(k).count()))
+  check('roles: "manager" has the Manages access badge', (await roleRow('manager').innerText()).includes('Manages access'))
+  check('roles: "viewer" and "editor" have no Manages access badge', !(await roleRow('viewer').innerText()).includes('Manages access') && !(await roleRow('editor').innerText()).includes('Manages access'))
+  await page.screenshot({ path: `${OUT}/roles.png`, fullPage: true })
+  await checkStyled('roles (admin)')
+  await report('roles (admin)')
+
+  console.log('  -- admin: create smoke-role, delete it behind a confirmation')
+  reset()
+  await page.getByRole('button', { name: 'New role', exact: true }).click()
+  const rDlg = page.getByRole('dialog')
+  await rDlg.waitFor({ timeout: DATA_TIMEOUT })
+  check('new role dialog: initial focus is the Key input', await rDlg.getByRole('textbox', { name: /^Key/ }).evaluate((el) => el === document.activeElement))
+  check('new role dialog: "Manages access" unchecked by default', !(await rDlg.getByRole('checkbox', { name: /Manages access/ }).isChecked()))
+  await rDlg.getByRole('textbox', { name: /^Key/ }).fill(SMOKE_ROLE)
+  await rDlg.getByRole('button', { name: 'Create role', exact: true }).click()
+  await rDlg.waitFor({ state: 'detached', timeout: DATA_TIMEOUT })
+  await roleRow(SMOKE_ROLE).waitFor({ timeout: DATA_TIMEOUT })
+  check(`roles: "${SMOKE_ROLE}" appears without management`, (await roleRow(SMOKE_ROLE).innerText()).includes('No management'))
+  await report('create role (admin)')
+  reset()
+  await page.getByRole('button', { name: `Delete role ${SMOKE_ROLE}`, exact: true }).click()
+  const dAlert = page.getByRole('alertdialog')
+  await dAlert.waitFor({ timeout: DATA_TIMEOUT })
+  await dAlert.getByRole('button', { name: 'Delete role', exact: true }).click()
+  await dAlert.waitFor({ state: 'detached', timeout: DATA_TIMEOUT })
+  await roleRow(SMOKE_ROLE).waitFor({ state: 'detached', timeout: DATA_TIMEOUT })
+  check(`roles: "${SMOKE_ROLE}" gone after the confirmed delete`, (await roleRow(SMOKE_ROLE).count()) === 0)
+  await report('delete role (admin)')
+
+  console.log('  -- admin: turning OFF manages_access on "manager" -> last-manager 409, badge stays')
+  reset()
+  await page.getByRole('button', { name: 'Remove management from role manager', exact: true }).click()
+  await dAlert.waitFor({ timeout: DATA_TIMEOUT })
+  await dAlert.getByRole('button', { name: 'Remove management', exact: true }).click()
+  await dAlert.getByText(LAST_MANAGER_COPY).waitFor({ timeout: DATA_TIMEOUT })
+  check('manager toggle: the last-manager copy is shown in the dialog', true)
+  const managerPatch = `${BASE}/api/v1/roles/${managerRole?.id} HTTP 409`
+  check('manager toggle: the API answered 409 on that role', failedRequests.includes(managerPatch), JSON.stringify(failedRequests))
+  await report('manager toggle 409', { tolerated: ['status of 409'], toleratedRequests: [managerPatch] })
+  reset()
+  await dAlert.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await dAlert.waitFor({ state: 'detached', timeout: DATA_TIMEOUT })
+  check('manager toggle: the badge stays on "manager"', (await roleRow('manager').innerText()).includes('Manages access'))
+  check('manager toggle: manages_access still true in the API', (await apiAll(`/initiatives/${demoId}/roles`, 'roles')).some((r) => r.key === 'manager' && r.manages_access))
+  await report('manager toggle (after cancel)')
+
+  console.log('  -- dave (manager of demo): grants create/revoke, last-manager 409, roles read-only')
+  await login(DAVE.email)
+  await page.goto(`${BASE}/admin/initiatives/${demoId}/grants`)
+  const gRow = (text) => page.getByRole('table').getByRole('row').filter({ hasText: text })
+  await gRow('dave@example.com').first().waitFor({ timeout: DATA_TIMEOUT })
+  check('dave grants: sub-nav current is Grants', JSON.stringify(await page.getByRole('navigation', { name: 'Initiative', exact: true }).locator('[aria-current=page]').allInnerTexts()) === '["Grants"]')
+  for (const who of ['dave@example.com', 'alice@example.com', 'demo-editors']) check(`dave grants: "${who}" listed`, (await gRow(who).count()) >= 1)
+  check('dave grants: carol has no grant', (await gRow(CAROL.email).count()) === 0)
+  await report('grants (dave)')
+
+  reset()
+  const grantTrigger = page.getByRole('button', { name: 'Grant access', exact: true })
+  await grantTrigger.click()
+  const gDlg = page.getByRole('dialog')
+  await gDlg.waitFor({ timeout: DATA_TIMEOUT })
+  check('grant dialog: initial focus is the first field ("Grant to")', await gDlg.getByLabel('Grant to').evaluate((el) => el === document.activeElement))
+  await gDlg.getByLabel(/^Role/).locator('option', { hasText: 'viewer' }).waitFor({ state: 'attached', timeout: DATA_TIMEOUT })
+  await page.screenshot({ path: `${OUT}/grants-dialog.png`, fullPage: true })
+  await report('grant dialog (open)')
+  await page.keyboard.press('Escape')
+  await gDlg.waitFor({ state: 'detached', timeout: DATA_TIMEOUT })
+  check('grant dialog: Escape returns focus to the trigger', await grantTrigger.evaluate((el) => el === document.activeElement))
+  await report('grant dialog (closed)')
+
+  reset()
+  await grantTrigger.click()
+  await gDlg.waitFor({ timeout: DATA_TIMEOUT })
+  await gDlg.getByLabel(/^Email/).fill(CAROL.email)
+  await gDlg.getByLabel(/^Role/).selectOption({ label: 'viewer' })
+  await gDlg.getByRole('button', { name: 'Grant access', exact: true }).click()
+  await gDlg.waitFor({ state: 'detached', timeout: DATA_TIMEOUT })
+  await gRow(CAROL.email).waitFor({ timeout: DATA_TIMEOUT })
+  const carolText = await gRow(CAROL.email).innerText()
+  check('grants: carol viewer appears with no expiry', carolText.includes('viewer') && carolText.includes('Never'), JSON.stringify(carolText))
+  await report('create grant (dave)')
+  reset()
+  await page.getByRole('button', { name: `Revoke viewer from ${CAROL.email}`, exact: true }).click()
+  const gAlert = page.getByRole('alertdialog')
+  await gAlert.waitFor({ timeout: DATA_TIMEOUT })
+  await gAlert.getByRole('button', { name: 'Revoke', exact: true }).click()
+  await gAlert.waitFor({ state: 'detached', timeout: DATA_TIMEOUT })
+  await gRow(CAROL.email).waitFor({ state: 'detached', timeout: DATA_TIMEOUT })
+  check('grants: carol viewer gone after the confirmed revoke', (await gRow(CAROL.email).count()) === 0)
+  await report('revoke grant (dave)')
+
+  reset()
+  const daveGrant = (await apiAll(`/initiatives/${demoId}/grants`, 'grants')).find((g) => g.user?.email === DAVE.email && g.role.key === 'manager')
+  check('dave own manager grant found through the API', !!daveGrant)
+  reset()
+  await page.getByRole('button', { name: `Revoke manager from ${DAVE.email}`, exact: true }).click()
+  await gAlert.waitFor({ timeout: DATA_TIMEOUT })
+  await gAlert.getByRole('button', { name: 'Revoke', exact: true }).click()
+  await gAlert.getByText(LAST_MANAGER_COPY).waitFor({ timeout: DATA_TIMEOUT })
+  check('dave own revoke: the last-manager copy is shown', true)
+  const grantDelete = `${BASE}/api/v1/grants/${daveGrant?.id} HTTP 409`
+  check('dave own revoke: the API answered 409 on that grant', failedRequests.includes(grantDelete), JSON.stringify(failedRequests))
+  await report('dave own revoke 409', { tolerated: ['status of 409'], toleratedRequests: [grantDelete] })
+  reset()
+  await gAlert.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await gAlert.waitFor({ state: 'detached', timeout: DATA_TIMEOUT })
+  check('dave own revoke: the grant is still listed', (await gRow(DAVE.email).count()) >= 1)
+  await report('dave own revoke (after cancel)')
+
+  reset()
+  await page.getByRole('navigation', { name: 'Initiative', exact: true }).getByRole('link', { name: 'Roles', exact: true }).click()
+  await page.waitForURL(`${BASE}/admin/initiatives/${demoId}/roles`, { timeout: DATA_TIMEOUT })
+  await page.getByRole('heading', { level: 2, name: 'Roles', exact: true }).waitFor({ timeout: DATA_TIMEOUT })
+  await page.getByRole('table').getByRole('row').filter({ has: page.locator('code', { hasText: /^manager$/ }) }).waitFor({ timeout: DATA_TIMEOUT })
+  for (const k of ['viewer', 'editor', 'manager']) check(`dave roles: "${k}" listed`, (await page.locator('code', { hasText: new RegExp(`^${k}$`) }).count()) === 1)
+  check('dave roles: no "New role" button', (await page.getByRole('button', { name: 'New role' }).count()) === 0)
+  check('dave roles: no Allow/Remove management toggles', (await page.getByRole('button', { name: /management/i }).count()) === 0)
+  check('dave roles: no Delete buttons', (await page.getByRole('button', { name: /^Delete/ }).count()) === 0)
+  check('dave roles: read-only notice', (await bodyText()).includes('Only platform administrators change roles'))
+  await report('roles (dave)')
+
+  console.log('  -- admin: demo roles and grants equal the starting set')
+  await login(ADMIN.email)
+  await page.goto(`${BASE}/admin/initiatives`)
+  await page.getByRole('table').getByRole('row').nth(1).waitFor({ timeout: DATA_TIMEOUT })
+  const endState = await snapshot()
+  check('demo roles and grants (API) equal the starting set', endState === startState, `${startState} != ${endState}`)
 } catch (e) {
   fail(`browser scenario aborted: ${e.message.split('\n')[0]} (url ${page.url().split('?')[0]})`)
   await page.screenshot({ path: `${OUT}/aborted.png` }).catch(() => {})
