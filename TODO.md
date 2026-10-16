@@ -22,7 +22,15 @@ Pending work and open questions for the portal platform. Detailed context lives 
 
 ## Next features
 
-- [ ] **Administration panel.** Manage initiatives, apps, deployments, roles, groups and grants, and browse the
+- [ ] **Administration panel (next).** Manage initiatives, apps, deployments, roles, groups and grants, and browse the
   audit log. Today this is done with `platform-gitops/overlays/local-google/grant.sh`, `revoke.sh` and SQL.
+  Define its contract before writing code (new block in `platform/docs/contract.md`), answering:
+  - Who administers what: platform admins (`platform_admins`) vs initiative owners (`initiative_roles.manages_access`),
+    and which actions each one can take.
+  - Shape: JSON API only, or API + web UI (`platform/web/`, React + Vite), and on which host (the auth host or a
+    dedicated admin app behind the same ForwardAuth).
+  - Authorization of admin calls: reuse the assertion and AuthZEN-shaped decision, CSRF protection for mutations.
+  - Every mutation writes `audit_events` with the acting user; grants by email only for users that already exist.
+  - Portal home ("which apps can I open"): AuthZEN `search/resource` over the same model.
 - [ ] **Audit for `RevokeUser` / `RevokeApp`.** Only login, logout and session replacement are audited today.
 - [ ] **Cookie prefix support in Safari.** `__Host-Http-` is enforced by Chrome 140+ and Firefox 143+; revisit Safari.
