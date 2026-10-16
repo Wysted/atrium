@@ -1,0 +1,35 @@
+# Real Google login for platform-api. Reuses overlays/local (domain, hosts, middlewares) and layers:
+#   - the new image tag (forces a clean rollout),
+#   - the client secret mounted as a Secret (fsGroup + 0440, same policy as the KEK),
+#   - Google env vars and PLATFORM_FAKE_LOGIN=false,
+#   - an egress NetworkPolicy to the public internet on TCP 443 (see ../../README.md for the tradeoff).
+# The Secret platform/platform-google-client-secret (key: secret) is created by up.sh with --from-file.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../local/platform
+  - networkpolicy-egress-google.yaml
+images:
+  - name: portal-platform-api
+    newTag: dev-google
+patches:
+  - target: {kind: Deployment, name: platform-api}
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata: {name: platform-api}
+      spec:
+        template:
+          spec:
+            containers:
+              - name: platform-api
+                env:
+                  - {name: PLATFORM_FAKE_LOGIN, value: "false"}
+                  - {name: PLATFORM_GOOGLE_CLIENT_ID, value: your-client-id.apps.googleusercontent.com}
+                  - {name: PLATFORM_GOOGLE_CLIENT_SECRET_FILE, value: /etc/platform/google/secret}
+                  - {name: PLATFORM_ALLOWED_HD, value: wysted.dev}
+                volumeMounts:
+                  - {name: google-client-secret, mountPath: /etc/platform/google, readOnly: true}
+            volumes:
+              - name: google-client-secret
+                secret: {secretName: platform-google-client-secret, defaultMode: 0440}
