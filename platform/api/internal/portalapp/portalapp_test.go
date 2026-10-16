@@ -119,6 +119,9 @@ type call struct {
 	body         string
 }
 
+// recorder is the response type of the helpers.
+type recorder = httptest.ResponseRecorder
+
 func (s *stack) public(c call) *httptest.ResponseRecorder {
 	s.t.Helper()
 	r := httptest.NewRequestWithContext(s.t.Context(), c.method, "https://"+portalHost+c.path, strings.NewReader(c.body))

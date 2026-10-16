@@ -225,7 +225,8 @@ var rules = map[Action]rule{
 //     anyone else is forbidden. AuditList with Resource.InitiativeID set is a filter: allowed to admins and to
 //     managers of that initiative with that single initiative as scope, and not_found for anyone else.
 //     GroupList (id, key, name only; groups are global): admins and managers see All, anyone else is forbidden.
-//     Member listings (GroupMemberList) are a plain admin-only action.
+//     GrantList lists one initiative: allowed to admins and to its managers with that initiative as scope.
+//     The admin-only listings of global data (GroupMemberList, UserList) answer Scope All to admins.
 //  3. An action on an initiative-scoped resource needs Resource.InitiativeID (otherwise forbidden, even for
 //     admins: the caller forgot to resolve the owner). A caller who is neither platform admin nor manager of
 //     that initiative gets not_found, whatever the action, so the resource's existence is not confirmed.
@@ -258,13 +259,24 @@ func Decide(subject Subject, action Action, resource Resource) Decision {
 		return Decision{Outcome: Forbidden, Reason: ReasonUnknownAction}
 	}
 	if r.scope == scopeGlobal {
-		if subject.PlatformAdmin {
-			return Decision{Outcome: Allow, Reason: ReasonPlatformAdmin}
+		if !subject.PlatformAdmin {
+			return Decision{Outcome: Forbidden, Reason: ReasonAdminOnly}
 		}
-		return Decision{Outcome: Forbidden, Reason: ReasonAdminOnly}
+		d := Decision{Outcome: Allow, Reason: ReasonPlatformAdmin}
+		if globalListings[action] {
+			d.Scope = Scope{All: true}
+		}
+		return d
 	}
-	return decideInitiative(subject, r, resource)
+	d := decideInitiative(subject, r, resource)
+	if d.Outcome == Allow && action == GrantList {
+		d.Scope = Scope{Initiatives: []string{resource.InitiativeID}}
+	}
+	return d
 }
+
+// globalListings are the admin-only listings of global data: allowed, they answer with Scope All.
+var globalListings = map[Action]bool{GroupMemberList: true, UserList: true}
 
 // decideListing answers a listing. globalForManagers: managers see everything (the listed data is global and
 // harmless, like group names); otherwise they see only their initiatives.

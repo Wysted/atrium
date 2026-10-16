@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"strings"
 	"time"
 
 	"platform/api/internal/httpx"
@@ -32,6 +33,8 @@ type Service interface {
 // Config describes the public handler of the portal.
 type Config struct {
 	Service Service
+	// Admin serves the administration endpoints (grants, groups, users, audit).
+	Admin AdminService
 	// Auth wraps a handler with the validation of the Platform-Assertion (the SDK middleware in production).
 	// It must put the verified claims in the request context (platformauth.ClaimsFrom).
 	Auth func(http.Handler) http.Handler
@@ -51,18 +54,19 @@ type Config struct {
 // The guards run before authentication on purpose: a cross-site request is rejected without learning
 // whether it carried a valid assertion.
 func New(cfg Config) (http.Handler, error) {
-	if cfg.Service == nil || cfg.Auth == nil {
-		return nil, errors.New("portalhttp: service and auth are required")
+	if cfg.Service == nil || cfg.Admin == nil || cfg.Auth == nil {
+		return nil, errors.New("portalhttp: service, admin service and auth are required")
 	}
 	log := cfg.Logger
 	if log == nil {
 		log = slog.Default()
 	}
-	a := &api{svc: cfg.Service, log: log}
+	a := &api{svc: cfg.Service, admin: cfg.Admin, log: log}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET "+PathMe, a.me)
 	mux.HandleFunc("GET "+PathMeApps, a.apps)
+	a.adminRoutes(mux)
 	mux.HandleFunc(apiPrefix, notFound) // unknown API routes and methods: JSON, never the web UI
 	web := cfg.Web
 	if web == nil {
@@ -90,8 +94,9 @@ func notFound(w http.ResponseWriter, _ *http.Request) {
 }
 
 type api struct {
-	svc Service
-	log *slog.Logger
+	svc   Service
+	admin AdminService
+	log   *slog.Logger
 }
 
 // caller returns the user id of the verified assertion. The id is the only thing read from it.
@@ -101,7 +106,7 @@ func (a *api) caller(w http.ResponseWriter, r *http.Request) (string, bool) {
 		httpx.WriteProblem(w, httpx.Problem{Status: http.StatusUnauthorized})
 		return "", false
 	}
-	return claims.Subject, true
+	return strings.ToLower(claims.Subject), true
 }
 
 // fail maps an error of a use case to a problem document without leaking internals; the cause goes to the log.
@@ -109,6 +114,18 @@ func (a *api) fail(w http.ResponseWriter, r *http.Request, op string, err error)
 	switch {
 	case errors.Is(err, portal.ErrUserInactive):
 		httpx.WriteProblem(w, httpx.Problem{Status: http.StatusForbidden})
+	case errors.Is(err, portal.ErrForbidden):
+		httpx.WriteProblem(w, httpx.Problem{Status: http.StatusForbidden})
+	case errors.Is(err, portal.ErrNotFound):
+		httpx.WriteProblem(w, httpx.Problem{Status: http.StatusNotFound})
+	case errors.Is(err, portal.ErrInvalidCursor):
+		httpx.WriteProblem(w, httpx.Problem{Status: http.StatusBadRequest, Detail: detailCursorInvalid})
+	case isConflict(err):
+		conflict, _ := errors.AsType[*portal.Conflict](err)
+		httpx.WriteProblem(w, httpx.Problem{Status: http.StatusConflict, Detail: conflict.Detail})
+	case isValidation(err):
+		v, _ := errors.AsType[*portal.ValidationError](err)
+		writeValidation(w, v.Problems)
 	case errors.Is(err, portal.ErrContention):
 		a.log.Warn("request lost to contention", "op", op, "path", r.URL.Path, "error", err.Error())
 		w.Header().Set("Retry-After", retryAfterSeconds)
@@ -120,6 +137,31 @@ func (a *api) fail(w http.ResponseWriter, r *http.Request, op string, err error)
 		a.log.Error("request failed", "op", op, "path", r.URL.Path, "error", err.Error())
 		httpx.WriteProblem(w, httpx.Problem{Status: http.StatusInternalServerError})
 	}
+}
+
+func isConflict(err error) bool {
+	_, ok := errors.AsType[*portal.Conflict](err)
+	return ok
+}
+
+func isValidation(err error) bool {
+	_, ok := errors.AsType[*portal.ValidationError](err)
+	return ok
+}
+
+// Fixed details of the problem documents of the administration endpoints.
+const (
+	detailCursorInvalid    = "the cursor is not valid"
+	detailValidationFailed = "the request has invalid fields"
+)
+
+// writeValidation answers 422 with the invalid field names and fixed codes; never the input values.
+func writeValidation(w http.ResponseWriter, problems []portal.FieldProblem) {
+	errs := make([]httpx.FieldError, 0, len(problems))
+	for _, p := range problems {
+		errs = append(errs, httpx.FieldError{Field: p.Field, Code: p.Code})
+	}
+	httpx.WriteProblem(w, httpx.Problem{Status: http.StatusUnprocessableEntity, Detail: detailValidationFailed, Errors: errs})
 }
 
 // retryAfterSeconds is the Retry-After of a 503 caused by contention: the competing transaction is short.

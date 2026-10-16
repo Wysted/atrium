@@ -18,8 +18,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"platform/api/internal/adminz"
+	"platform/api/internal/audit"
 )
 
 // ErrUserInactive means the caller does not exist or is disabled. The assertion outlives a disable by up to
@@ -98,6 +100,12 @@ type HomeReader interface {
 // the context: whatever runs inside WithTx goes through the Tx it was handed.
 type Tx interface {
 	Permissions() PermissionsReader
+	Grants() GrantRepo
+	Groups() GroupRepo
+	Users() UserRepo
+	// Audit appends to the audit log inside the transaction: if the insert fails the mutation rolls back.
+	Audit() audit.Recorder
+	AuditLog() AuditReader
 }
 
 // Store runs units of work. fn may run more than once (the store retries deadlocks and serialization
@@ -110,24 +118,36 @@ type Store interface {
 type Config struct {
 	Permissions PermissionsReader
 	Home        HomeReader
+	// Store runs the units of work of the administration use cases.
+	Store Store
 	// PortalAppID is the id of the portal app (hidden from the home: every user may open it, it is not one of
 	// "their" apps). Empty means there is none.
 	PortalAppID string
+	// Now is the clock for "expires_at must be in the future"; nil means time.Now.
+	Now func() time.Time
 }
 
 // Service implements the use cases of the portal API.
 type Service struct {
 	permissions PermissionsReader
 	home        HomeReader
+	store       Store
 	portalAppID string
+	now         func() time.Time
 }
 
 // NewService builds a Service.
 func NewService(cfg Config) (*Service, error) {
-	if cfg.Permissions == nil || cfg.Home == nil {
-		return nil, errors.New("portal: permissions and home readers are required")
+	if cfg.Permissions == nil || cfg.Home == nil || cfg.Store == nil {
+		return nil, errors.New("portal: permissions and home readers and a store are required")
 	}
-	return &Service{permissions: cfg.Permissions, home: cfg.Home, portalAppID: cfg.PortalAppID}, nil
+	now := cfg.Now
+	if now == nil {
+		now = time.Now
+	}
+	return &Service{
+		permissions: cfg.Permissions, home: cfg.Home, store: cfg.Store, portalAppID: cfg.PortalAppID, now: now,
+	}, nil
 }
 
 // Me returns the profile and permissions of the caller. It fails with ErrUserInactive for an unknown or

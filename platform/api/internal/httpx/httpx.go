@@ -46,6 +46,15 @@ type Problem struct {
 	Status   int    `json:"status"`
 	Detail   string `json:"detail,omitempty"`
 	LoginURL string `json:"login_url,omitempty"`
+	// Errors lists the invalid request fields of a validation problem (422). Codes are fixed texts; the input
+	// itself is never echoed.
+	Errors []FieldError `json:"errors,omitempty"`
+}
+
+// FieldError is one invalid request field of a validation problem.
+type FieldError struct {
+	Field string `json:"field"`
+	Code  string `json:"code"`
 }
 
 // WriteProblem writes p as application/problem+json with p.Status.

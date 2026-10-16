@@ -361,11 +361,36 @@ Research notes: Engram `architecture/portal-web-stack-research`, `architecture/p
 | Apps (create, rename, disable) and deployments (add or remove hosts) | Yes | No |
 | Initiative roles (create, delete, `manages_access`) | Yes | No: role keys are part of the app's contract (`roles` claim) |
 | Grants in the initiative (user or group to role, `expires_at`), including `manages_access` roles | Yes | Yes, only in their initiatives |
-| Revoke grants in the initiative | Yes | Yes, except the last `manages_access` grant of the initiative |
+| Revoke grants in the initiative | Yes, except the last effective `manages_access` grant (last-manager rule below) | Same exception |
 | Groups and members | Yes | List groups only (id, key, name; never members), to grant access to a group. No changes: groups are global, a change affects every initiative |
-| Disable users, revoke their sessions | Yes | No |
+| Disable users, revoke their sessions | Yes (never themselves, never the last active platform admin) | No |
 | `platform_admins` | No: CLI or SQL only (bootstrap) | No |
 | Audit log | All | Only events of their initiatives |
+
+Administration rules, enforced inside the mutation's transaction:
+
+- **Last effective manager.** A `manages_access` grant is *effective* when it is not expired and its subject has at
+   least one active user: the grant's own user is active, or the group has at least one active member. A disabled
+   user is no manager (the portal refuses them), so grants held only by disabled users do not keep an initiative
+   managed. Revoking an effective `manages_access` grant fails with 409 if no other effective one remains in the
+   initiative; revoking a grant that is not effective is always allowed. It applies to platform admins too: an
+   initiative is decommissioned by deactivating it, never by removing its managers (an admin who needs to replace
+   the managers grants first and revokes afterwards). It is enforced on revocation only: removing a group member or
+   disabling a user can still leave an initiative without an effective manager, and a platform admin repairs it.
+- **Lockout guards.** Disabling yourself fails with 409. Disabling a user never leaves zero active platform admins
+   (409; two admins disabling each other at the same time cannot both succeed). Part 2b-2 adds the same kind of guard
+   for the `platform` initiative (cannot be deactivated nor change key), the portal app (cannot be disabled) and its
+   last deployment (cannot be removed).
+- **Lock order.** Grant revocation locks the initiative row (`FOR NO KEY UPDATE`) and then the initiative's
+   `manages_access` grants ordered by id; grant creation takes the initiative row `FOR SHARE` first and reads the
+   caller's permissions again, so a manager revoked a moment ago cannot finish an in-flight POST. Disabling a user
+   locks the active platform admins ordered by id (`FOR NO KEY UPDATE`), then the target. No path takes explicit
+   locks of both families. Inserts that reference `users` (grants, group members) take implicit `KEY SHARE` locks
+   through their foreign keys, which never conflict with `FOR NO KEY UPDATE`: that compatibility is what rules out a
+   cycle, so locks on `users` must never be raised to `FOR UPDATE`.
+- **Accepted by design.** Audit `before`/`after` keep emails (the security log must stay readable after a user
+   changes), and granting by email lets a manager learn that an email is a unique active user (inherent to naming
+   people by email).
 
 A manager can name another manager: they already control every grant of the initiative, so it adds no privilege.
 Roles, groups and hosts are the escalation paths, and they stay with platform admins.
@@ -464,7 +489,7 @@ user: zero or several matches fail (`users.email` is not unique, `google_sub` is
 | `GET, POST /api/v1/initiatives/{id}/apps`; `PATCH /api/v1/apps/{id}` | Apps (`status`, `name`) |
 | `POST /api/v1/apps/{id}/deployments`; `DELETE /api/v1/deployments/{id}` | Hosts |
 | `GET, POST /api/v1/initiatives/{id}/grants`; `DELETE /api/v1/grants/{id}` | Grants (subject by email or group id, role, optional `expires_at` in the future) |
-| `GET, POST /api/v1/groups`; `DELETE /api/v1/groups/{id}`; `GET, POST, DELETE /api/v1/groups/{id}/members` | Groups (members: platform admins only) |
+| `GET, POST /api/v1/groups`; `DELETE /api/v1/groups/{id}`; `GET, POST /api/v1/groups/{id}/members`; `DELETE /api/v1/groups/{id}/members/{user_id}` | Groups (members: platform admins only) |
 | `GET /api/v1/users?email=`; `PATCH /api/v1/users/{id}`; `DELETE /api/v1/users/{id}/sessions` | Users (`status`) and session revocation |
 | `GET /api/v1/audit?initiative_id=&cursor=` | Audit log, newest first, keyset pagination |
 | `GET /api/v1/apps/{id}/health` | Integration health |

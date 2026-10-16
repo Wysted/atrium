@@ -65,9 +65,11 @@ func New(cfg Config) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create assertion verifier: %w", err)
 	}
+	store := postgres.NewPortalStore(cfg.Pool)
 	svc, err := portal.NewService(portal.Config{
 		Permissions: postgres.NewPermissionsRepo(cfg.Pool),
 		Home:        postgres.NewHomeRepo(cfg.Pool),
+		Store:       store,
 		PortalAppID: cfg.AppID,
 	})
 	if err != nil {
@@ -75,6 +77,7 @@ func New(cfg Config) (*App, error) {
 	}
 	public, err := portalhttp.New(portalhttp.Config{
 		Service: svc,
+		Admin:   svc,
 		Auth: func(next http.Handler) http.Handler {
 			validate := verifier.MiddlewareWithLogger(log, next)
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -100,6 +103,6 @@ func New(cfg Config) (*App, error) {
 	return &App{
 		Public:   public,
 		Internal: httpx.Recover(log, internal),
-		Store:    postgres.NewPortalStore(cfg.Pool),
+		Store:    store,
 	}, nil
 }

@@ -32,13 +32,23 @@ func (f fakeHome) HomeApps(_ context.Context, _, excludeAppID string) ([]portal.
 	return f.apps, f.err
 }
 
-func TestNewServiceRequiresReaders(t *testing.T) {
+// fakeStore satisfies portal.Store for tests that never open a unit of work.
+type fakeStore struct{}
+
+func (fakeStore) WithTx(context.Context, func(portal.Tx) error) error {
+	return errors.New("unexpected unit of work")
+}
+
+func TestNewServiceRequiresReadersAndStore(t *testing.T) {
 	t.Parallel()
-	if _, err := portal.NewService(portal.Config{Permissions: fakePermissions{}}); err == nil {
+	if _, err := portal.NewService(portal.Config{Permissions: fakePermissions{}, Store: fakeStore{}}); err == nil {
 		t.Fatal("accepted a missing home reader")
 	}
-	if _, err := portal.NewService(portal.Config{Home: fakeHome{}}); err == nil {
+	if _, err := portal.NewService(portal.Config{Home: fakeHome{}, Store: fakeStore{}}); err == nil {
 		t.Fatal("accepted a missing permissions reader")
+	}
+	if _, err := portal.NewService(portal.Config{Permissions: fakePermissions{}, Home: fakeHome{}}); err == nil {
+		t.Fatal("accepted a missing store")
 	}
 }
 
@@ -58,7 +68,7 @@ func TestMe(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			svc, err := portal.NewService(portal.Config{Permissions: tt.reader, Home: fakeHome{}})
+			svc, err := portal.NewService(portal.Config{Permissions: tt.reader, Home: fakeHome{}, Store: fakeStore{}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -78,7 +88,7 @@ func TestHomeAppsExcludesThePortalApp(t *testing.T) {
 	var excluded string
 	want := []portal.HomeApp{{ID: "app_1"}}
 	svc, err := portal.NewService(portal.Config{
-		Permissions: fakePermissions{}, Home: fakeHome{apps: want, exclude: &excluded}, PortalAppID: "app_portal",
+		Permissions: fakePermissions{}, Home: fakeHome{apps: want, exclude: &excluded}, Store: fakeStore{}, PortalAppID: "app_portal",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -89,7 +99,7 @@ func TestHomeAppsExcludesThePortalApp(t *testing.T) {
 	}
 
 	boom := errors.New("boom")
-	svc, _ = portal.NewService(portal.Config{Permissions: fakePermissions{}, Home: fakeHome{err: boom}})
+	svc, _ = portal.NewService(portal.Config{Permissions: fakePermissions{}, Home: fakeHome{err: boom}, Store: fakeStore{}})
 	if _, err := svc.HomeApps(context.Background(), "u1"); !errors.Is(err, boom) {
 		t.Fatalf("err = %v, want boom", err)
 	}

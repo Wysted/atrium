@@ -34,12 +34,19 @@ func (f fakeService) HomeApps(context.Context, string) ([]portal.HomeApp, error)
 // testHandler builds the public handler with an auth step that trusts the X-Test-Sub header.
 func testHandler(t *testing.T, svc Service, logs *bytes.Buffer) http.Handler {
 	t.Helper()
+	return newTestHandler(t, svc, &fakeAdmin{}, logs)
+}
+
+// newTestHandler is testHandler with a chosen administration service.
+func newTestHandler(t *testing.T, svc Service, admin AdminService, logs *bytes.Buffer) http.Handler {
+	t.Helper()
 	log := discardLog
 	if logs != nil {
 		log = slog.New(slog.NewTextHandler(logs, nil))
 	}
 	h, err := New(Config{
 		Service: svc,
+		Admin:   admin,
 		Auth: func(next http.Handler) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				sub := r.Header.Get("X-Test-Sub")
