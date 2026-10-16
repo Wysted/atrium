@@ -27,3 +27,12 @@ export type IconName =
   | 'alert-triangle'
   | 'info'
   | 'search'
+
+/** A column of `BaseTable`. `key` names the row field rendered by default and identifies the cell slot. */
+export interface TableColumn {
+  key: string
+  label: string
+  align?: 'start' | 'end'
+  /** Keep the header text for assistive tech only (e.g. an actions column). */
+  hideLabel?: boolean
+}

@@ -6,7 +6,7 @@ Source of truth for the portal UI components. Read it before creating or changin
 
 1. Layers
    - `app/components/base/` (prefix `Base`): own primitives, no third-party UI. Layout, text, button, link, icon.
-   - `app/components/ui/`: composed widgets built on Reka UI (Dialog, Menu, Select). TODO.
+   - `app/components/ui/` (prefix `Ui`): composed widgets built on Reka UI (`reka-ui` pinned at 2.11.0, imported explicitly, no Nuxt module). Today: Dialog and AlertDialog. Do NOT use Reka's Select, Combobox or Splitter: they render or create a `<style>` element (CSP). A Select, if needed, is a native `<select>` in `base/`. Menu/Popover are unaudited.
    - `app/components/features/<domain>/`: domain components that know about the API types (`app/types/api.ts`). Nuxt names them with the path prefix: `features/home/AppCard.vue` is `<FeaturesHomeAppCard>`.
 2. Tokens only. Styling comes from `app/assets/css/tokens.css` through semantic utilities (`bg-surface`, `text-text-muted`, `border-border`, `bg-primary`, `rounded-md`, `shadow-sm`, `p-4`). No raw palette values, no arbitrary values (`bg-[#fff]`, `p-[13px]`). The one allowed exception: an arbitrary value that only references declared tokens through `var(--...)` (e.g. `BaseGrid` columns using `--container-grid-*`); never rely on Tailwind's default theme variables. An adopter re-themes by overriding that one file (colors, radius, type scale, shadows; the dark theme reuses the same names).
 3. Pages compose, they do not markup. `app/pages/**` may not use raw HTML elements (div, span, p, h1-h6, a, button, input, select, textarea, table, ul, ol, li, img, form, label, section, header, footer, nav, main); `vue/no-restricted-html-elements` fails lint. Layouts and components may use them.
@@ -16,7 +16,7 @@ Source of truth for the portal UI components. Read it before creating or changin
    - `:style` bindings are allowed (CSSOM) but prefer token classes;
    - `v-html` is banned (`vue/no-v-html` error);
    - no CDN, web fonts or external origins; icons are inline SVG without `<style>`;
-   - any Reka UI component must be verified against `style-src 'self'` before adoption.
+   - any Reka UI component must be verified against `style-src 'self'` before adoption (read its source in `node_modules/reka-ui/dist/<Component>/`: look for `as: "style"`, `createElement("style")`, `setAttribute("style")`).
    `npm run generate && npm run check:csp` enforces the HTML side.
 6. Accessibility: semantic elements, visible focus ring (`outline-focus` token), labelled controls, icon-only controls require `label`.
 7. Shared prop types live in `app/types/ui.ts` (`Space` is the spacing scale: 0, 1, 2, 3, 4, 6, 8, 12 times `--spacing`).
@@ -99,6 +99,44 @@ All accept `as` (tag name, default `div`) and a default slot.
 - Example: `<BaseIcon name="alert-triangle" label="Warning" />` (meaningful) or `<BaseIcon name="check" />` (decorative).
 - A11y: without `label` the icon is `aria-hidden`; with `label` it is `role="img"` and `aria-label`. An icon that is the only content of a control must carry the label. In dev (`import.meta.dev`) it warns on an unknown `name`, an empty `label`, and a `role="img"`/`aria-label` attribute without the `label` prop.
 
+## Forms and data
+
+### BaseField
+- Purpose: label + control + hint + error, wired for assistive tech.
+- Props: `label: string` (required), `hint?: string`, `error?: string`, `required?: boolean` (adds a visual `*`, `aria-required` on the control).
+- Slots: default, with slot props `id`, `aria-describedby` (hint/error ids, only rendered ones), `aria-invalid`, `aria-required`. Bind them: `<BaseField label="Key" :error="e" v-slot="field"><BaseInput v-bind="field" v-model="key" /></BaseField>`.
+- A11y: the `label` is a real `<label for>`; the error is text under the control (not colour-only). Move focus to the first invalid control on submit (`BaseInput.focus()`).
+
+### BaseInput
+- Purpose: single-line text input.
+- Props: `modelValue` (`v-model`, string), `type?: 'text'|'email'|'search' = 'text'`, `readonly?`, `disabled?`. Other attributes (`id`, `aria-*`, `autocomplete`...) fall through to the `<input>`.
+- Exposes `focus()`. Invalid look comes from `aria-invalid`.
+- A11y: never use without a `BaseField` (or another label). Focus ring via the `focus` token.
+
+### BaseTable
+- Purpose: semantic data table.
+- Props: `caption: string` (required, names the table), `captionHidden?: boolean` (visually hidden caption), `columns: TableColumn[]` (`{ key, label, align?: 'start'|'end', hideLabel? }`, in `app/types/ui.ts`), `rows: T[]`, `rowKey: (row) => string`, `rowHeader?: string` (column key rendered as `<th scope="row">`), `emptyText?: string = 'Nothing to show.'`.
+- Slots: `cell` with `{ row, column }`; the default cell renders `row[column.key]`.
+- Example: `<BaseTable caption="Initiatives" :columns="cols" :rows="rows" :row-key="r => r.id"><template #cell="{ row, column }">...</template></BaseTable>`
+- A11y: `<caption>`, `<th scope>`; empty state is a real row. The table sits in a horizontally scrollable `role="region"` (focusable, labelled by the caption), so a wide table scrolls inside itself, not the page.
+
+## UI (Reka UI)
+
+Style behavior of what is used (reka-ui 2.11.0, from its source; the browser check belongs to the orchestrator): Dialog/AlertDialog set `overflow`, `padding-right`, `margin-right` and `pointer-events` on `document.body`, `--scrollbar-width` on `<html>`, bind `pointer-events` in a `:style` on the content and the overlay, and Presence may set `animation-fill-mode`; all via CSSOM (allowed by `style-src 'self'`). No `<style>` element, no `style=` in markup, no focus-guard spans (those are Select/Menu/Popover/Combobox). Both portal to `<body>`.
+
+### UiDialog
+- Purpose: modal dialog (Reka `Dialog`): overlay, title, description, close button, body slot.
+- Props: `open` (`v-model:open`, required), `title: string`, `description: string` (both required: they name the dialog), `busy?: boolean` (blocks Escape, outside click and the close button while a request runs).
+- Props also: `initialFocus?: { focus: () => void }` (e.g. a `BaseInput` template ref; receives focus on open via `@open-auto-focus.prevent`; default Reka focus when omitted).
+- Slots: default (body, usually a form).
+- A11y: Reka traps focus; focus returns to the opener through `useFocusReturn` (`app/composables/useFocusReturn.ts`: `document.activeElement`, else the last clicked button/link, so it works in Safari where a click does not focus the button; it falls back to Reka's restore if the opener is gone). Closes on Escape, marks the rest `aria-hidden`.
+
+### UiConfirmDialog
+- Purpose: confirmation of a destructive or hard-to-undo action (Reka `AlertDialog`, `role="alertdialog"`): no outside-click dismissal, "Cancel" gets focus first; focus returns to the opener via `useFocusReturn` like `UiDialog`.
+- Props: `open` (`v-model:open`), `title`, `description`, `confirmLabel` (required), `cancelLabel?: string = 'Cancel'`, `variant?: 'primary'|'danger' = 'danger'`, `busy?: boolean`, `error?: string` (fixed message of the last failed attempt, `role="alert"`).
+- Events: `confirm`. It does not close itself: the parent runs the request, shows `error`, and sets `open` to false on success.
+- Slots: default (extra content above the buttons).
+
 ## Error page
 
 ### app/error.vue
@@ -148,8 +186,13 @@ All accept `as` (tag name, default `div`) and a default slot.
 
 ## API layer
 
-- `app/types/api.ts`: payload types mirroring `platform/api/internal/portalhttp` (`MeResponse`, `HomeResponse`, `HomeApp`, `InitiativeRef`) and the RFC 9457 `Problem`.
-- `app/composables/useApi.ts`: `apiGet<T>(path)` (same-origin `$fetch` under `/api/v1`, no tokens or CSRF headers, no retries), `ApiError` (`status`, `kind`, `problem`, `reloading`) and `useApiData<T>(key, path)` (client-side `useAsyncData`, returns `data`, `error`, `pending`, `refresh`; failures come back as `error`, never thrown). Error kinds: `unauthorized` (401), `forbidden` (403), `not_found` (404), `conflict` (409), `invalid` (400/415/422), `unavailable` (503), `server` (other 5xx), `network`, `unknown`. Response bodies are never logged and `ApiError.message` is fixed text.
+- `app/types/api.ts`: payload types mirroring `platform/api/internal/portalhttp` (`MeResponse`, `HomeResponse`, `HomeApp`, `InitiativeRef`, `Initiative`, `InitiativeList`, `CreateInitiativeBody`, `PatchInitiativeBody`) and the RFC 9457 `Problem`.
+- `app/composables/useApi.ts`: `apiGet<T>(path)` (same-origin `$fetch` under `/api/v1`, no tokens or CSRF headers, no retries), `ApiError` (`status`, `kind`, `problem`, `reloading`) and `useApiData<T>(key, path)` (client-side `useAsyncData`, returns `data`, `error`, `pending`, `refresh`, `refreshQuiet()` (re-fetch that keeps the previous state on failure, resolves to a boolean), `set(value)` (replace the cached value, e.g. with a mutation response); failures come back as `error`, never thrown). Error kinds: `unauthorized` (401), `forbidden` (403), `not_found` (404), `conflict` (409), `invalid` (400/415/422), `unavailable` (503), `server` (other 5xx), `network`, `unknown`. Response bodies are never logged and `ApiError.message` is fixed text.
+- Mutations: `apiSend(method, path, body?)` / `useApi().post|patch|del` (`POST`/`PATCH`/`DELETE`, `Content-Type: application/json` always sent, DELETE without a body included, same-origin, no CSRF headers: CrossOriginProtection plus the JSON content type are the guards; no retries). `ApiError.retryAfter` holds a numeric `Retry-After` (503), capped at 120 s. 413 maps to kind `invalid`.
+- `app/utils/mutationError.ts`: `describeMutationError(error, { conflict, notFound?, fields?, fieldCopy? })` -> `{ message, fields, retryable }`, fixed English copy only (server `detail` is never shown). 422 `errors[]` -> per declared field via `CODE_COPY` (`required`, `invalid`, `must_be_in_the_future`, `no_unique_active_user`, `unknown`, `exactly_one_required`, `reserved`, `at_least_one_required`; unknown codes fall back to `invalid`; first error per field wins; errors on fields the form does not render fold into "Check the values and try again."), 400/413/415 -> "The request was not accepted. Reload the page and try again.", 409 -> the per-action `conflict` copy, 403 -> "You do not have permission to do this.", 404 -> "This item no longer exists.", 503 -> "The portal is busy. Try again in N seconds." (retryable), network/5xx retryable, 401 -> reload policy below.
+- `app/composables/useAdminAccess.ts`: `/me` (shared `me` key) as `isPlatformAdmin`, `isManager`, `canAdminister`, `revalidate()` (quiet background re-read; the admin layout calls it on mount). The UI only hides; the API enforces.
+- `app/composables/usePagedList.ts`: `usePagedList<Page, Item>(path, select)` keyset list (opaque cursor echoed back): `items`, `loading`, `loadingMore`, `error`, `hasMore`, `reload()`, `loadMore()`; a newer request wins over an older one.
+- `app/utils/initiative.ts`: key/name validation mirroring Go (key `^[a-z0-9]([a-z0-9_-]*[a-z0-9])?$`, <= 63; name <= 200 bytes), `initiativeLabel()` (name, else key), `PLATFORM_INITIATIVE_KEY`.
 - 401 policy: the session is gone, so the page reloads once (ForwardAuth answers the navigation with a 302 to login). `login_url` is not followed. Loop guard: at most one reload per 30 s (`sessionStorage`), plus a module flag so every 401 after the first in the same page load also reports `reloading` (no flash of the reload message); beyond that `ApiError.reloading` is false and the UI asks the user to reload.
 - `app/utils/hostname.ts`: `isHostname()` (mirrors Go `hostname.Valid`: lowercase DNS labels, <= 253 chars, no trailing dot, last label not all digits) and `hostUrl()` (`https://<host>/` or null).
 
@@ -159,10 +202,24 @@ All accept `as` (tag name, default `div`) and a default slot.
 - `FeaturesHomeAppCard` (`AppCard.vue`): props `app: HomeApp`. A `BaseCard as="li"` with name, initiative, host links (`hostUrl()`-validated, new tab, visually hidden "(opens in a new tab)") and role badges. The external-link icon is inside the `<a>`. When no host passes validation it shows a muted "No address available" note.
 - `FeaturesHomeAppSkeleton` (`AppSkeleton.vue`): grid of three card skeletons. It carries no live region of its own: the page wraps the results in a persistent `aria-live="polite"` container with `aria-busy` while loading.
 - `FeaturesHomeLoadError` (`LoadError.vue`): props `error: ApiError`, `retrying?: boolean` ("Try again" shows `BaseButton loading`), emits `retry`. Container has `role="alert"`. Fixed copy per error kind, never server detail.
-- `app/pages/index.vue`: greeting from `/me` (name, else email), "Administration" button to `/admin` when `permissions.platform_admin` or `managed_initiatives` is non-empty (the UI only hides), loading, error, "No apps yet" and the grid. The error state depends only on `/me/apps`; if `/me` fails while apps load, a muted "Some details could not be loaded." notice with a `/me`-only retry shows instead. After a successful retry focus moves to the page h1. The Administration button points to `/admin`, which lands in part 5d (until then it renders the 404 page).
+- `app/pages/index.vue`: greeting from `/me` (name, else email), "Administration" button to `/admin` when `permissions.platform_admin` or `managed_initiatives` is non-empty (the UI only hides), loading, error, "No apps yet" and the grid. The error state depends only on `/me/apps`; if `/me` fails while apps load, a muted "Some details could not be loaded." notice with a `/me`-only retry shows instead. After a successful retry focus moves to the page h1. The Administration button navigates client-side to `/admin`, which redirects to `/admin/initiatives`.
+
+### features/admin
+- Layout `app/layouts/admin.vue`: header with home link and `FeaturesAdminNav`; resolves `/me` and gates the page: skeleton while loading, `FeaturesHomeLoadError` on failure, `FeaturesAdminNoAccess` for a user who is neither platform admin nor manager, otherwise the slot (so admin pages never fire calls for anyone else). Pages opt in with `definePageMeta({ layout: 'admin' })`.
+- `FeaturesAdminNav` (`Nav.vue`): props `isPlatformAdmin`, `isManager`. `<nav aria-label="Administration">`, `aria-current` on the current section. Only built screens are listed (Initiatives); Groups, Users and Audit arrive with their screens.
+- `FeaturesAdminNoAccess` (`NoAccess.vue`): fixed "You do not have access to administration" state with a link home.
+- `app/pages/admin/index.vue`: client-side redirect (route middleware, no flash) to `/admin/initiatives`.
+
+### features/initiatives
+- `FeaturesInitiativesTable` (`Table.vue`): props `initiatives: Initiative[]`, `caption`. Columns name (key when empty, link to the detail), key, status.
+- `FeaturesInitiativesStatusBadge` (`StatusBadge.vue`): prop `status`.
+- `FeaturesInitiativesCreateDialog` (`CreateDialog.vue`): `v-model:open`, emits `created(initiative)` (the list page navigates to `/admin/initiatives/<id>`). Key input focused on open. Client validation like Go; 409 shows "An initiative with this key already exists. If you just retried, it may have been created by your earlier attempt: check the list." on the key field.
+- `FeaturesInitiativesNameForm` (`NameForm.vue`): props `initiative`, `editable`; key always read-only; PATCH name; emits `saved(initiative)` (the PATCH response; the page sets it as its state, no re-fetch).
+- `FeaturesInitiativesStatusPanel` (`StatusPanel.vue`): props `initiative`, `canChange`; one button (activate/deactivate) behind `UiConfirmDialog`, hidden for the `platform` initiative (409 still handled); emits `changed(initiative)` (the PATCH response).
+- Pages: `/admin/initiatives` (keyset list with "Load more", "New initiative" for platform admins) and `/admin/initiatives/[id]` (overview + status; managers see it read-only; 404 -> "Initiative not found").
+- `FeaturesHomeLoadError` now takes optional `subject` (title: "Could not load {subject}", default "your apps") and `forbiddenDescription`.
 
 ## TODO (priority order)
 
-1. Input, Field (label + hint + error), Select. TODO
-2. Table, Dialog (Reka UI), Menu (Reka UI). TODO
-3. Features beyond home (admin), driven by the API types from `platform/docs/contract.md`. TODO
+1. Admin screens beyond initiatives: roles, grants, apps (next slice), groups, users, audit, driven by `platform/docs/contract.md`.
+2. Menu (Reka UI), only if a screen needs it; audit its source for `<style>` first.

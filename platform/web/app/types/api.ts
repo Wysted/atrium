@@ -61,3 +61,35 @@ export interface Problem {
   login_url?: string
   errors?: ProblemFieldError[]
 }
+
+/** `initiatives.status` (portal.InitiativeStatusActive / Inactive). */
+export type InitiativeStatus = 'active' | 'inactive'
+
+/** One initiative of the administration API: list items, GET, POST (201) and PATCH answer with this shape. */
+export interface Initiative {
+  id: string
+  /** Immutable after creation. */
+  key: string
+  /** May be empty: the UI shows the key then. */
+  name: string
+  status: InitiativeStatus
+  created_at: string
+}
+
+/** GET /api/v1/initiatives?cursor=&limit= . `next_cursor` is absent on the last page and opaque otherwise. */
+export interface InitiativeList {
+  initiatives: Initiative[]
+  next_cursor?: string
+}
+
+/** POST /api/v1/initiatives. `name` may be omitted or empty. */
+export interface CreateInitiativeBody {
+  key: string
+  name?: string
+}
+
+/** PATCH /api/v1/initiatives/{id}. At least one field; the key is immutable (sending it is a 400). */
+export interface PatchInitiativeBody {
+  name?: string
+  status?: InitiativeStatus
+}

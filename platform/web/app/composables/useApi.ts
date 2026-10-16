@@ -25,6 +25,7 @@ function kindOf(status: number): ApiErrorKind {
     case 404: return 'not_found'
     case 409: return 'conflict'
     case 400:
+    case 413:
     case 415:
     case 422: return 'invalid'
     case 503: return 'unavailable'
@@ -39,8 +40,10 @@ export class ApiError extends Error {
   readonly problem: Problem | null
   /** True when a 401 triggered a page reload so ForwardAuth can send the user to login. */
   readonly reloading: boolean
+  /** Seconds from a numeric `Retry-After` header (503), else null. */
+  readonly retryAfter: number | null
 
-  constructor(status: number, problem: Problem | null, reloading = false) {
+  constructor(status: number, problem: Problem | null, reloading = false, retryAfter: number | null = null) {
     // Fixed text: never put server-provided detail in the message (it may end up in a log).
     super(`API request failed with status ${status}`)
     this.name = 'ApiError'
@@ -48,6 +51,7 @@ export class ApiError extends Error {
     this.kind = status === 0 ? 'network' : kindOf(status)
     this.problem = problem
     this.reloading = reloading
+    this.retryAfter = retryAfter
   }
 }
 
@@ -87,11 +91,22 @@ function reloadForLogin(): boolean {
   return true
 }
 
+// Upper bound for a Retry-After we are willing to show: anything longer is just "try again later".
+const MAX_RETRY_AFTER_SECONDS = 120
+
+/** Parses the delta-seconds form of Retry-After (the portal only sends that one); anything else is null. */
+function parseRetryAfter(headers: { get?: (name: string) => string | null } | undefined): number | null {
+  const raw = headers?.get?.('Retry-After')?.trim()
+  if (!raw || !/^\d+$/.test(raw)) return null
+  return Math.min(Number(raw), MAX_RETRY_AFTER_SECONDS)
+}
+
 function toApiError(e: unknown): ApiError {
-  const res = (e as { response?: { status?: number, _data?: unknown } } | null)?.response
+  const res = (e as { response?: { status?: number, _data?: unknown, headers?: { get?: (name: string) => string | null } } } | null)?.response
   if (!res || typeof res.status !== 'number') return new ApiError(0, null)
   const problem = parseProblem(res._data)
   if (res.status === 401) return new ApiError(401, problem, reloadForLogin())
+  if (res.status === 503) return new ApiError(503, problem, false, parseRetryAfter(res.headers))
   return new ApiError(res.status, problem)
 }
 
@@ -109,8 +124,37 @@ export async function apiGet<T>(path: string): Promise<T> {
   }
 }
 
+export type MutationMethod = 'POST' | 'PATCH' | 'DELETE'
+
+/**
+ * POST/PATCH/DELETE a JSON resource. Same-origin, `Content-Type: application/json` on EVERY mutation, a DELETE
+ * without a body included (the backend answers 415 to anything else) and no CSRF headers: CrossOriginProtection (Fetch Metadata) plus the JSON content type are the
+ * guards. Resolves to the parsed body (201/200) or undefined (204). Rejects with ApiError. No retries here:
+ * the caller decides (503 carries `retryAfter`).
+ */
+export async function apiSend<T = undefined>(method: MutationMethod, path: string, body?: object): Promise<T> {
+  try {
+    return await $fetch<T>(`${API_BASE}${path}`, {
+      method,
+      credentials: 'same-origin',
+      // Always sent, DELETE without a body included: the backend's RequireJSON guard rejects any mutation without it.
+      headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      retry: 0,
+    })
+  }
+  catch (e) {
+    throw toApiError(e)
+  }
+}
+
 export function useApi() {
-  return { get: apiGet }
+  return {
+    get: apiGet,
+    post: <T>(path: string, body: object) => apiSend<T>('POST', path, body),
+    patch: <T>(path: string, body: object) => apiSend<T>('PATCH', path, body),
+    del: (path: string) => apiSend('DELETE', path),
+  }
 }
 
 /**
@@ -136,5 +180,22 @@ export function useApiData<T>(key: string, path: string) {
     error: computed(() => state.data.value?.error ?? null),
     pending: state.pending,
     refresh: () => state.refresh(),
+    /**
+     * Re-fetches without touching the current state while it runs and on failure: the previous data (or error)
+     * stays, no flicker. Resolves to whether the refresh succeeded.
+     */
+    refreshQuiet: async (): Promise<boolean> => {
+      try {
+        state.data.value = { data: await apiGet<T>(path), error: null }
+        return true
+      }
+      catch {
+        return false
+      }
+    },
+    /** Replaces the cached value (e.g. with a mutation response) without a request. */
+    set: (value: T) => {
+      state.data.value = { data: value, error: null }
+    },
   }
 }
