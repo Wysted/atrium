@@ -66,8 +66,16 @@ Pending work and open questions for the portal platform. Detailed context lives 
   than 3 intervals and never when the probe is disabled.
 - [x] **Reduce `platform_runtime`.** Closed 2026-10-16. Migration 0010 leaves it read-only on the authorization tables
   plus column-level UPDATE where login, sessions and last-seen need it; `CheckRuntimeRole` refuses to start on any drift.
-- [ ] **Cookie prefix support in Safari.** `__Host-Http-` is enforced by Chrome 140+ and Firefox 143+; revisit Safari.
-- [ ] **Grafana behind ForwardAuth (auth.jwt validating `Platform-Assertion`: verify ES256 and `typ` support).** Grafana is
-  only reachable by port-forward with a generated admin password. To publish it through Traefik as a regular app, Grafana's
-  `auth.jwt` must validate the `Platform-Assertion` (header_name, JWKS URL of platform-api, ES256 signature) and its `typ`
-  header; verify both are supported before relying on it, and keep the admin login off the public path.
+- [x] **Cookie prefix support in Safari.** Closed 2026-10-16: keep `__Host-Http-`. The prefix is defined in
+  `draft-ietf-httpbis-layered-cookies`; Chrome 140+ enforces it, Safari has no verified enforcement, and a browser
+  without it still applies the `__Host-` rules (the name starts with `__Host-`), so nothing breaks. Firefox skipped the
+  HttpOnly check from 144 until 150/151 (CVE-2026-6768), so the prefix is hardening, never the only guarantee: the
+  server always sets `Secure; HttpOnly; Path=/` without `Domain`.
+- [ ] **Grafana behind ForwardAuth (blocked by internal TLS for the JWKS).** Researched 2026-10-16 against Grafana 13.2
+  sources: `[auth.jwt]` verifies ES256 through a JWKS (selects the key by `kid`), checks `iss`/`aud` with
+  `expect_claims`, maps roles with `role_attribute_path` (it must return one string), and allows 60 s of clock leeway
+  (fixed, from go-jose). It ignores the JOSE `typ` and cannot require it; acceptable because the platform signing key
+  signs only `Platform-Assertion` (`internal/assertion/issuer.go`), and ForwardAuth plus a NetworkPolicy must be the only
+  way to reach Grafana. Blocker: `jwk_set_url` must be `https` outside dev mode, and the JWKS listener is in-cluster HTTP
+  (see "Internal TLS for the JWKS"); `jwk_set_file` works without TLS but loses automatic key rotation. Keep
+  `url_login = false` and the admin login off the public path.
