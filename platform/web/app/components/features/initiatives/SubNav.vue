@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * Sub-navigation of one initiative: Overview, Grants, Roles. Plain links (not a tabs widget); the current one
+ * Sub-navigation of one initiative: Overview, Grants, Roles, Apps. Plain links (not a tabs widget); the current one
  * carries `aria-current="page"`. Every initiative viewer sees all three: managers read the roles and edit grants,
  * the API enforces what each can do.
  */
@@ -13,6 +13,7 @@ const items = computed(() => [
   { label: 'Overview', to: base.value, exact: true },
   { label: 'Grants', to: `${base.value}/grants`, exact: false },
   { label: 'Roles', to: `${base.value}/roles`, exact: false },
+  { label: 'Apps', to: `${base.value}/apps`, exact: false },
 ])
 
 const route = useRoute()

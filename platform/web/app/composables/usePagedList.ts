@@ -24,10 +24,13 @@ export function usePagedList<TPage extends { next_cursor?: string }, TItem>(
     return await apiGet<TPage>(`${path}${query}`)
   }
 
-  /** (Re)loads the first page, replacing everything shown. */
-  async function reload() {
+  /**
+   * (Re)loads the first page, replacing everything shown. `quiet` keeps the current rows on screen (no skeleton)
+   * and, if the request fails, keeps them too.
+   */
+  async function reload(quiet = false) {
     const mine = ++generation
-    loading.value = true
+    if (!quiet) loading.value = true
     loadingMore.value = false
     error.value = null
     try {
@@ -38,6 +41,7 @@ export function usePagedList<TPage extends { next_cursor?: string }, TItem>(
     }
     catch (e) {
       if (mine !== generation) return
+      if (quiet) return
       items.value = []
       nextCursor.value = null
       error.value = e as ApiError
