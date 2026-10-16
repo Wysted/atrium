@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"syscall"
@@ -44,13 +45,9 @@ func run(ctx context.Context, getenv func(string) string) error {
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 	slog.SetDefault(log)
 
-	verifier, err := platformauth.NewVerifier(platformauth.Config{
-		Issuer:   cfg.Issuer,
-		Audience: cfg.AppID,
-		JWKSURL:  cfg.JWKSURL,
-	})
+	verifier, err := newVerifier(cfg, log)
 	if err != nil {
-		return fmt.Errorf("create verifier: %w", err)
+		return err
 	}
 	srv := newServer(cfg.ListenAddr, verifier.MiddlewareWithLogger(log, newHandler(log)))
 
@@ -87,4 +84,24 @@ func newServer(addr string, h http.Handler) *http.Server {
 		IdleTimeout:       idleTimeout,
 		MaxHeaderBytes:    maxHeaderBytes,
 	}
+}
+
+// newVerifier builds the assertion verifier, trusting cfg.JWKSCAFile for an https JWKS when it is set.
+func newVerifier(cfg config, log *slog.Logger) (*platformauth.Verifier, error) {
+	if u, err := url.Parse(cfg.JWKSURL); err == nil && u.Scheme == "http" {
+		log.Warn("the JWKS URL is plain http: the integrity of the keys relies on the NetworkPolicy; use https", "env", envJWKSURL)
+	}
+	vcfg := platformauth.Config{Issuer: cfg.Issuer, Audience: cfg.AppID, JWKSURL: cfg.JWKSURL}
+	if cfg.JWKSCAFile != "" {
+		roots, err := platformauth.LoadRootCAs(cfg.JWKSCAFile)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", envJWKSCAFile, err)
+		}
+		vcfg.RootCAs = roots
+	}
+	v, err := platformauth.NewVerifier(vcfg)
+	if err != nil {
+		return nil, fmt.Errorf("create verifier: %w", err)
+	}
+	return v, nil
 }

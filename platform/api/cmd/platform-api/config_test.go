@@ -224,3 +224,30 @@ func TestLoadConfigGoogle(t *testing.T) {
 		}
 	})
 }
+
+func TestLoadConfigJWKSTLS(t *testing.T) {
+	t.Run("plain http by default", func(t *testing.T) {
+		c, err := loadConfig(lookup(validEnv()))
+		if err != nil || c.JWKSTLS != nil {
+			t.Fatalf("config = %+v, err %v", c, err)
+		}
+	})
+	t.Run("both files", func(t *testing.T) {
+		env := validEnv()
+		env[envJWKSTLSCertFile], env[envJWKSTLSKeyFile] = " /tls/tls.crt ", "/tls/tls.key"
+		c, err := loadConfig(lookup(env))
+		if err != nil || c.JWKSTLS == nil || c.JWKSTLS.CertFile != "/tls/tls.crt" || c.JWKSTLS.KeyFile != "/tls/tls.key" {
+			t.Fatalf("config = %+v, err %v", c, err)
+		}
+	})
+	for name, set := range map[string]string{"only cert": envJWKSTLSCertFile, "only key": envJWKSTLSKeyFile} {
+		t.Run(name, func(t *testing.T) {
+			env := validEnv()
+			env[set] = "/tls/file"
+			_, err := loadConfig(lookup(env))
+			if err == nil || !strings.Contains(err.Error(), "must be set together") {
+				t.Fatalf("err = %v", err)
+			}
+		})
+	}
+}

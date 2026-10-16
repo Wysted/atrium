@@ -76,6 +76,6 @@ Pending work and open questions for the portal platform. Detailed context lives 
   `expect_claims`, maps roles with `role_attribute_path` (it must return one string), and allows 60 s of clock leeway
   (fixed, from go-jose). It ignores the JOSE `typ` and cannot require it; acceptable because the platform signing key
   signs only `Platform-Assertion` (`internal/assertion/issuer.go`), and ForwardAuth plus a NetworkPolicy must be the only
-  way to reach Grafana. Blocker: `jwk_set_url` must be `https` outside dev mode, and the JWKS listener is in-cluster HTTP
-  (see "Internal TLS for the JWKS"); `jwk_set_file` works without TLS but loses automatic key rotation. Keep
+  way to reach Grafana. `jwk_set_url` must be `https` outside dev mode: unblocked once the JWKS listener runs with TLS (see "Internal TLS for the JWKS"; Grafana needs the CA in its trust store);
+  `jwk_set_file` works without TLS but loses automatic key rotation. Keep
   `url_login = false` and the admin login off the public path.

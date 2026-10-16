@@ -1,15 +1,24 @@
 package main
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"io"
 	"log/slog"
+	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -207,4 +216,147 @@ func TestLoadConfig(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLoadConfigOptionalCAFile(t *testing.T) {
+	env := map[string]string{
+		envListenAddr: ":8080", envAppID: testAppID, envIssuer: testIssuer, envJWKSURL: "https://platform-api/jwks",
+		envJWKSCAFile: " /etc/ca/ca.pem ",
+	}
+	cfg, err := loadConfig(func(k string) string { return env[k] })
+	if err != nil || cfg.JWKSCAFile != "/etc/ca/ca.pem" {
+		t.Fatalf("cfg = %+v, err %v", cfg, err)
+	}
+}
+
+func TestLoadConfigCAFileNeedsHTTPS(t *testing.T) {
+	for _, tt := range []struct {
+		name, url string
+		wantErr   bool
+	}{
+		{"https", "https://platform-api/jwks", false},
+		{"uppercase HTTPS", "HTTPS://platform-api/jwks", false},
+		{"http", "http://platform-api/jwks", true},
+		{"uppercase HTTP", "HTTP://platform-api/jwks", true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			env := map[string]string{
+				envListenAddr: ":8080", envAppID: testAppID, envIssuer: testIssuer, envJWKSURL: tt.url, envJWKSCAFile: "/etc/ca/ca.pem",
+			}
+			_, err := loadConfig(func(k string) string { return env[k] })
+			if (err != nil) != tt.wantErr || (err != nil && !strings.Contains(err.Error(), envJWKSCAFile)) {
+				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestNewVerifierWarnsOnPlainHTTP(t *testing.T) {
+	for _, tt := range []struct {
+		name, url string
+		want      bool
+	}{
+		{"http", "http://platform-api/jwks", true},
+		{"uppercase HTTP", "HTTP://platform-api/jwks", true},
+		{"uppercase HTTPS", "HTTPS://platform-api/jwks", false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			cfg := config{AppID: testAppID, Issuer: testIssuer, JWKSURL: tt.url}
+			if _, err := newVerifier(cfg, slog.New(slog.NewTextHandler(&logs, nil))); err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Contains(logs.String(), "plain http"); got != tt.want {
+				t.Fatalf("warned = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// ephemeralCA writes a CA certificate PEM and returns its path and a TLS server certificate for 127.0.0.1.
+func ephemeralCA(t *testing.T) (caFile string, leaf tls.Certificate) {
+	t.Helper()
+	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caTpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "test CA"},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
+		IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign,
+	}
+	caDER, err := x509.CreateCertificate(rand.Reader, caTpl, caTpl, &caKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caCert, err := x509.ParseCertificate(caDER)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caFile = filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tpl := &x509.Certificate{
+		SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: "jwks"},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
+		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		IPAddresses: []net.IP{net.IPv4(127, 0, 0, 1)},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tpl, caCert, &key.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return caFile, tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}
+}
+
+func TestNewVerifierWithCAFile(t *testing.T) {
+	signer, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caFile, leaf := ephemeralCA(t)
+	plain := jwksServer(t, &signer.PublicKey, http.StatusOK)
+	jwks := httptest.NewUnstartedServer(plain.Config.Handler)
+	jwks.TLS = &tls.Config{Certificates: []tls.Certificate{leaf}, MinVersion: tls.VersionTLS13}
+	jwks.StartTLS()
+	t.Cleanup(jwks.Close)
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	base := config{AppID: testAppID, Issuer: testIssuer, JWKSURL: jwks.URL}
+	token := mint(t, signer, "Ana")
+
+	tests := []struct {
+		name    string
+		caFile  string
+		wantErr bool // Verify error
+	}{
+		{"private CA trusted", caFile, false},
+		{"no CA file: system roots reject the private CA", "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := base
+			cfg.JWKSCAFile = tt.caFile
+			v, err := newVerifier(cfg, log)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = v.Verify(t.Context(), token)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("verify err = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+	t.Run("unreadable CA file fails", func(t *testing.T) {
+		cfg := base
+		cfg.JWKSCAFile = filepath.Join(t.TempDir(), "absent.pem")
+		if _, err := newVerifier(cfg, log); err == nil {
+			t.Fatal("expected an error")
+		}
+	})
 }

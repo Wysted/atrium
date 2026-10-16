@@ -4,12 +4,16 @@ package platformauth
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -29,6 +33,15 @@ const (
 	DefaultHealthPath         = "/healthz"
 	defaultHTTPTimeout        = 5 * time.Second
 
+	// Transport settings used when RootCAs needs a transport of its own (same values as net/http's default).
+	minTLSVersion         = tls.VersionTLS13
+	dialTimeout           = 30 * time.Second
+	dialKeepAlive         = 30 * time.Second
+	maxIdleConns          = 100
+	idleConnTimeout       = 90 * time.Second
+	tlsHandshakeTimeout   = 10 * time.Second
+	expectContinueTimeout = time.Second
+
 	// maxTokenSize bounds what we parse; real assertions are well under 4 KiB.
 	maxTokenSize  = 8 << 10
 	tokenSegments = 3
@@ -45,10 +58,15 @@ var ErrInvalidAssertion = errors.New("invalid platform assertion")
 type Config struct {
 	Issuer   string // expected iss, exact match
 	Audience string // this app's id (aud), exact match
-	// JWKSURL is the fixed in-cluster JWKS URL; jku/x5u in tokens are ignored. It normally travels over
-	// plain http inside the cluster: its integrity depends on the NetworkPolicy allowing apps to reach
-	// only platform-api. Redirects are never followed.
+	// JWKSURL is the fixed in-cluster JWKS URL; jku/x5u in tokens are ignored. Prefer https: over plain
+	// http the integrity of the keys depends on the NetworkPolicy allowing apps to reach only platform-api.
+	// Redirects are never followed.
 	JWKSURL string
+	// RootCAs is the optional trust store for an https JWKSURL whose certificate is signed by a private CA
+	// (see LoadRootCAs). Nil means the system roots. It requires the HTTPClient, if any, to have a nil or
+	// *http.Transport transport without DialTLS/DialTLSContext (NewVerifier returns an error otherwise, since
+	// RootCAs would be silently ignored). The transport used enforces TLS 1.3 as the minimum version.
+	RootCAs *x509.CertPool
 	// HTTPClient is optional. It is copied, and the copy never follows redirects whatever the original
 	// CheckRedirect says; a 3xx answer counts as a JWKS failure.
 	HTTPClient *http.Client
@@ -104,6 +122,11 @@ func NewVerifier(cfg Config) (*Verifier, error) {
 		clone := *cfg.HTTPClient
 		client = &clone
 	}
+	if cfg.RootCAs != nil {
+		if client.Transport, err = transportWithRoots(client.Transport, cfg.RootCAs); err != nil {
+			return nil, err
+		}
+	}
 	client.CheckRedirect = func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse // the JWKS URL is fixed; never follow redirects
 	}
@@ -123,6 +146,59 @@ func NewVerifier(cfg Config) (*Verifier, error) {
 		),
 		keys: &keyCache{url: cfg.JWKSURL, client: client, now: cfg.Now, minRefetch: cfg.MinRefetchInterval, fetchTimeout: defaultFetchTimeout},
 	}, nil
+}
+
+// transportWithRoots returns a copy of base trusting only roots. A nil base gets a fresh transport built here
+// (not a clone of http.DefaultTransport, which anything in the process may have replaced). TLS 1.3 is the
+// minimum, unless the copied TLSClientConfig already demands more.
+func transportWithRoots(base http.RoundTripper, roots *x509.CertPool) (http.RoundTripper, error) {
+	var t *http.Transport
+	switch b := base.(type) {
+	case nil:
+		t = newBaseTransport()
+	case *http.Transport:
+		t = b.Clone()
+	default:
+		return nil, errors.New("platformauth: RootCAs needs an HTTPClient whose Transport is nil or *http.Transport")
+	}
+	if t.DialTLS != nil || t.DialTLSContext != nil { //nolint:staticcheck // SA1019: DialTLS is checked precisely because it would bypass RootCAs
+		return nil, errors.New("platformauth: RootCAs cannot be combined with a Transport that sets DialTLS or DialTLSContext")
+	}
+	if t.TLSClientConfig == nil {
+		t.TLSClientConfig = &tls.Config{MinVersion: minTLSVersion}
+	}
+	if t.TLSClientConfig.MinVersion < minTLSVersion {
+		t.TLSClientConfig.MinVersion = minTLSVersion
+	}
+	t.TLSClientConfig.RootCAs = roots
+	return t, nil
+}
+
+// newBaseTransport mirrors the net/http default transport settings.
+func newBaseTransport() *http.Transport {
+	return &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           (&net.Dialer{Timeout: dialTimeout, KeepAlive: dialKeepAlive}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          maxIdleConns,
+		IdleConnTimeout:       idleConnTimeout,
+		TLSHandshakeTimeout:   tlsHandshakeTimeout,
+		ExpectContinueTimeout: expectContinueTimeout,
+	}
+}
+
+// LoadRootCAs reads PEM certificates from path into a pool for Config.RootCAs. A file without a valid
+// certificate is an error, so a wrong path or an empty mount fails at start-up.
+func LoadRootCAs(path string) (*x509.CertPool, error) {
+	pemBytes, err := os.ReadFile(path) //nolint:gosec // G304: operator-configured CA bundle location
+	if err != nil {
+		return nil, fmt.Errorf("platformauth: read CA file: %w", err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pemBytes) {
+		return nil, errors.New("platformauth: CA file has no valid PEM certificate")
+	}
+	return pool, nil
 }
 
 // Verify validates token and returns its claims. Rejections caused by the token wrap ErrInvalidAssertion;

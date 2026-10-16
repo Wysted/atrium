@@ -22,6 +22,8 @@ const (
 	envAppID       = "PORTAL_APP_ID"
 	envIssuer      = "PORTAL_ISSUER"
 	envJWKSURL     = "PORTAL_JWKS_URL"
+	// envJWKSCAFile is the optional PEM CA bundle for an https PORTAL_JWKS_URL signed by a private CA.
+	envJWKSCAFile = "PORTAL_JWKS_CA_FILE"
 	// envAllowPrivilegedDBLogin is a DEVELOPMENT-ONLY escape hatch (default false), like in platform-api: the
 	// portal role is assumed with a startup parameter, so a privileged login role could undo it with
 	// RESET ROLE. Setting it only downgrades the refusal to a loud WARN. Never set it in production.
@@ -39,6 +41,7 @@ type config struct {
 	AppID        string // the portal's own app id: the aud of its assertions
 	Issuer       string // https://<auth host>, exact match on iss
 	JWKSURL      string // in-cluster URL of platform-api's JWKS (JWKS listener of platform-api)
+	JWKSCAFile   string // optional CA bundle for an https JWKSURL; empty means system roots
 	// AllowPrivilegedDBLogin is the value of PORTAL_ALLOW_PRIVILEGED_DB_LOGIN (development only).
 	AllowPrivilegedDBLogin bool
 	// Probe configures the integration probe (PORTAL_PROBE_*); Probe.Interval 0 disables it.
@@ -62,6 +65,7 @@ func loadConfig(getenv func(string) string) (config, error) {
 		AppID:        required(envAppID),
 		Issuer:       required(envIssuer),
 		JWKSURL:      required(envJWKSURL),
+		JWKSCAFile:   strings.TrimSpace(getenv(envJWKSCAFile)),
 	}
 	errs = append(errs, httpx.ListenerConflicts([]httpx.NamedAddr{
 		{Name: envPublicAddr, Addr: c.PublicAddr},
@@ -77,10 +81,13 @@ func loadConfig(getenv func(string) string) (config, error) {
 		}
 	}
 	if c.JWKSURL != "" {
-		// Usually plain http to the in-cluster service: the integrity of the keys rests on the NetworkPolicy.
+		// https is recommended; plain http is still accepted (serve warns): the keys then rest on the NetworkPolicy.
 		if u, err := url.Parse(c.JWKSURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.RawQuery != "" || u.Fragment != "" || u.User != nil {
 			errs = append(errs, fmt.Errorf("%s must be an absolute http(s) URL without credentials, query or fragment", envJWKSURL))
 		}
+	}
+	if c.JWKSCAFile != "" && !isScheme(c.JWKSURL, "https") {
+		errs = append(errs, fmt.Errorf("%s only applies to an https %s", envJWKSCAFile, envJWKSURL))
 	}
 	if v := strings.TrimSpace(getenv(envAllowPrivilegedDBLogin)); v != "" {
 		b, err := strconv.ParseBool(v)
@@ -96,4 +103,10 @@ func loadConfig(getenv func(string) string) (config, error) {
 		return config{}, fmt.Errorf("invalid configuration: %w", err)
 	}
 	return c, nil
+}
+
+// isScheme reports whether rawURL parses and has the given scheme (url.Parse lowercases it, so HTTPS:// counts).
+func isScheme(rawURL, scheme string) bool {
+	u, err := url.Parse(rawURL)
+	return err == nil && u.Scheme == scheme
 }

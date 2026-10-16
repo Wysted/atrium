@@ -24,12 +24,16 @@ const (
 	// with ForwardAuth or the JWKS.
 	envMetricsAddr = "PLATFORM_METRICS_ADDR"
 	// envJWKSAddr is the listener of the JWKS alone, the only port app namespaces may reach.
-	envJWKSAddr    = "PLATFORM_JWKS_ADDR"
-	envAuthHost    = "PLATFORM_AUTH_HOST"
-	envIssuer      = "PLATFORM_ISSUER"
-	envKEKFile     = keys.KEKFileEnv // PLATFORM_KEK_FILE
-	envIdleTimeout = "PLATFORM_IDLE_TIMEOUT"
-	envFakeLogin   = "PLATFORM_FAKE_LOGIN"
+	envJWKSAddr = "PLATFORM_JWKS_ADDR"
+	// envJWKSTLSCertFile and envJWKSTLSKeyFile (PEM) switch the JWKS listener to HTTPS. Both or neither; the
+	// files may be replaced at any time (see tlsreload).
+	envJWKSTLSCertFile = "PLATFORM_JWKS_TLS_CERT_FILE"
+	envJWKSTLSKeyFile  = "PLATFORM_JWKS_TLS_KEY_FILE"
+	envAuthHost        = "PLATFORM_AUTH_HOST"
+	envIssuer          = "PLATFORM_ISSUER"
+	envKEKFile         = keys.KEKFileEnv // PLATFORM_KEK_FILE
+	envIdleTimeout     = "PLATFORM_IDLE_TIMEOUT"
+	envFakeLogin       = "PLATFORM_FAKE_LOGIN"
 	// envPortalAppID is the optional id of the portal app, the one app any active user may open (block 6).
 	envPortalAppID = "PLATFORM_PORTAL_APP_ID"
 	// Google login. All three are set together or none is (see loadConfig).
@@ -59,10 +63,12 @@ type config struct {
 	PublicAddr   string
 	MetricsAddr  string
 	JWKSAddr     string
-	AuthHost     string
-	Issuer       string
-	KEKFile      string
-	IdleTimeout  time.Duration
+	// JWKSTLS is nil when the JWKS listener serves plain HTTP (no TLS variable set).
+	JWKSTLS     *jwksTLSConfig
+	AuthHost    string
+	Issuer      string
+	KEKFile     string
+	IdleTimeout time.Duration
 	// FakeLogin is the parsed PLATFORM_FAKE_LOGIN. It is only honored without Google (see googleConfig).
 	FakeLogin bool
 	// PortalAppID is PLATFORM_PORTAL_APP_ID; empty means there is no portal app.
@@ -72,6 +78,12 @@ type config struct {
 	Google *googleConfig
 	// AllowPrivilegedDBLogin is the value of PLATFORM_ALLOW_PRIVILEGED_DB_LOGIN (development only).
 	AllowPrivilegedDBLogin bool
+}
+
+// jwksTLSConfig holds the PEM paths of the JWKS listener certificate and key.
+type jwksTLSConfig struct {
+	CertFile string
+	KeyFile  string
 }
 
 // googleConfig is the validated Google login configuration. The secret was read from its file at load time.
@@ -107,6 +119,14 @@ func loadConfig(getenv func(string) string) (config, error) {
 		{Name: envMetricsAddr, Addr: c.MetricsAddr},
 		{Name: envJWKSAddr, Addr: c.JWKSAddr},
 	})...)
+	certFile := strings.TrimSpace(getenv(envJWKSTLSCertFile))
+	keyFile := strings.TrimSpace(getenv(envJWKSTLSKeyFile))
+	switch {
+	case certFile != "" && keyFile != "":
+		c.JWKSTLS = &jwksTLSConfig{CertFile: certFile, KeyFile: keyFile}
+	case certFile != "" || keyFile != "":
+		errs = append(errs, fmt.Errorf("%s and %s must be set together", envJWKSTLSCertFile, envJWKSTLSKeyFile))
+	}
 	if c.AuthHost != "" && !hostPattern.MatchString(c.AuthHost) {
 		errs = append(errs, fmt.Errorf("%s must be a lowercase host without scheme, port or path", envAuthHost))
 	}

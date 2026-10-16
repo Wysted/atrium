@@ -55,7 +55,7 @@ func serve(ctx context.Context, cfg config, log *slog.Logger) error {
 		return err
 	}
 	a, err := portalapp.New(portalapp.Config{
-		AppID: cfg.AppID, Issuer: cfg.Issuer, JWKSURL: cfg.JWKSURL, Pool: pool, ProbeInterval: cfg.Probe.Interval, Web: web, Logger: log,
+		AppID: cfg.AppID, Issuer: cfg.Issuer, JWKSURL: cfg.JWKSURL, JWKSCAFile: cfg.JWKSCAFile, Pool: pool, ProbeInterval: cfg.Probe.Interval, Web: web, Logger: log,
 	})
 	if err != nil {
 		return err

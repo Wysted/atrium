@@ -1,6 +1,7 @@
 package portalapp_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -318,6 +319,34 @@ func TestNewValidatesItsConfig(t *testing.T) {
 	s := newStack(t)
 	if _, err := portalapp.New(portalapp.Config{AppID: portalAppID, Issuer: testIssuer, JWKSURL: "not a url", Pool: s.portal}); err == nil {
 		t.Fatal("accepted an invalid JWKS URL")
+	}
+}
+
+// The plain-http warning decides by the parsed scheme: HTTP:// counts, https does not.
+func TestNewWarnsOnPlainHTTPJWKS(t *testing.T) {
+	t.Parallel()
+	s := newStack(t)
+	for _, tt := range []struct {
+		name, url string
+		want      bool
+	}{
+		{"lowercase http", "http://platform-api.example.test/jwks", true},
+		{"uppercase HTTP", "HTTP://platform-api.example.test/jwks", true},
+		{"uppercase HTTPS", "HTTPS://platform-api.example.test/jwks", false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			_, err := portalapp.New(portalapp.Config{
+				AppID: portalAppID, Issuer: testIssuer, JWKSURL: tt.url, Pool: s.portal,
+				Logger: slog.New(slog.NewTextHandler(&logs, nil)),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Contains(logs.String(), "plain http"); got != tt.want {
+				t.Fatalf("warned = %v, want %v; logs: %s", got, tt.want, logs.String())
+			}
+		})
 	}
 }
 

@@ -17,6 +17,7 @@ import (
 	"platform/api/internal/httpx"
 	"platform/api/internal/keys"
 	"platform/api/internal/postgres"
+	"platform/api/internal/tlsreload"
 )
 
 // shutdownTimeout is the single budget for the whole shutdown (all listeners, background jobs and the pool),
@@ -28,6 +29,15 @@ const shutdownTimeout = 20 * time.Second
 func serve(ctx context.Context, cfg config, log *slog.Logger) error {
 	if cfg.FakeLogin && cfg.Google == nil {
 		log.Warn("PLATFORM_FAKE_LOGIN is enabled: anyone who can reach the auth host can log in as any email. Never use this in production")
+	}
+	// A bad initial JWKS TLS pair fails start-up before anything else starts; later replacements are picked up
+	// by the poll (spawned with the other background jobs).
+	var jwksTLS *tlsreload.Reloader
+	if t := cfg.JWKSTLS; t != nil {
+		var err error
+		if jwksTLS, err = tlsreload.New(t.CertFile, t.KeyFile, tlsreload.DefaultInterval, log); err != nil {
+			return fmt.Errorf("JWKS TLS: %w", err)
+		}
 	}
 	kek, err := keys.LoadKEKFile(cfg.KEKFile)
 	if err != nil {
@@ -109,17 +119,32 @@ func serve(ctx context.Context, cfg config, log *slog.Logger) error {
 	}
 	spawn(func(c context.Context) { postgres.Listen(c, pool, access.NotifyChannel, a.InvalidateAccess, log) })
 
+	jwksSrv := httpx.NewServer(cfg.JWKSAddr, a.JWKSHandler)
+	if jwksTLS != nil {
+		jwksSrv.TLSConfig = jwksTLS.TLSConfig()
+		spawn(jwksTLS.Run)
+	} else {
+		log.Warn("the JWKS listener serves plain HTTP: its integrity relies on the NetworkPolicy; set " +
+			envJWKSTLSCertFile + " and " + envJWKSTLSKeyFile + " to serve HTTPS")
+	}
+
 	servers := map[string]*http.Server{
 		"internal": httpx.NewServer(cfg.InternalAddr, a.Internal),
 		"public":   httpx.NewServer(cfg.PublicAddr, a.Public),
 		"metrics":  httpx.NewServer(cfg.MetricsAddr, a.MetricsHandler),
-		"jwks":     httpx.NewServer(cfg.JWKSAddr, a.JWKSHandler),
+		"jwks":     jwksSrv,
 	}
 	failed := make(chan error, len(servers))
 	for name, srv := range servers {
 		go func() {
 			log.Info("listening", "listener", name, "addr", srv.Addr)
-			if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			var err error
+			if srv.TLSConfig != nil {
+				err = srv.ListenAndServeTLS("", "") // certificates come from TLSConfig.GetCertificate
+			} else {
+				err = srv.ListenAndServe()
+			}
+			if err != nil && !errors.Is(err, http.ErrServerClosed) {
 				failed <- fmt.Errorf("%s listener: %w", name, err)
 			}
 		}()

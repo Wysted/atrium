@@ -36,6 +36,8 @@ type Config struct {
 	AppID   string // the portal's own app id: the aud the assertion must carry
 	Issuer  string // exact iss, https://<auth host>
 	JWKSURL string // fixed in-cluster URL of platform-api's JWKS
+	// JWKSCAFile is the optional PEM CA bundle trusted for an https JWKSURL; empty means the system roots.
+	JWKSCAFile string
 	// Pool must run as postgres.PortalRole (postgres.OpenPortalPool).
 	Pool *pgxpool.Pool
 	// ProbeInterval is PORTAL_PROBE_INTERVAL (zero: the probe is disabled), used to judge probe results.
@@ -81,9 +83,18 @@ func New(cfg Config) (*App, error) {
 		log = slog.Default()
 	}
 
-	verifier, err := platformauth.NewVerifier(platformauth.Config{
-		Issuer: cfg.Issuer, Audience: cfg.AppID, JWKSURL: cfg.JWKSURL, HealthPath: ExemptPath,
-	})
+	if u, err := url.Parse(cfg.JWKSURL); err == nil && u.Scheme == "http" {
+		log.Warn("the JWKS URL is plain http: the integrity of the keys relies on the NetworkPolicy; use https")
+	}
+	vcfg := platformauth.Config{Issuer: cfg.Issuer, Audience: cfg.AppID, JWKSURL: cfg.JWKSURL, HealthPath: ExemptPath}
+	if cfg.JWKSCAFile != "" {
+		roots, err := platformauth.LoadRootCAs(cfg.JWKSCAFile)
+		if err != nil {
+			return nil, fmt.Errorf("JWKS CA file: %w", err)
+		}
+		vcfg.RootCAs = roots
+	}
+	verifier, err := platformauth.NewVerifier(vcfg)
 	if err != nil {
 		return nil, fmt.Errorf("create assertion verifier: %w", err)
 	}

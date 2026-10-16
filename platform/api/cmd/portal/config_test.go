@@ -31,6 +31,10 @@ func TestLoadConfig(t *testing.T) {
 	}{
 		{"valid", nil, nil},
 		{"valid with https jwks", map[string]string{envJWKSURL: "https://platform-api.example.test/.well-known/jwks.json"}, nil},
+		{"https jwks with CA file", map[string]string{envJWKSURL: "https://platform-api.example.test/.well-known/jwks.json", envJWKSCAFile: "/etc/ca/ca.pem"}, nil},
+		{"CA file with uppercase HTTPS jwks", map[string]string{envJWKSURL: "HTTPS://platform-api.example.test/.well-known/jwks.json", envJWKSCAFile: "/etc/ca/ca.pem"}, nil},
+		{"CA file with uppercase HTTP jwks", map[string]string{envJWKSURL: "HTTP://platform-api.example.test/.well-known/jwks.json", envJWKSCAFile: "/etc/ca/ca.pem"}, []string{envJWKSCAFile}},
+		{"CA file with http jwks", map[string]string{envJWKSCAFile: "/etc/ca/ca.pem"}, []string{envJWKSCAFile}},
 		{"missing everything", map[string]string{envPublicAddr: "", envInternalAddr: "", envAppID: "", envIssuer: "", envJWKSURL: ""},
 			[]string{envPublicAddr, envInternalAddr, envAppID, envIssuer, envJWKSURL}},
 		{"same addr", map[string]string{envInternalAddr: ":8080"}, []string{"different ports"}},

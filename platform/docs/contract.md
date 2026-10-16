@@ -55,8 +55,10 @@ not a bearer token to forward.
 - Signing keys unavailable (JWKS unreachable and no usable cache): 503, never 401; this is a platform failure, not a bad token.
 - If a JWKS refetch fails after the cache expired, the last keys keep being used for up to 15 minutes (stale-if-error);
   failures are memoized only for a short backoff, and a refetch is never tied to the request that triggered it.
-- Redirects from the JWKS endpoint are never followed. The JWKS travels over in-cluster HTTP; its integrity
-  depends on the NetworkPolicy (apps may only talk to platform-api), and internal TLS is a later hardening step.
+- Redirects from the JWKS endpoint are never followed. The JWKS should travel over HTTPS (`PLATFORM_JWKS_TLS_*`,
+  block 3): the SDK trusts the system roots, or a private CA through `Config.RootCAs` (`platformauth.LoadRootCAs`).
+  Plain `http` is still accepted for backwards compatibility, with a start-up warning; its integrity then depends
+  only on the NetworkPolicy (apps may only talk to platform-api).
 
 ### Platform-side guarantees
 
@@ -88,7 +90,7 @@ platform-api serves four listeners so that `/forwardauth` is never reachable thr
 | Listener | Routes | Reachable from |
 |---|---|---|
 | internal | `/forwardauth`, `/healthz`, `/readyz` (answers 404 for the JWKS) | Traefik (ForwardAuth) and kubelet (probes) via NetworkPolicy; app namespaces cannot reach it |
-| jwks | `GET /.well-known/jwks.json` only (`PLATFORM_JWKS_ADDR`, required) | app namespaces and the portal namespace via NetworkPolicy |
+| jwks | `GET /.well-known/jwks.json` only (`PLATFORM_JWKS_ADDR`, required; HTTPS-only with TLS 1.3 when `PLATFORM_JWKS_TLS_CERT_FILE` and `PLATFORM_JWKS_TLS_KEY_FILE` are set, plain HTTP otherwise) | app namespaces and the portal namespace via NetworkPolicy |
 | public | auth host browser routes: `/login`, `/oauth2/callback`, `/logout`, signed-out page, `/.well-known/jwks.json` | Traefik IngressRoute for the auth host only |
 | metrics | `/metrics` only (`PLATFORM_METRICS_ADDR`, required) | the monitoring namespace only, via NetworkPolicy |
 
@@ -206,6 +208,7 @@ The app is resolved only from `X-Forwarded-Host` (exact, lowercase) against `dep
 
 - `GET /.well-known/jwks.json` with `Cache-Control: max-age=300`; public keys only.
 - Apps fetch it from the JWKS listener (`PLATFORM_JWKS_ADDR`) through the in-cluster service URL, never through the public route, and refetch on unknown `kid` (rate limited, see block 1).
+- Internal TLS (optional, vendor-neutral): `PLATFORM_JWKS_TLS_CERT_FILE` and `PLATFORM_JWKS_TLS_KEY_FILE` (PEM; both or neither, otherwise a configuration error) make the JWKS listener serve HTTPS only, TLS 1.3 minimum (every in-cluster client, the Go SDK and Grafana, speaks it). The files may be produced by any issuer (cert-manager, Vault agent, a manual Secret); the key file follows the same permission policy as the other secret files (no group write, nothing for others), while the certificate is public material and is read without a permission check (still a regular file, size-limited and PEM-validated). The pair is re-read every 30 s and swapped in when its content changed, so new handshakes present the new certificate without a restart. An invalid initial pair stops start-up; an invalid replacement keeps serving the last good pair and is logged once per distinct error. The certificate must carry the SAN of the in-cluster service name apps use. Verifiers that use a private CA take it from a PEM bundle: `PORTAL_JWKS_CA_FILE` (portal), `HELLO_JWKS_CA_FILE` (example app), `Config.RootCAs` (SDK); without it the system roots apply. An `http` JWKS URL logs a warning at verifier start-up.
 
 ## 4. PostgreSQL data model (authorization)
 
