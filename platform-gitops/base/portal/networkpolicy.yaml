@@ -1,0 +1,53 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: default-deny}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+# Public listener: Traefik only. Kubelet probes (internal listener) come from the node, which kube-router never
+# filters; the metrics port (9090) has no rule on purpose (monitoring is allowed in separately).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: allow-ingress-traefik}
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: portal}}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: traefik}}
+          podSelector: {matchLabels: {app.kubernetes.io/name: traefik}}
+      ports:
+        - {protocol: TCP, port: 8080}
+---
+# DNS, PostgreSQL, JWKS on platform-api's internal listener and the integration probe through Traefik's websecure
+# entrypoint. Ports are the POD ports (policies are evaluated after the Service DNAT): 8443 is the chart's
+# `websecure` containerPort behind Service port 443.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: allow-egress}
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}
+          podSelector: {matchLabels: {k8s-app: kube-dns}}
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: platform-db}}
+          podSelector: {matchLabels: {app.kubernetes.io/name: postgres}}
+      ports:
+        - {protocol: TCP, port: 5432}
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: platform}}
+          podSelector: {matchLabels: {app.kubernetes.io/name: platform-api}}
+      ports:
+        - {protocol: TCP, port: 8081}
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: traefik}}
+          podSelector: {matchLabels: {app.kubernetes.io/name: traefik}}
+      ports:
+        - {protocol: TCP, port: 8443}

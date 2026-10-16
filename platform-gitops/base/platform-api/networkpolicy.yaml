@@ -5,8 +5,10 @@ spec:
   podSelector: {}
   policyTypes: [Ingress, Egress]
 ---
-# Internal listener: Traefik (ForwardAuth) and app namespaces (JWKS). /forwardauth trusts X-Forwarded-*,
-# so nothing else may reach this port.
+# Internal listener: Traefik (ForwardAuth) and app namespaces. The policy filters by PORT, not path: an app namespace
+# (portal.wysted.dev/app-namespace=true, which includes the portal) reaches the WHOLE internal port 8081 - JWKS but also
+# /forwardauth (which trusts X-Forwarded-*) and /readyz - not only JWKS. Anything that can label a namespace joins this set.
+# Nothing else may reach this port.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata: {name: allow-ingress-internal, namespace: platform}

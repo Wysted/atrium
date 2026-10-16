@@ -1,0 +1,122 @@
+# Portal process (cmd/portal): home and administration API of the platform. An app like any other: it sits behind the
+# entrypoint ForwardAuth and validates the assertion itself. Own database login role (member of platform_portal only).
+# Secret (created by overlays/local/up.sh): portal-pgpass (key pgpass).
+# PORTAL_APP_ID, PORTAL_ISSUER and PORTAL_PROBE_INTERVAL are set by the overlay (domain/seed specific).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: portal
+  labels: {app.kubernetes.io/name: portal, app.kubernetes.io/part-of: portal-platform}
+automountServiceAccountToken: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: portal
+  labels: {app.kubernetes.io/name: portal, app.kubernetes.io/part-of: portal-platform}
+spec:
+  # Two replicas on purpose: exercises the probe's advisory lock (single runner) and the shared decision caches.
+  replicas: 2
+  selector:
+    matchLabels: {app.kubernetes.io/name: portal}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: portal, app.kubernetes.io/part-of: portal-platform}
+    spec:
+      serviceAccountName: portal
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        # The pgpass Secret file belongs to root: the non-root process reads it through the group (mode 0440).
+        fsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      terminationGracePeriodSeconds: 30
+      # A fresh pod is not yet in kube-router's allow set for ~1-2 s: its first connection to PostgreSQL is
+      # refused. Wait with the pinned postgres image (pg_isready) instead of burning a restart/backoff.
+      initContainers:
+        - name: wait-for-db
+          image: postgres:18.6-trixie@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336
+          imagePullPolicy: IfNotPresent
+          command: [sh, -c, 'until pg_isready -q -h "$PGHOST" -p "$PGPORT"; do sleep 1; done']
+          env:
+            - {name: PGHOST, value: postgres.platform-db.svc.cluster.local}
+            - {name: PGPORT, value: "5432"}
+            # libpq cannot look up uid 65532 (no passwd entry) and pg_isready would report "no attempt".
+            - {name: PGUSER, value: wait_for_db}
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {cpu: 100m, memory: 32Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+      containers:
+        - name: portal
+          image: portal-portal:dev
+          imagePullPolicy: IfNotPresent
+          args: [serve]
+          env:
+            - {name: PORTAL_PUBLIC_ADDR, value: ":8080"}
+            - {name: PORTAL_INTERNAL_ADDR, value: ":8081"}
+            # /metrics only; the default-deny NetworkPolicy keeps it closed until monitoring is allowed in.
+            - {name: PORTAL_METRICS_ADDR, value: ":9090"}
+            - {name: PORTAL_APP_ID, value: app_REPLACED_BY_OVERLAY}
+            - {name: PORTAL_ISSUER, value: "https://auth.invalid"}
+            # In-cluster URL of the internal listener, never through the public route.
+            - {name: PORTAL_JWKS_URL, value: "http://platform-api-internal.platform.svc.cluster.local:8081/.well-known/jwks.json"}
+            # Integration probe: always dial Traefik's websecure service, whatever the deployment host is.
+            # TLS server name and Host stay the deployment host; the certificate is verified against the system roots.
+            - {name: PORTAL_PROBE_ADDR, value: "traefik.traefik.svc.cluster.local:443"}
+            # Connection through libpq-style env; the password comes from PGPASSFILE. No privileged-login escape hatch.
+            - {name: PGHOST, value: postgres.platform-db.svc.cluster.local}
+            - {name: PGPORT, value: "5432"}
+            - {name: PGUSER, value: portal_app}
+            - {name: PGDATABASE, value: platform}
+            - {name: PGSSLMODE, value: disable}
+            - {name: PGPASSFILE, value: /etc/portal/pgpass/pgpass}
+          ports:
+            - {name: public, containerPort: 8080}
+            - {name: internal, containerPort: 8081}
+            - {name: metrics, containerPort: 9090}
+          # Probes on the internal listener (kubelet does not go through Traefik, so no ForwardAuth).
+          livenessProbe:
+            httpGet: {path: /healthz, port: internal}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: {path: /readyz, port: internal}
+            periodSeconds: 5
+          # Endpoint removal and the Service rules reach Traefik a moment AFTER SIGTERM: without this the closed listener
+          # answers "connection refused" to requests still routed to the terminating pod (seen as a Traefik 500 on
+          # ForwardAuth when a replica is deleted). The image is distroless (no sleep binary): native sleep action.
+          # Shutdown budget: preStop 5 s + the process's shutdownTimeout 20 s = 25 s < terminationGracePeriodSeconds 30 s
+          # (the grace period also counts the preStop). Raise them together.
+          lifecycle:
+            preStop:
+              sleep: {seconds: 5}
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: pgpass, mountPath: /etc/portal/pgpass, readOnly: true}
+      volumes:
+        - name: pgpass
+          secret: {secretName: portal-pgpass, defaultMode: 0440}
+---
+# Public listener: the only target of the portal IngressRoute. The internal (probes) and metrics listeners have no
+# Service on purpose.
+apiVersion: v1
+kind: Service
+metadata:
+  name: portal
+  labels: {app.kubernetes.io/name: portal, app.kubernetes.io/component: public, app.kubernetes.io/part-of: portal-platform}
+spec:
+  selector: {app.kubernetes.io/name: portal}
+  ports:
+    - {name: public, port: 8080, targetPort: public}

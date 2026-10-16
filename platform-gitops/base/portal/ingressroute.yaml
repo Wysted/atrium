@@ -1,0 +1,17 @@
+# Exact Host() match, patched by the overlay: ForwardAuth answers 200 for the auth host and for preflights, so a router
+# without a pinned Host could expose the portal under another name. The entrypoint middlewares (strip-assertion,
+# forwardauth) apply to this route as to every websecure route. passHostHeader stays true (contract block 6): the portal
+# never derives its identity from X-Forwarded-Host.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: portal
+  labels: {app.kubernetes.io/name: portal, app.kubernetes.io/part-of: portal-platform}
+spec:
+  entryPoints: [websecure]
+  routes:
+    - kind: Rule
+      match: Host(`portal.invalid`)
+      services:
+        - {name: portal, port: 8080, passHostHeader: true}
+  tls: {}

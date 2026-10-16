@@ -82,6 +82,14 @@ spec:
           readinessProbe:
             httpGet: {path: /readyz, port: internal}
             periodSeconds: 5
+          # Endpoint removal and the Service rules reach Traefik a moment AFTER SIGTERM: without this the closed listener
+          # answers "connection refused" to requests still routed to the terminating pod (seen as a Traefik 500 on
+          # ForwardAuth when a replica is deleted). The image is distroless (no sleep binary): native sleep action.
+          # Shutdown budget: preStop 5 s + the process's shutdownTimeout 20 s = 25 s < terminationGracePeriodSeconds 30 s
+          # (the grace period also counts the preStop). Raise them together.
+          lifecycle:
+            preStop:
+              sleep: {seconds: 5}
           resources:
             requests: {cpu: 50m, memory: 64Mi}
             limits: {cpu: 500m, memory: 256Mi}

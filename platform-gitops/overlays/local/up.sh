@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Deploys the platform (PostgreSQL, platform-api, two hello apps) into the k3d cluster `portal`, seeds dev data,
+# Deploys the platform (PostgreSQL, platform-api, portal, two hello apps) into the k3d cluster `portal`, seeds dev data,
 # removes the forwardauth-cookie spike and enables the entrypoint ForwardAuth in Traefik.
 # Idempotent. Cluster commands go through ./tk; only image builds use the host docker.
 #
 #   platform-gitops/overlays/local/up.sh              # import images already built on the host
-#   BUILD=1 platform-gitops/overlays/local/up.sh      # rebuild both images first
+#   BUILD=1 platform-gitops/overlays/local/up.sh      # rebuild the images first
 #
 # Secrets live in .tools/secrets/k3d-* (dir 700, files 600; the KEK is 400), are generated once and loaded with
 # --from-file. They never appear in manifests, arguments or output. Do NOT regenerate the KEK: signing keys sealed
@@ -26,7 +26,7 @@ kc() { ./tk kubectl "$@"; }
 echo "==> secrets (generated once in $SECRETS)"
 umask 077
 mkdir -p "$SECRETS"
-for f in k3d-pg-admin-password k3d-pg-owner-password k3d-pg-api-password; do
+for f in k3d-pg-admin-password k3d-pg-owner-password k3d-pg-api-password k3d-pg-portal-password; do
   [[ -s "$SECRETS/$f" ]] || openssl rand -hex "$PASSWORD_BYTES" | tr -d '\n' > "$SECRETS/$f"
 done
 if [[ ! -s "$SECRETS/k3d-platform-kek" ]]; then
@@ -36,14 +36,16 @@ chmod 0400 "$SECRETS/k3d-platform-kek"
 # printf is a shell builtin: passwords never show up in an argument list.
 printf '%s:5432:platform:platform_owner:%s\n' "$DB_HOST" "$(<"$SECRETS/k3d-pg-owner-password")" > "$SECRETS/k3d-owner-pgpass"
 printf '%s:5432:platform:platform_api:%s\n' "$DB_HOST" "$(<"$SECRETS/k3d-pg-api-password")" > "$SECRETS/k3d-api-pgpass"
+printf '%s:5432:platform:portal_app:%s\n' "$DB_HOST" "$(<"$SECRETS/k3d-pg-portal-password")" > "$SECRETS/k3d-portal-pgpass"
 
 if [[ "${BUILD:-0}" == 1 ]]; then
   echo "==> building images"
   docker build -f platform/api/Dockerfile -t portal-platform-api:dev platform
   docker build -f platform/examples/hello/Dockerfile -t portal-hello:dev platform
+  docker build -f platform/api/Dockerfile.portal -t portal-portal:dev platform
 fi
 echo "==> importing images"
-./tk k3d image import portal-platform-api:dev portal-hello:dev -c portal
+./tk k3d image import portal-platform-api:dev portal-hello:dev portal-portal:dev -c portal
 
 secret() { # secret <ns> <name> <key=file>...
   local ns="$1" name="$2"; shift 2
@@ -63,11 +65,15 @@ secret platform-db postgres-bootstrap \
 secret platform platform-kek kek="$SECRETS/k3d-platform-kek"
 secret platform platform-owner-pgpass pgpass="$SECRETS/k3d-owner-pgpass"
 secret platform platform-api-pgpass pgpass="$SECRETS/k3d-api-pgpass"
+secret portal portal-pgpass pgpass="$SECRETS/k3d-portal-pgpass"
 
 echo "==> PostgreSQL"
 kc apply --dry-run=server -k "$REL/db" >/dev/null
 kc apply -k "$REL/db"
 kc -n platform-db rollout status statefulset/postgres --timeout="$ROLLOUT_TIMEOUT"
+
+echo "==> portal database roles (as the bootstrap superuser; migration 0009 needs platform_portal to exist)"
+"$HERE/roles.sh"
 
 echo "==> migrate Job (as platform_owner)"
 kc -n platform delete job migrate --ignore-not-found
@@ -78,6 +84,9 @@ if ! kc -n platform wait --for=condition=complete job/migrate --timeout=180s; th
   echo "migrate failed" >&2; exit 1
 fi
 kc -n platform logs job/migrate --tail=20
+
+echo "==> seed (before platform-api: it checks PLATFORM_PORTAL_APP_ID at start-up)"
+"$HERE/seed.sh"
 
 echo "==> platform-api + middlewares + auth host route"
 kc apply --dry-run=server -k "$REL/platform" >/dev/null
@@ -93,8 +102,11 @@ for n in a b; do
   kc -n "hello-$n" rollout status deploy/hello --timeout="$ROLLOUT_TIMEOUT"
 done
 
-echo "==> seed"
-"$HERE/seed.sh"
+echo "==> portal"
+kc apply --dry-run=server -k "$REL/portal" >/dev/null
+kc apply -k "$REL/portal"
+kc -n portal rollout restart deploy/portal >/dev/null
+kc -n portal rollout status deploy/portal --timeout="$ROLLOUT_TIMEOUT"
 
 echo "==> spike teardown (its entrypoint middlewares must not outlive it)"
 "$HERE/down-spike.sh"

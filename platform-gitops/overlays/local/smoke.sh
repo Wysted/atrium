@@ -16,20 +16,43 @@ A_HOST=hello-a.apps.wysted.dev
 B_HOST=hello-b.apps.wysted.dev
 A=https://$A_HOST
 B=https://$B_HOST
+P_HOST=portal.apps.wysted.dev
+P=https://$P_HOST
+HELLO_A_ID=app_01AFSXV5GZQ6FQ3BPFVTQWBBHV # seed.sql
+PORTAL_APP_ID=app_01HQ3PD7RTA5M2XKWV9N8B4CYE # seed.sql, PORTAL_APP_ID and PLATFORM_PORTAL_APP_ID in the overlays
+PROBE_DEADLINE_S=300 # the local portal probes every minute (PORTAL_PROBE_INTERVAL)
 CURL_IMG=curlimages/curl:8.11.1
 REVOKE_DEADLINE_MS=5000
 WORK="$(mktemp -d)"
 FAILS=0
+FAILED=()
+CURRENT_SECTION=""
 
 pass() { echo "  PASS: $*"; }
-fail() { echo "  FAIL: $*"; FAILS=$((FAILS + 1)); }
-section() { echo; echo "== $*"; }
+fail() { echo "  FAIL: $*"; FAILS=$((FAILS + 1)); local m="$*"; m="${m//$'\n'/ }"; FAILED+=("[$CURRENT_SECTION] ${m:0:300}"); }
+section() { CURRENT_SECTION="${1%%.*}"; echo; echo "== $*"; }
 check() { if [[ "$2" == *"$3"* ]]; then pass "$1 ($3)"; else fail "$1: got '$2', want '$3'"; fi; }
 check_not() { if [[ "$2" != *"$3"* ]]; then pass "$1"; else fail "$1: found '$3'"; fi; }
 now_ms() { date +%s%3N; }
 
 # req <jar> <curl args...>: headers in $WORK/h, body in $WORK/b; prints the status code.
 req() { local jar="$1"; shift; curl -s -o "$WORK/b" -D "$WORK/h" -w '%{http_code}' -b "$jar" -c "$jar" "$@"; }
+# req429 <jar> <curl args...>: like req, but waits out the /login rate limit (429 + Retry-After) a bounded number of times.
+# In k3d Traefik sees every client as 10.42.0.1, so all logins of a run (and of back-to-back runs) share ONE bucket per
+# platform-api replica (burst 30, 1 token / 2 s; see TODO.md "Real client IP"). The limit is never raised: the smoke
+# waits for the bucket instead.
+RATE_LIMIT_RETRIES=5
+req429() {
+  local code i
+  for ((i = 0; i <= RATE_LIMIT_RETRIES; i++)); do
+    code=$(req "$@")
+    [[ "$code" == 429 ]] || { echo "$code"; return; }
+    local secs; secs="$(header retry-after)"; secs="${secs:-2}"
+    echo "  (rate limited, waiting ${secs}s)" >&2
+    sleep "$secs"
+  done
+  echo "$code"
+}
 # header <name>: values of a response header from the last req.
 header() { tr -d '\r' < "$WORK/h" | awk -v k="$(echo "$1" | tr A-Z a-z)" 'tolower($1)==k":" {sub(/^[^:]*: */,""); print}'; }
 qparam() { python3 -c 'import sys,urllib.parse as u;print(u.parse_qs(u.urlparse(sys.argv[1]).query).get(sys.argv[2],[""])[0])' "$1" "$2"; }
@@ -44,9 +67,9 @@ login() {
   [[ "$code" == 302 ]] || { echo "login: first hop $code"; return 1; }
   loc="$(header location)"
   rd="$(qparam "$loc" rd)"; bind="$(qparam "$loc" bind)"
-  code=$(req "$jar" -H 'Accept: text/html' "$loc")
+  code=$(req429 "$jar" -H 'Accept: text/html' "$loc")
   if [[ "$code" == 200 ]]; then # login form: no central session yet
-    code=$(req "$jar" -X POST -H "Origin: $AUTH" -H 'Sec-Fetch-Site: same-origin' \
+    code=$(req429 "$jar" -X POST -H "Origin: $AUTH" -H 'Sec-Fetch-Site: same-origin' \
       --data-urlencode "email=$email" --data-urlencode "rd=$rd" --data-urlencode "bind=$bind" "$AUTH/login")
   fi
   [[ "$code" == 302 ]] || { echo "login: auth host $code"; return 1; }
@@ -57,10 +80,17 @@ login() {
   nav "$jar" "$(header location)"
 }
 
+# Groups the portal section creates (SQL as the owner: the trap must not depend on a session). Audit rows stay (append-only).
+drop_smoke_groups() {
+  $K -n platform-db exec postgres-0 -- psql -q -U platform_owner -d platform \
+    -c "DELETE FROM groups WHERE key IN ('smoke-group-ok', 'smoke-group-rejected')" >/dev/null 2>&1
+}
 cleanup() {
   $K delete pod probe-default --ignore-not-found --wait=false >/dev/null 2>&1
   $K -n hello-a delete pod probe-hello --ignore-not-found --wait=false >/dev/null 2>&1
+  $K delete namespace smoke-app --ignore-not-found --wait=false >/dev/null 2>&1
   $K delete -f "$REL/smoke-whoami.yaml" --ignore-not-found --wait=false >/dev/null 2>&1
+  drop_smoke_groups
   rm -rf "$WORK"
 }
 trap cleanup EXIT
@@ -72,7 +102,14 @@ $K run probe-default --image="$CURL_IMG" --restart=Never --command -- sleep 900 
 $K -n hello-a delete pod probe-hello --ignore-not-found >/dev/null 2>&1
 $K -n hello-a run probe-hello --image="$CURL_IMG" --restart=Never \
   --overrides='{"spec":{"automountServiceAccountToken":false,"securityContext":{"runAsNonRoot":true,"runAsUser":65532,"seccompProfile":{"type":"RuntimeDefault"}},"containers":[{"name":"probe-hello","image":"'"$CURL_IMG"'","command":["sleep","900"],"securityContext":{"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]}}}]}}' >/dev/null
+# Temporary APP namespace without any NetworkPolicy: its pod can send anything, so what it cannot reach is blocked by the
+# INGRESS policy of the destination (the app namespaces of the platform also have an egress policy that hides it).
+$K delete namespace smoke-app --ignore-not-found --wait=true >/dev/null 2>&1
+$K create namespace smoke-app >/dev/null
+$K label namespace smoke-app portal.wysted.dev/app-namespace=true portal.wysted.dev/smoke=true >/dev/null
+$K -n smoke-app run probe-open --image="$CURL_IMG" --restart=Never --command -- sleep 900 >/dev/null
 $K wait --for=condition=Ready pod/probe-default --timeout=120s >/dev/null
+$K -n smoke-app wait --for=condition=Ready pod/probe-open --timeout=120s >/dev/null
 $K -n hello-a wait --for=condition=Ready pod/probe-hello --timeout=120s >/dev/null
 
 section "1. Unauthenticated: navigation -> 302 with bind cookie; API -> 401 problem+json"
@@ -217,6 +254,13 @@ sleep 5
 probe() { # probe <ns> <pod> <url>: HTTP status or 000
   $K -n "$1" exec "$2" -- curl -s -o /dev/null --max-time 4 -w '%{http_code}' "$3" 2>/dev/null || true
 }
+wait_probe() { # wait_probe <ns> <pod> <url> <want> [timeout-s]: poll until the status is <want> (positive controls only)
+  local got="" end=$(( $(date +%s) + ${5:-30} ))
+  while (( $(date +%s) < end )); do
+    got="$(probe "$1" "$2" "$3")"; [[ "$got" == "$4" ]] && break; sleep 1
+  done
+  echo "$got"
+}
 probe_tcp() { # probe_tcp <ns> <pod> <host> <port>: connected / blocked
   if $K -n "$1" exec "$2" -- sh -c "curl -s --max-time 4 -o /dev/null telnet://$3:$4 </dev/null; [ \$? -eq 28 ]" >/dev/null 2>&1; then echo connected; else echo blocked; fi
 }
@@ -233,7 +277,7 @@ check "hello-a pod -> platform-api-internal /healthz" "$(probe hello-a probe-hel
 check "platform-api reaches PostgreSQL (readyz via internal listener)" "$(probe hello-a probe-hello http://platform-api-internal.platform.svc.cluster.local:8081/readyz)" 200
 
 section "10. Pods: no ServiceAccount token, DB role, KEK mode"
-for target in "platform deploy/platform-api" "hello-a deploy/hello" "hello-b deploy/hello" "platform-db statefulset/postgres"; do
+for target in "platform deploy/platform-api" "portal deploy/portal" "hello-a deploy/hello" "hello-b deploy/hello" "platform-db statefulset/postgres"; do
   set -- $target
   tmpl=".spec.template.spec"
   auto="$($K -n "$1" get "$2" -o jsonpath="{$tmpl.automountServiceAccountToken}")"
@@ -283,5 +327,168 @@ if [[ "${#seen[@]}" == 1 && -n "${seen[200]:-}" ]]; then pass "80/80 requests 20
 $K -n platform rollout status deploy/platform-api --timeout=120s >/dev/null
 JN="$WORK/dave"; code=$(login "$JN" bob@example.com "$A"); check "a fresh login flow still works afterwards" "$code" 200
 
+# --- portal (contract block 6) --------------------------------------------------------------------------------------
+# json_get <file> <python expression over d>: value from a JSON body.
+json_get() { python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$1" "$2" 2>/dev/null; }
+# mutate <jar> <method> <url> <sec-fetch-site|-> <content-type|-> [json body]: status of a portal mutation.
+mutate() {
+  local jar="$1" method="$2" url="$3" site="$4" ctype="$5" body="${6:-}" args=()
+  [[ "$site" != - ]] && args+=(-H "Sec-Fetch-Site: $site")
+  [[ "$ctype" != - ]] && args+=(-H "Content-Type: $ctype")
+  [[ -n "$body" ]] && args+=(-d "$body")
+  api "$jar" -X "$method" -H "Origin: $P" "${args[@]}" "$url"
+}
+
+# Section 12 deletes a platform-api replica: a probe round that overlaps it is legitimately inconclusive (control sample
+# fails, WARN). Findings are judged from here on; the secrets-in-logs checks still scan the whole log.
+SINCE_13="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+section "13. Portal home through Traefik with the fake login"
+JP="$WORK/portal-alice"
+code=$(nav "$JP" "$P/"); check "portal navigation without session" "$code" 302
+check "to the auth host login" "$(header location)" "$AUTH/login?"
+check "carries rd for the portal host" "$(header location)" "rd=https%3A%2F%2F$P_HOST%2F"
+code=$(api "$WORK/portal-anon" "$P/api/v1/me"); check "API without session" "$code" 401
+login "$JP" alice@example.com "$P" >/dev/null
+code=$(api "$JP" "$P/api/v1/me"); check "GET /api/v1/me" "$code" 200
+echo "  body: $(cat "$WORK/b")"; check "alice profile" "$(cat "$WORK/b")" alice@example.com
+check "alice is not a platform admin" "$(json_get "$WORK/b" 'd["permissions"]["platform_admin"]')" False
+code=$(api "$JP" "$P/api/v1/me/apps"); check "GET /api/v1/me/apps" "$code" 200
+apps="$(cat "$WORK/b")"; echo "  hosts: $(json_get "$WORK/b" '[h["host"] if "host" in h else h for h in d["apps"]]')"
+check "lists hello-a" "$apps" "$A_HOST"; check "lists hello-b" "$apps" "$B_HOST"
+check_not "does not list the portal itself" "$apps" "$P_HOST"
+code=$(api "$JP" "$P/api/v1/groups"); check "alice (not admin) cannot list groups" "$code" 403
+
+section "14. Admin mutations: same-origin JSON accepted; same-site/cross-site 403; text/plain 415"
+JAD="$WORK/portal-admin"
+login "$JAD" admin@example.com "$P" >/dev/null
+code=$(api "$JAD" "$P/api/v1/me"); check "admin GET /api/v1/me" "$code" 200
+check "admin is a platform admin" "$(json_get "$WORK/b" 'd["permissions"]["platform_admin"]')" True
+# Re-runnable: remove a leftover of an interrupted run through the API first (the trap also removes it by SQL).
+code=$(api "$JAD" "$P/api/v1/groups")
+for old in $(json_get "$WORK/b" '" ".join(g["id"] for g in d.get("groups", d.get("items", [])) if g["key"].startswith("smoke-group-"))'); do
+  code=$(mutate "$JAD" DELETE "$P/api/v1/groups/$old" same-origin application/json); echo "  removed leftover group $old ($code)"
+done
+code=$(mutate "$JAD" POST "$P/api/v1/groups" same-origin application/json '{"key":"smoke-group-ok","name":"Smoke"}'); check "POST same-origin + JSON" "$code" 201
+gid="$(json_get "$WORK/b" 'd["id"]')"; echo "  created group $gid"
+check_not "same-origin response has no Access-Control-*" "$(tr -d '\r' < "$WORK/h" | tr A-Z a-z)" "access-control-"
+BAD='{"key":"smoke-group-rejected","name":"Smoke"}'
+code=$(mutate "$JAD" POST "$P/api/v1/groups" same-site application/json "$BAD"); check "POST Sec-Fetch-Site same-site" "$code" 403
+code=$(mutate "$JAD" POST "$P/api/v1/groups" cross-site application/json "$BAD"); check "POST Sec-Fetch-Site cross-site" "$code" 403
+code=$(mutate "$JAD" POST "$P/api/v1/groups" same-origin text/plain "$BAD"); check "POST same-origin + text/plain" "$code" 415
+code=$(mutate "$JAD" POST "$P/api/v1/groups" same-origin application/x-www-form-urlencoded "key=smoke-group-rejected"); check "POST same-origin + form" "$code" 415
+code=$(api "$JAD" -X POST -H "Origin: $A" -H 'Content-Type: application/json' -d "$BAD" "$P/api/v1/groups"); check "POST sibling Origin, no Sec-Fetch-Site" "$code" 403
+code=$(mutate "$JAD" DELETE "$P/api/v1/groups/$gid" same-site application/json); check "DELETE same-site" "$code" 403
+code=$(mutate "$JAD" DELETE "$P/api/v1/groups/$gid" same-origin -); check "DELETE without Content-Type" "$code" 415
+code=$(api "$JAD" -H 'Sec-Fetch-Site: same-site' "$P/api/v1/groups"); check "GET /api/* with same-site (read isolation)" "$code" 403
+code=$(api "$JAD" "$P/api/v1/groups"); check "admin lists groups" "$code" 200
+check_not "no rejected mutation was applied" "$(cat "$WORK/b")" smoke-group-rejected
+check "the accepted one was" "$(cat "$WORK/b")" smoke-group-ok
+code=$(mutate "$JAD" DELETE "$P/api/v1/groups/$gid" same-origin application/json); check "DELETE same-origin + JSON (cleanup)" "$code" 204
+
+section "15. Portal responses: security headers, no CORS, /metrics not served on the public host"
+code=$(api "$JAD" -H 'Origin: https://evil.example' "$P/api/v1/me"); check "GET with a foreign Origin" "$code" 200
+hdrs="$(tr -d '\r' < "$WORK/h" | tr A-Z a-z)"
+for h in "content-security-policy: default-src 'none'; frame-ancestors 'none'" "strict-transport-security: max-age=63072000; includesubdomains" \
+         "x-frame-options: deny" "cross-origin-opener-policy: same-origin" "cross-origin-resource-policy: same-origin" \
+         "referrer-policy: no-referrer" "x-content-type-options: nosniff"; do check "header" "$hdrs" "$h"; done
+check_not "no Access-Control-* on the response" "$hdrs" "access-control-"
+code=$(curl -s -o "$WORK/b" -D "$WORK/h" -w '%{http_code}' -X OPTIONS -H "Origin: https://evil.example" -H 'Access-Control-Request-Method: POST' "$P/api/v1/groups")
+echo "  preflight status: $code"; check_not "no Access-Control-* on a preflight" "$(tr -d '\r' < "$WORK/h" | tr A-Z a-z)" "access-control-"
+code=$(api "$JAD" "$P/metrics"); check "authenticated /metrics on the public host" "$code" 404
+code=$(curl -s -o "$WORK/b" -w '%{http_code}' -H 'Accept: application/json' "$P/metrics"); check "anonymous /metrics on the public host (ForwardAuth, API request)" "$code" 401
+for path in /healthz /readyz; do
+  code=$(api "$JAD" "$P$path"); check "authenticated $path on the public host" "$code" 404
+done
+
+section "16. Metrics and internal ports are closed to app namespaces; JWKS stays open"
+# Negatives come only from smoke-app: an app-labelled namespace WITHOUT policies of its own, so the destination's ingress
+# policy alone decides (hello-a also has an egress policy that would hide an ingress regression). hello-a keeps the JWKS
+# positive. Every negative has a positive first: the listener is up (apiserver pod proxy, which comes from the node and is
+# never filtered) and a pod in the same position reaches what it may.
+PA_PODS="$($K -n platform get pods -l app.kubernetes.io/name=platform-api -o jsonpath='{.items[*].metadata.name}')"
+PO_PODS="$($K -n portal get pods -l app.kubernetes.io/name=portal -o jsonpath='{.items[*].metadata.name}')"
+pod_ip() { $K -n "$1" get pod "$2" -o jsonpath='{.status.podIP}'; }
+metrics_up() { # metrics_up <ns> <pod>: the metrics listener serves go_goroutines (through the apiserver proxy)
+  $K get --raw "/api/v1/namespaces/$1/pods/$2:9090/proxy/metrics" 2>/dev/null | grep -c '^go_goroutines ' || true
+}
+echo "  platform-api pods: $PA_PODS; portal pods: $PO_PODS"
+sleep 5
+check "hello-a: JWKS on platform-api-internal:8081 (positive control)" "$(wait_probe hello-a probe-hello http://platform-api-internal.platform.svc.cluster.local:8081/.well-known/jwks.json 200)" 200
+check "smoke-app: JWKS on platform-api-internal:8081 (positive control)" "$(wait_probe smoke-app probe-open http://platform-api-internal.platform.svc.cluster.local:8081/.well-known/jwks.json 200)" 200
+for pod in $PA_PODS; do
+  ip="$(pod_ip platform "$pod")"
+  # The replacement replica of section 12 may not be in kube-router's allow set yet: wait until its JWKS answers.
+  check "smoke-app: platform-api $pod :8081 JWKS by pod IP (positive control)" "$(wait_probe smoke-app probe-open http://$ip:8081/.well-known/jwks.json 200)" 200
+  check "platform-api $pod: metrics listener is up (apiserver proxy)" "$(metrics_up platform "$pod")" 1
+  check "smoke-app -> platform-api $pod $ip:9090/metrics" "$(probe smoke-app probe-open http://$ip:9090/metrics)" 000
+  check "smoke-app -> platform-api $pod $ip:8080 (public listener, Traefik only)" "$(probe smoke-app probe-open http://$ip:8080/login)" 000
+done
+for pod in $PO_PODS; do
+  ip="$(pod_ip portal "$pod")"
+  check "portal $pod: metrics listener is up (apiserver proxy)" "$(metrics_up portal "$pod")" 1
+  check "smoke-app -> portal $pod $ip:9090/metrics" "$(probe smoke-app probe-open http://$ip:9090/metrics)" 000
+  check "smoke-app -> portal $pod $ip:8080 (public listener, Traefik only)" "$(probe smoke-app probe-open http://$ip:8080/api/v1/me)" 000
+  check "smoke-app -> portal $pod $ip:8081 (internal listener, kubelet only)" "$(probe smoke-app probe-open http://$ip:8081/healthz)" 000
+  check "default ns -> portal $pod $ip:8080" "$(probe default probe-default http://$ip:8080/api/v1/me)" 000
+done
+# The postgres policy now also admits the portal namespace: an app namespace must still not reach the database.
+check "postgres is up (pg_isready in the pod)" "$($K -n platform-db exec postgres-0 -- pg_isready -h 127.0.0.1 -p 5432 2>&1)" "accepting connections"
+check "platform-api reaches PostgreSQL (readyz, positive control)" "$(probe smoke-app probe-open http://platform-api-internal.platform.svc.cluster.local:8081/readyz)" 200
+check "probe_tcp sees an open port (positive control: platform-api-internal:8081)" "$(probe_tcp smoke-app probe-open platform-api-internal.platform.svc.cluster.local 8081)" connected
+check "smoke-app (app namespace) -> postgres:5432" "$(probe_tcp smoke-app probe-open postgres.platform-db.svc.cluster.local 5432)" blocked
+
+section "17. Integration probe: hello-a health shows an ok probe and a seen host (within ${PROBE_DEADLINE_S}s)"
+JADH="$WORK/portal-admin-health"; login "$JADH" admin@example.com "$P" >/dev/null
+# Traffic on hello-a so last_seen_at is set whatever the flusher interval is.
+JAS="$WORK/alice-seen"; login "$JAS" alice@example.com "$A" >/dev/null
+for _ in 1 2 3; do api "$JAS" "$A/api/whoami" >/dev/null; done
+t0=$(date +%s); status=""; seen=""; fresh=""
+while (( $(date +%s) - t0 < PROBE_DEADLINE_S )); do
+  code=$(api "$JADH" "$P/api/v1/apps/$HELLO_A_ID/health")
+  if [[ "$code" == 200 ]]; then
+    status="$(json_get "$WORK/b" 'd["app"]["deployments"][0]["last_probe_status"]')"
+    seen="$(json_get "$WORK/b" 'd["app"]["deployments"][0]["last_seen_at"]')"
+    fresh="$(json_get "$WORK/b" '__import__("datetime").datetime.now(__import__("datetime").timezone.utc) - __import__("datetime").datetime.fromisoformat(d["app"]["deployments"][0]["last_probe_at"].replace("Z","+00:00")) < __import__("datetime").timedelta(minutes=3)')"
+    [[ "$status" == ok && -n "$seen" && "$seen" != None && "$fresh" == True ]] && break
+  fi
+  sleep 5
+done
+echo "  after $(( $(date +%s) - t0 )) s: HTTP $code last_probe_status=$status last_seen_at=$seen probed in the last 3 min=$fresh"
+echo "  problems: $(json_get "$WORK/b" 'd["problems"]')"
+check "last_probe_status" "$status" ok
+if [[ -n "$seen" && "$seen" != None ]]; then pass "last_seen_at set ($seen)"; else fail "last_seen_at is null"; fi
+check "probe rounds keep running (last_probe_at < 3 min)" "$fresh" True
+code=$(api "$JADH" "$P/api/v1/apps/$PORTAL_APP_ID/health")
+check "portal's own app health" "$code" 200
+check "portal host probed ok (control sample)" "$(json_get "$WORK/b" 'd["app"]["deployments"][0]["last_probe_status"]')" ok
+
+section "18. Portal pods: stable, and logs hold no assertion or cookie values"
+echo "  $($K -n portal get pods -l app.kubernetes.io/name=portal -o jsonpath='{range .items[*]}{.metadata.name}{" ready="}{.status.containerStatuses[0].ready}{" restarts="}{.status.containerStatuses[0].restartCount}{"\n"}{end}')"
+check "all portal pods ready" "$($K -n portal get deploy portal -o jsonpath='{.status.readyReplicas}')" 2
+restarts="$($K -n portal get pods -l app.kubernetes.io/name=portal -o jsonpath='{range .items[*]}{.status.containerStatuses[0].restartCount}{" "}{end}')"
+if [[ "$restarts" =~ [1-9] ]]; then fail "restarts: $restarts"; else pass "restart counts: $restarts"; fi
+check_not "no CrashLoopBackOff" "$($K -n portal get pods -o jsonpath='{.items[*].status.containerStatuses[*].state.waiting.reason}')" CrashLoop
+$K -n portal logs -l app.kubernetes.io/name=portal -c portal --prefix=false --tail=-1 > "$WORK/portal.log" 2>/dev/null
+echo "  portal log lines scanned: $(wc -l < "$WORK/portal.log"); WARN/ERROR lines: $(grep -cE '"level":"(WARN|ERROR)"' "$WORK/portal.log")"
+check_not "no JWT-looking value (eyJ...) in the portal logs" "$(cat "$WORK/portal.log")" "eyJ"
+check_not "no cookie names in the portal logs" "$(cat "$WORK/portal.log")" "__Host-Http-platform"
+check_not "no Platform-Assertion in the portal logs" "$(cat "$WORK/portal.log")" "Platform-Assertion"
+for jar in "$JAD" "$JP"; do
+  for name in __Host-Http-platform_app __Host-Http-platform_session; do
+    v="$(awk -v n="$name" '$6==n{print $7}' "$jar")"
+    [[ -n "$v" ]] && { grep -qF "$v" "$WORK/portal.log" && fail "$name value found in the portal logs" || pass "$name value not in the portal logs"; }
+  done
+done
+# The WARN of the OPTIONS preflight of section 15 (no assertion, 401) is expected; anything else (probe findings) is not.
+$K -n portal logs -l app.kubernetes.io/name=portal -c portal --prefix=false --tail=-1 --since-time="$SINCE_13" > "$WORK/portal-since.log" 2>/dev/null
+echo "  lines since section 13: $(wc -l < "$WORK/portal-since.log")"
+check_not "no WARN since section 13 besides the rejected preflight (probe findings, inconclusive rounds)" "$(grep '"level":"WARN"' "$WORK/portal-since.log" | grep -v 'platform assertion rejected')" '"level":"WARN"'
+check_not "no ERROR level (PORTAL_PROBE_INSECURE_TLS and PORTAL_ALLOW_PRIVILEGED_DB_LOGIN are off)" "$(cat "$WORK/portal.log")" '"level":"ERROR"'
+
 echo
-if (( FAILS == 0 )); then echo "ALL CHECKS PASSED"; else echo "$FAILS CHECK(S) FAILED"; exit 1; fi
+if (( FAILS == 0 )); then echo "ALL CHECKS PASSED"; else
+  echo "$FAILS CHECK(S) FAILED:"
+  for f in "${FAILED[@]}"; do echo "  - section $f"; done
+  exit 1
+fi

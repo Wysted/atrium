@@ -15,6 +15,9 @@ patches:
                 env:
                   - {name: PLATFORM_AUTH_HOST, value: auth.apps.wysted.dev}
                   - {name: PLATFORM_ISSUER, value: "https://auth.apps.wysted.dev"}
+                  # The portal app (seed.sql, reserved initiative `platform`): any active user may open it.
+                  # Same id as PORTAL_APP_ID in ../portal.
+                  - {name: PLATFORM_PORTAL_APP_ID, value: app_01HQ3PD7RTA5M2XKWV9N8B4CYE}
   - target: {kind: IngressRoute, name: platform-api}
     patch: |-
       - {op: replace, path: /spec/routes/0/match, value: "Host(`auth.apps.wysted.dev`)"}
