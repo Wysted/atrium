@@ -93,35 +93,44 @@ func TestPortalPoolRunsAsThePortalRole(t *testing.T) {
 // A portal role that was granted more than the schema intends is refused at startup.
 func TestCheckPortalRoleRefusesExtraPrivileges(t *testing.T) {
 	t.Parallel()
-	for name, grant := range map[string]string{
-		"select on signing_keys":     `GRANT SELECT ON signing_keys TO platform_portal`,
-		"column select on oauth":     `GRANT SELECT (token_hash) ON oauth_flows TO platform_portal`,
-		"delete on login_codes":      `GRANT DELETE ON login_codes TO platform_portal`,
-		"update of user email":       `GRANT UPDATE (email) ON users TO platform_portal`,
-		"insert on users":            `GRANT INSERT ON users TO platform_portal`,
-		"delete on users":            `GRANT DELETE ON users TO platform_portal`,
-		"token hash of sessions":     `GRANT SELECT (token_hash) ON sessions TO platform_portal`,
-		"token hash of app sessions": `GRANT SELECT (token_hash) ON app_sessions TO platform_portal`,
-		"write on platform_admins":   `GRANT INSERT ON platform_admins TO platform_portal`,
-		"write on access_denials":    `GRANT UPDATE ON access_denials TO platform_portal`,
-		"update on audit_events":     `GRANT UPDATE ON audit_events TO platform_portal`,
-		"create in public":           `GRANT CREATE ON SCHEMA public TO platform_portal`,
-		"truncate on apps":           `GRANT TRUNCATE ON apps TO platform_portal`,
-		"truncate on initiatives":    `GRANT TRUNCATE ON initiatives TO platform_portal`,
-		"trigger on groups":          `GRANT TRIGGER ON groups TO platform_portal`,
-		"trigger on audit_events":    `GRANT TRIGGER ON audit_events TO platform_portal`,
-		"references on deployments":  `GRANT REFERENCES ON deployments TO platform_portal`,
-		"references column on users": `GRANT REFERENCES (id) ON users TO platform_portal`,
-		"truncate on sessions":       `GRANT TRUNCATE ON sessions TO platform_portal`,
+	for _, tt := range []struct{ name, sql, want string }{
+		{"select on signing_keys", `GRANT SELECT ON signing_keys TO platform_portal`, "SELECT ON signing_keys"},
+		{"column select on oauth", `GRANT SELECT (token_hash) ON oauth_flows TO platform_portal`, "SELECT ON oauth_flows.token_hash"},
+		{"delete on login_codes", `GRANT DELETE ON login_codes TO platform_portal`, "DELETE ON login_codes"},
+		{"update of user email", `GRANT UPDATE (email) ON users TO platform_portal`, "UPDATE ON users.email"},
+		{"insert on users", `GRANT INSERT ON users TO platform_portal`, "INSERT ON users"},
+		{"delete on users", `GRANT DELETE ON users TO platform_portal`, "DELETE ON users"},
+		{"token hash of sessions", `GRANT SELECT (token_hash) ON sessions TO platform_portal`, "SELECT ON sessions.token_hash"},
+		{"token hash of app sessions", `GRANT SELECT (token_hash) ON app_sessions TO platform_portal`, "SELECT ON app_sessions.token_hash"},
+		{"write on platform_admins", `GRANT INSERT ON platform_admins TO platform_portal`, "INSERT ON platform_admins"},
+		{"write on access_denials", `GRANT UPDATE ON access_denials TO platform_portal`, "UPDATE ON access_denials"},
+		{"update on audit_events", `GRANT UPDATE ON audit_events TO platform_portal`, "UPDATE ON audit_events"},
+		{"create in public", `GRANT CREATE ON SCHEMA public TO platform_portal`, "create objects"},
+		{"truncate on apps", `GRANT TRUNCATE ON apps TO platform_portal`, "TRUNCATE ON apps"},
+		{"truncate on initiatives", `GRANT TRUNCATE ON initiatives TO platform_portal`, "TRUNCATE ON initiatives"},
+		{"trigger on groups", `GRANT TRIGGER ON groups TO platform_portal`, "TRIGGER ON groups"},
+		{"trigger on audit_events", `GRANT TRIGGER ON audit_events TO platform_portal`, "TRIGGER ON audit_events"},
+		{"references on deployments", `GRANT REFERENCES ON deployments TO platform_portal`, "REFERENCES ON deployments"},
+		{"references column on users", `GRANT REFERENCES (id) ON users TO platform_portal`, "REFERENCES ON users.id"},
+		{"truncate on sessions", `GRANT TRUNCATE ON sessions TO platform_portal`, "TRUNCATE ON sessions"},
+		{"maintain on apps", `GRANT MAINTAIN ON apps TO platform_portal`, "MAINTAIN ON apps"},
+		{"grant option on apps", `GRANT SELECT ON apps TO platform_portal WITH GRANT OPTION`, "SELECT WITH GRANT OPTION ON apps"},
+		{"select on a view", `CREATE VIEW rogue_view AS SELECT 1 AS x; GRANT SELECT ON rogue_view TO platform_portal`, "SELECT ON rogue_view"},
+		{"usage on a sequence", `CREATE SEQUENCE rogue_seq; GRANT USAGE ON SEQUENCE rogue_seq TO platform_portal`, "USAGE ON rogue_seq"},
+		{"select on an unknown table", `CREATE TABLE rogue (x int); GRANT SELECT ON rogue TO platform_portal`, "SELECT ON rogue"},
+		{"delete on a denials partition", `SELECT create_access_denials_partition((current_date + interval '2 months')::date);
+			DO $$ BEGIN EXECUTE format('GRANT DELETE ON %I TO platform_portal',
+				'access_denials_' || to_char(current_date + interval '2 months', 'YYYY_MM')); END $$`, "DELETE ON access_denials_"},
+		{"missing select on apps", `REVOKE SELECT ON apps FROM platform_portal`, "missing privilege SELECT ON apps"},
 	} {
-		t.Run(name, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			owner := newTestDB(t)
-			mustExec(t, owner, grant)
+			mustExec(t, owner, tt.sql)
 			ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
 			defer cancel()
 			_, _, err := postgres.OpenPortalPool(ctx, owner.Config())
-			if err == nil || !strings.Contains(err.Error(), "refusing to run") {
-				t.Fatalf("err = %v, want a refusal", err)
+			if err == nil || !strings.Contains(err.Error(), "refusing to run") || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("err = %v, want a refusal mentioning %q", err, tt.want)
 			}
 		})
 	}

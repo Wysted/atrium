@@ -63,8 +63,8 @@ Pending work and open questions for the portal platform. Detailed context lives 
 - [x] **Probe interval gauge for alert rules.** Closed 2026-10-16. The portal exposes `portal_probe_interval_seconds`
   (0 = disabled) and `portal_probe_last_write_timestamp_seconds`; `ProbeNotWriting` fires when the last write is older
   than 3 intervals and never when the probe is disabled.
-- [ ] **Reduce `platform_runtime`.** Once the portal owns administration, drop its write access to the authorization
-  tables except what ForwardAuth and login need.
+- [x] **Reduce `platform_runtime`.** Closed 2026-10-16. Migration 0010 leaves it read-only on the authorization tables
+  plus column-level UPDATE where login, sessions and last-seen need it; `CheckRuntimeRole` refuses to start on any drift.
 - [ ] **Cookie prefix support in Safari.** `__Host-Http-` is enforced by Chrome 140+ and Firefox 143+; revisit Safari.
 - [ ] **Grafana behind ForwardAuth (auth.jwt validating `Platform-Assertion`: verify ES256 and `typ` support).** Grafana is
   only reachable by port-forward with a generated admin password. To publish it through Traefik as a regular app, Grafana's

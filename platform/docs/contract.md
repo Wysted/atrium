@@ -332,6 +332,38 @@ Research notes: Engram `architecture/portal-login-research`.
   `__Host-Http-platform_app`, `__Host-Http-platform_login`, `__Host-Http-platform_bind`.
 - Pinned versions: golang-jwt/jwt v5.3.1 (no v6 exists), coreos/go-oidc v3.21.0, golang.org/x/oauth2 v0.37.0, jackc/pgx v5.11.0.
 
+### `platform_runtime` privileges
+
+The portal owns administration, so platform-api runs with the minimum that ForwardAuth and login need (migration 0010).
+Anything else is refused at start-up: `CheckRuntimeRole` compares the privileges the role holds, table-wide and per
+column, with the expected set in both directions (an extra grant or a missing one stops the process).
+
+- Read only: `group_members`, `initiatives`, `initiative_roles`, `apps`, `initiative_access`.
+- No access: `groups`, `platform_admins`, `schema_migrations`.
+- `users`: SELECT, INSERT, and UPDATE of `email`, `name`, `updated_at` only (JIT login upsert); `status` and `google_sub` are never writable.
+- `sessions`: SELECT, INSERT, DELETE, UPDATE of `last_seen_at`. `app_sessions`: SELECT, INSERT, DELETE.
+- `login_codes`, `oauth_flows`: SELECT, INSERT, DELETE, UPDATE of `consumed_at`.
+- `deployments`: SELECT and UPDATE of `last_seen_at` only (the `FOR NO KEY UPDATE SKIP LOCKED` row lock needs UPDATE on at
+  least one column); `host` and `app_id` are read-only.
+- `signing_keys`, `audit_events` (append-only), `access_denials` (append-only) and the partition functions are unchanged.
+
+What the check covers (the portal role, `CheckPortalRole`, uses the same mechanism against its own grant set from migration 0009):
+
+- Every privilege of PostgreSQL 18 on tables, partitioned tables, views, materialized views, foreign tables (SELECT,
+  INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN) and sequences (USAGE, SELECT, UPDATE) of schema `public`,
+  each also probed `WITH GRANT OPTION`. A relation that is not in the expected set must carry nothing.
+- A partition is held to its top-level parent: a direct grant on a leaf beyond the parent's set is drift (a leaf with
+  less is normal, partitions get no ACL of their own).
+- Membership of the effective role in any predefined `pg_*` role, direct or inherited, is refused.
+
+Operational notes:
+
+- The check runs once per pool, at start-up. Drift introduced afterwards is detected on the next restart.
+- Table-level SELECT and INSERT also cover columns added later, while UPDATE is column-level here: a new column needs an
+  explicit `GRANT UPDATE (col)` (and an entry in `runtimeGrants`) to be writable.
+- Deployment ordering: the migrate Job must complete before platform-api (and the portal) roll out. Otherwise new pods
+  see the old grants and refuse to start (fail closed); the old pods keep serving.
+
 ### Open items
 
 - Verified live (2026-10-16, Cloud Identity Free on `wysted.dev`): a primary-domain user signs in with `hd = wysted.dev`,
@@ -757,6 +789,4 @@ the `platform_portal` role may select; no extra index is kept: `unknown_host` ro
 
 - Non-browser clients (CLI, automation replacing `grant.sh`) have no way to authenticate to the portal API yet:
   today everything enters through the session cookie.
-- `platform_runtime` still has write access to the authorization tables; once the portal owns administration it
-  can be reduced to what ForwardAuth and login need (JIT users, sessions).
 - Reka UI injects `<style>` in some components: verify each one used against `style-src 'self'`.
