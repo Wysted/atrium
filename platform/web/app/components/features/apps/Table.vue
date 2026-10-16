@@ -7,7 +7,8 @@ import type { TableColumn } from '~/types/ui'
  * by `hostUrl()` (a value that fails the hostname check renders as plain text, never as a link). With `canEdit`
  * (platform admins) every host has a remove button and an actions column offers rename, disable/enable and add
  * host; the panel owns the dialogs and the requests. `busyId` marks the app whose request is running.
- * The name cell is a focus target (`id="app-<id>"`, `tabindex="-1"`) so the panel can move focus to a new row.
+ * Each host shows the stored result of its last probe (`FeaturesHealthProbeBadge`) and each app links to its health
+ * page. The name cell is a focus target (`id="app-<id>"`, `tabindex="-1"`) so the panel can move focus to a new row.
  */
 const props = defineProps<{
   apps: App[]
@@ -27,6 +28,7 @@ const columns = computed<TableColumn[]>(() => [
   { key: 'name', label: 'App' },
   { key: 'status', label: 'Status' },
   { key: 'hosts', label: 'Hosts' },
+  { key: 'health', label: 'Health' },
   ...(props.canEdit ? [{ key: 'actions', label: 'Actions', align: 'end' as const, hideLabel: true }] : []),
 ])
 </script>
@@ -65,6 +67,10 @@ const columns = computed<TableColumn[]>(() => [
               <BaseText v-else as="span" size="sm">
                 {{ d.host }}
               </BaseText>
+              <FeaturesHealthProbeBadge :status="d.last_probe_status" />
+              <BaseText v-if="d.last_probe_at" as="time" size="xs" tone="muted" :datetime="d.last_probe_at" :title="formatTimestamp(d.last_probe_at)">
+                {{ formatRelative(d.last_probe_at) }}
+              </BaseText>
               <BaseButton
                 v-if="canEdit"
                 size="sm"
@@ -82,6 +88,13 @@ const columns = computed<TableColumn[]>(() => [
           No hosts
         </BaseText>
       </template>
+      <BaseLink
+        v-else-if="column.key === 'health'"
+        :to="`/admin/initiatives/${encodeURIComponent(row.initiative_id)}/apps/${encodeURIComponent(row.id)}/health`"
+        :aria-label="`Health of app ${appLabel(row)}`"
+      >
+        Health
+      </BaseLink>
       <BaseCluster v-else-if="column.key === 'actions'" justify="end" :gap="2">
         <BaseButton
           size="sm"

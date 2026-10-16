@@ -183,9 +183,15 @@ export interface GroupList {
 /** `apps.status` (portal.AppStatusActive / AppStatusDisabled). */
 export type AppStatus = 'active' | 'disabled'
 
+/** `deployments.last_probe_status` (portal.ProbeOK, ProbeUnprotected, ProbeUnexpected, ProbeUnreachable). */
+export type ProbeStatus = 'ok' | 'unprotected' | 'unexpected' | 'unreachable'
+
+/** A probe status as received: the vocabulary may grow, so the UI falls back to a neutral "Unknown result" (`probeStatusCopy`). */
+export type ReceivedProbeStatus = ProbeStatus | (string & {})
+
 /**
  * A host of an app (portalhttp `deploymentJSON`). The telemetry fields are null until the deployment is seen or
- * probed; the UI does not show them yet.
+ * probed (`last_probe_status` is one of `ProbeStatus` when set).
  */
 export interface Deployment {
   id: string
@@ -194,7 +200,7 @@ export interface Deployment {
   created_at: string
   last_seen_at: string | null
   last_probe_at: string | null
-  last_probe_status: string | null
+  last_probe_status: ReceivedProbeStatus | null
 }
 
 /**
@@ -308,4 +314,53 @@ export interface AuditEvent {
 export interface AuditList {
   events: AuditEvent[]
   next_cursor?: string
+}
+
+/** Finding codes of the app health report (portal.Problem*); a stable vocabulary. */
+export type HealthProblemCode
+  = | 'app_disabled'
+    | 'initiative_inactive'
+    | 'no_grants'
+    | 'no_manager'
+    | 'unprotected'
+    | 'unexpected_redirect'
+    | 'unreachable'
+    | 'never_probed'
+    | 'probe_stale'
+    | 'probe_disabled'
+    | 'never_seen'
+    | 'not_seen_recently'
+
+/** One finding (`problemJSON`). `host` is null for a finding about the app as a whole. */
+export interface HealthProblem {
+  /** Known codes, or any string the API may add later: the UI falls back to `UNKNOWN_PROBLEM_COPY` (`problemCopy`). */
+  code: HealthProblemCode | (string & {})
+  host: string | null
+}
+
+/**
+ * GET /api/v1/apps/{id}/health (platform admins and managers of the app's initiative; anyone else gets 404).
+ * `problems` is never null: app-level findings first, then each deployment in host order. The verdict is the
+ * server's: the client does not recompute thresholds.
+ */
+export interface AppHealth {
+  app: App
+  initiative_status: InitiativeStatus
+  grant_count: number
+  effective_manager_grants: number
+  problems: HealthProblem[]
+  checked_at: string
+}
+
+/** A host refused as `unknown_host` in the last 7 days that has no deployment (`orphanHostJSON`). */
+export interface OrphanHost {
+  host: string
+  /** Recorded denials (at most one per host every 10 minutes per replica): how long it has been hit. */
+  count: number
+  last_denied_at: string
+}
+
+/** GET /api/v1/health/orphan-hosts (platform admins only; most recent first, at most 100, no cursor). */
+export interface OrphanHostList {
+  hosts: OrphanHost[]
 }

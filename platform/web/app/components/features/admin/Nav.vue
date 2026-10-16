@@ -2,7 +2,7 @@
 /**
  * Navigation of the administration area. The UI only hides what the caller cannot use; the API enforces.
  * Initiatives (admin and managers), Groups and Users (platform admin only: managers list groups only inside the
- * grant dialog), Audit (admin and managers; the API scopes it to their initiatives).
+ * grant dialog), Audit (admin and managers; the API scopes it to their initiatives), Health (platform admin only: orphan hosts).
  */
 const props = defineProps<{
   isPlatformAdmin: boolean
@@ -15,6 +15,7 @@ const items = computed<NavItem[]>(() => [
   { label: 'Initiatives', to: '/admin/initiatives', visible: props.isPlatformAdmin || props.isManager },
   { label: 'Groups', to: '/admin/groups', visible: props.isPlatformAdmin },
   { label: 'Users', to: '/admin/users', visible: props.isPlatformAdmin },
+  { label: 'Health', to: '/admin/health', visible: props.isPlatformAdmin },
   { label: 'Audit', to: '/admin/audit', visible: props.isPlatformAdmin || props.isManager },
 ].filter(item => item.visible))
 

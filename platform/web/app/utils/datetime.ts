@@ -50,3 +50,21 @@ export function localInputToRfc3339(value: string): LocalInputResult {
     value: `${match[1]}-${match[2]}-${match[3]}T${match[4]}:${match[5]}:${pad(second)}${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`,
   }
 }
+
+const relative = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' })
+const RELATIVE_UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
+  ['day', 86_400_000],
+  ['hour', 3_600_000],
+  ['minute', 60_000],
+]
+
+/** "3 hours ago" style text for an RFC 3339 string (day, hour or minute granularity); the raw value when it does not parse. */
+export function formatRelative(value: string, now: number = Date.now()): string {
+  const time = new Date(value).getTime()
+  if (Number.isNaN(time)) return value
+  const diff = time - now
+  for (const [unit, ms] of RELATIVE_UNITS) {
+    if (Math.abs(diff) >= ms) return relative.format(Math.trunc(diff / ms), unit)
+  }
+  return 'just now'
+}
