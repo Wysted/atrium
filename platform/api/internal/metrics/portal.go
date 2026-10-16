@@ -32,10 +32,13 @@ type Portal struct {
 	contention    prometheus.Counter
 	probeRounds   *prometheus.CounterVec
 	probeDuration *prometheus.HistogramVec
+	probeWritten  prometheus.Gauge
+	now           func() time.Time
 }
 
-// NewPortal creates the event metrics and registers them in reg.
-func NewPortal(reg prometheus.Registerer) (*Portal, error) {
+// NewPortal creates the event metrics and registers them in reg. probeInterval is the configured probe interval
+// (PORTAL_PROBE_INTERVAL, zero when the probe is disabled), exposed once as portal_probe_interval_seconds.
+func NewPortal(reg prometheus.Registerer, probeInterval time.Duration) (*Portal, error) {
 	p := &Portal{
 		requests: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "portal_http_requests_total",
@@ -59,11 +62,22 @@ func NewPortal(reg prometheus.Registerer) (*Portal, error) {
 			Help:    "Duration of an integration probe round, by result.",
 			Buckets: probeBuckets,
 		}, []string{"result"}),
+		probeWritten: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "portal_probe_last_write_timestamp_seconds",
+			Help: "Unix time of the last probe round that wrote results; the process start time until the first one (also when the probe is disabled).",
+		}),
+		now: time.Now,
 	}
+	p.probeWritten.SetToCurrentTime()
 	for r := range probeResults {
 		p.probeRounds.WithLabelValues(r)
 	}
-	if err := register(reg, p.requests, p.duration, p.contention, p.probeRounds, p.probeDuration); err != nil {
+	interval := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "portal_probe_interval_seconds",
+		Help: "Configured integration probe interval in seconds; 0 when the probe is disabled. Used to gate the probe alerts.",
+	})
+	interval.Set(max(probeInterval, 0).Seconds())
+	if err := register(reg, p.requests, p.duration, p.contention, p.probeRounds, p.probeDuration, p.probeWritten, interval); err != nil {
 		return nil, err
 	}
 	return p, nil
@@ -87,6 +101,9 @@ func (p *Portal) Round(result string, elapsed time.Duration) {
 	result = probeResults.clamp(result)
 	p.probeRounds.WithLabelValues(result).Inc()
 	p.probeDuration.WithLabelValues(result).Observe(elapsed.Seconds())
+	if result == probe.RoundWritten {
+		p.probeWritten.Set(float64(p.now().UnixNano()) / float64(time.Second))
+	}
 }
 
 // Settings of the probe status collector.

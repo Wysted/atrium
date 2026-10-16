@@ -618,6 +618,8 @@ portal (`portal_`):
 | `portal_contention_responses_total` | counter | none |
 | `portal_probe_rounds_total` | counter | `result`: `written`, `inconclusive`, `skipped` (another replica holds the lock), `idle` (nothing due), `error` |
 | `portal_probe_round_duration_seconds` | histogram | `result` |
+| `portal_probe_interval_seconds` | gauge | none; the configured probe interval (`PORTAL_PROBE_INTERVAL`) in seconds, set at startup, `0` = probe disabled; used to gate the probe alerts |
+| `portal_probe_last_write_timestamp_seconds` | gauge | none; Unix time (seconds) of the last probe round with result `written`; starts at the process start time and stays there while the probe is disabled |
 | `portal_deployments_by_probe_status` | gauge | `status` (`ok`, `unprotected`, `unexpected`, `unreachable`, `never`) |
 | `portal_probe_status_count_errors_total` | counter | none |
 | `portal_db_pool_*` | as above | none |

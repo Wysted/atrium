@@ -95,7 +95,7 @@ func New(cfg Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	pm, err := metrics.NewPortal(reg)
+	pm, err := metrics.NewPortal(reg, cfg.ProbeInterval)
 	if err != nil {
 		return nil, err
 	}

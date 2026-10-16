@@ -208,6 +208,37 @@ func TestProbeMetrics(t *testing.T) {
 	}
 }
 
+// The configured probe interval is on the metrics listener in seconds, and 0 when the probe is disabled.
+func TestProbeIntervalGauge(t *testing.T) {
+	t.Parallel()
+	s := newStack(t)
+	for _, c := range []struct {
+		name     string
+		interval time.Duration
+		want     string
+	}{
+		{"enabled", 90 * time.Second, "portal_probe_interval_seconds 90\n"},
+		{"fractional", 1500 * time.Millisecond, "portal_probe_interval_seconds 1.5\n"},
+		{"disabled", 0, "portal_probe_interval_seconds 0\n"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			app, err := portalapp.New(portalapp.Config{
+				AppID: portalAppID, Issuer: testIssuer, JWKSURL: s.jwks.URL, Pool: s.portal, ProbeInterval: c.interval, Logger: discardLog,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			w := httptest.NewRecorder()
+			app.MetricsHandler.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/metrics", nil))
+			body := w.Body.String()
+			if !strings.Contains(body, "# TYPE portal_probe_interval_seconds gauge") || !strings.Contains(body, c.want) {
+				t.Errorf("exposition lacks %q as a gauge:\n%s", c.want, body)
+			}
+		})
+	}
+}
+
 // Paths, methods, queries and hosts are client input: the number of series after thousands of them equals the
 // number after one of each kind, and none of their values is exposed.
 func TestMetricsCardinalityDoesNotGrowWithHostileInput(t *testing.T) {

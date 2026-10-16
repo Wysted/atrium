@@ -332,7 +332,7 @@ func TestPlatformSeriesDoNotGrowWithInput(t *testing.T) {
 func TestPortalSeriesDoNotGrowWithInput(t *testing.T) {
 	t.Parallel()
 	reg := mustRegistry(t)
-	p, err := NewPortal(reg)
+	p, err := NewPortal(reg, 5*time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -376,7 +376,7 @@ func (f *fakeCounter) StatusCounts(context.Context) (map[probe.Status]int, error
 func TestPortalCatalog(t *testing.T) {
 	t.Parallel()
 	reg := mustRegistry(t)
-	p, err := NewPortal(reg)
+	p, err := NewPortal(reg, 5*time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -395,6 +395,8 @@ func TestPortalCatalog(t *testing.T) {
 		"portal_contention_responses_total":         dto.MetricType_COUNTER,
 		"portal_probe_rounds_total":                 dto.MetricType_COUNTER,
 		"portal_probe_round_duration_seconds":       dto.MetricType_HISTOGRAM,
+		"portal_probe_interval_seconds":             dto.MetricType_GAUGE,
+		"portal_probe_last_write_timestamp_seconds": dto.MetricType_GAUGE,
 		"portal_deployments_by_probe_status":        dto.MetricType_GAUGE,
 		"portal_probe_status_count_errors_total":    dto.MetricType_COUNTER,
 		"portal_db_pool_total_connections":          dto.MetricType_GAUGE,
@@ -417,6 +419,7 @@ func TestPortalCatalog(t *testing.T) {
 		{"portal_probe_rounds_total", map[string]string{"result": "written"}, 1},
 		{"portal_probe_rounds_total", map[string]string{"result": "idle"}, 0},
 		{"portal_probe_round_duration_seconds", map[string]string{"result": "written"}, 1},
+		{"portal_probe_interval_seconds", map[string]string{}, 300},
 		{"portal_deployments_by_probe_status", map[string]string{"status": "ok"}, 4},
 		{"portal_deployments_by_probe_status", map[string]string{"status": "unprotected"}, 1},
 		{"portal_deployments_by_probe_status", map[string]string{"status": "never"}, 0},
@@ -425,6 +428,38 @@ func TestPortalCatalog(t *testing.T) {
 		if got, ok := value(t, reg, c.name, c.labels); !ok || got != c.want {
 			t.Errorf("%s%v = %v (present %v), want %v", c.name, c.labels, got, ok, c.want)
 		}
+	}
+}
+
+func TestProbeLastWriteTimestamp(t *testing.T) {
+	t.Parallel()
+	const name = "portal_probe_last_write_timestamp_seconds"
+	const tolerance = 5.0
+	reg := mustRegistry(t)
+	before := float64(time.Now().UnixNano()) / float64(time.Second)
+	p, err := NewPortal(reg, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start, ok := value(t, reg, name, map[string]string{})
+	if !ok || start < before-tolerance || start > before+tolerance {
+		t.Fatalf("%s after startup = %v (present %v), want about %v", name, start, ok, before)
+	}
+	if f := family(t, reg, name); f.GetType() != dto.MetricType_GAUGE {
+		t.Fatalf("%s type = %v, want gauge", name, f.GetType())
+	}
+
+	written := time.Unix(1_900_000_000, 500_000_000)
+	p.now = func() time.Time { return written }
+	for _, r := range []string{probe.RoundSkipped, probe.RoundError, probe.RoundIdle, probe.RoundInconclusive} {
+		p.Round(r, time.Second)
+		if got, _ := value(t, reg, name, map[string]string{}); got != start {
+			t.Fatalf("%s moved to %v on a %q round, want %v", name, got, r, start)
+		}
+	}
+	p.Round(probe.RoundWritten, time.Second)
+	if got, _ := value(t, reg, name, map[string]string{}); got != 1_900_000_000.5 {
+		t.Fatalf("%s after a written round = %v, want 1.9000000005e9", name, got)
 	}
 }
 
