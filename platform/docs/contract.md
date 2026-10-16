@@ -453,6 +453,9 @@ Administration rules, enforced inside the mutation's transaction:
    exact match on `X-Forwarded-Host`, so a malformed one is harmless). The auth host (the host of
    `PORTAL_ISSUER`) is rejected (422, `reserved`), and a host that already exists on any app, the portal's own hosts
    included, is a 409 (the unique index is the guard).
+   The schema enforces the same rule (`deployments_host_valid`, migration 0011), so SQL cannot store a host that
+   ForwardAuth would refuse. Adopters with older rows must fix them first: migration 0011 fails on any row that
+   violates the rule (the query that finds them is in the migration comment).
 - **Lock order.** Grant revocation locks the initiative row (`FOR NO KEY UPDATE`) and then the initiative's
    `manages_access` grants ordered by id; so does a change of a role's `manages_access`, and an initiative `PATCH`
    takes the initiative row first. Any path that updates or deletes a role row locks the initiative first, role

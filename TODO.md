@@ -53,9 +53,10 @@ Pending work and open questions for the portal platform. Detailed context lives 
   each checkpoint slower). Related, not fixed: `access_changed`/`signing_keys_changed` triggers use NOTIFY, which
   serializes commits cluster-wide on one lock; timing-sensitive app tests (`TestGoogleCallbackProviderUnavailable`)
   can fail when the disk is saturated by other work.
-- [ ] **Align `deployments.host` CHECK with `hostname.Valid`.** ForwardAuth rejects hosts failing `hostname.Valid` before
-  the lookup, and `Valid` is stricter than the schema CHECK (`a..b`, a numeric last label). A host inserted by SQL
-  that passes the CHECK but not `Valid` would never resolve. Add a matching CHECK in a new migration.
+- [x] **Align `deployments.host` CHECK with `hostname.Valid`.** Closed 2026-10-16. Migration 0011 replaces the CHECK
+  with `deployments_host_valid` (anchored label regex, no all-digit last label, `octet_length <= 253`), added NOT VALID
+  and validated in the same transaction so existing bad rows fail the migration loudly (remediation query in the
+  migration). `TestDeploymentsHostCheckMatchesHostnameValid` runs a shared case list through both, as owner and portal.
 - [ ] **Separate JWKS listener for platform-api.** App namespaces reach platform-api's internal port 8081 for the JWKS,
   and a NetworkPolicy filters by port, not path, so they also reach `/forwardauth` and `/readyz`. Not exploitable
   today (an app holds no valid cookies for other hosts and app sessions are host-bound), but serving the JWKS on its
