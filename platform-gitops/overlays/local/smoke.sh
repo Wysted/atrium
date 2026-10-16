@@ -411,6 +411,23 @@ check_not "no rejected mutation was applied" "$(cat "$WORK/b")" smoke-group-reje
 check "the accepted one was" "$(cat "$WORK/b")" smoke-group-ok
 code=$(mutate "$JAD" DELETE "$P/api/v1/groups/$gid" same-origin application/json); check "DELETE same-origin + JSON (cleanup)" "$code" 204
 
+section "14b. Initiative manager (dave, manages_access on demo only): scoped list, read-only admin API"
+JDV="$WORK/portal-dave"
+login "$JDV" dave@example.com "$P" >/dev/null
+code=$(api "$JDV" "$P/api/v1/me"); check "dave GET /api/v1/me" "$code" 200
+check "dave is not a platform admin" "$(json_get "$WORK/b" 'd["permissions"]["platform_admin"]')" False
+code=$(api "$JDV" "$P/api/v1/initiatives"); check "dave lists initiatives" "$code" 200
+check "dave sees exactly demo" "$(json_get "$WORK/b" '[i["key"] for i in d["initiatives"]]')" "['demo']"
+DEMO_ID="$(json_get "$WORK/b" 'd["initiatives"][0]["id"]')"
+code=$(api "$JAD" "$P/api/v1/initiatives"); OTHER_ID="$(json_get "$WORK/b" '[i["id"] for i in d["initiatives"] if i["key"] == "other"][0]')"
+code=$(api "$JDV" "$P/api/v1/initiatives/$DEMO_ID"); check "dave GET demo" "$code" 200
+code=$(api "$JDV" "$P/api/v1/initiatives/$OTHER_ID"); check "dave GET other initiative (out of scope)" "$code" 404
+code=$(mutate "$JDV" PATCH "$P/api/v1/initiatives/$DEMO_ID" same-origin application/json '{"name":"Demo (manager)"}'); check "dave PATCH demo name" "$code" 403
+code=$(mutate "$JDV" POST "$P/api/v1/initiatives" same-origin application/json '{"key":"smoke-dave","name":"Smoke"}'); check "dave POST initiative" "$code" 403
+code=$(api "$JDV" "$P/api/v1/me/apps"); apps="$(cat "$WORK/b")"
+check "dave's home lists hello-a" "$apps" "$A_HOST"; check_not "dave's home does not list hello-b (no grants in other)" "$apps" "$B_HOST"
+code=$(api "$JDV" "$P/api/v1/groups"); check "dave (manager) may list groups, to grant access (portal.ListGroups)" "$code" 200
+
 section "15. Portal responses: security headers, no CORS, /metrics, probes and /_platform/ not served by the portal"
 code=$(api "$JAD" -H 'Origin: https://evil.example' "$P/api/v1/me"); check "GET with a foreign Origin" "$code" 200
 hdrs="$(tr -d '\r' < "$WORK/h" | tr A-Z a-z)"
