@@ -30,11 +30,16 @@ Pending work and open questions for the portal platform. Detailed context lives 
 
 ## Next features
 
-- [ ] **Portal app (next).** Home, administration and integration health, defined in contract block 6
-  (`platform/docs/contract.md`). Replaces `platform-gitops/overlays/local-google/grant.sh`, `revoke.sh` and SQL.
-  Includes the schema changes of block 6, the `app_disabled` decision reason, the `platform_portal` database role,
-  `cmd/portal` with the embedded Nuxt 4 SPA (`platform/web/`), `/metrics`, the probe, and the audit of
-  `RevokeUser` / `RevokeApp`. Create the frontend subagents when the web work starts.
+- [x] **Portal app.** Closed 2026-10-16. Contract block 6: schema, API, integration health, `/metrics`, the probe,
+  the k3d deploy and the embedded Nuxt 4 SPA (`platform/web/`: home, administration, integration health) served with
+  a startup-computed CSP. The local smoke checks it in a real browser (Playwright, `overlays/local/browser-check/`).
+- [ ] **Retire `grant.sh` and `revoke.sh`.** The portal replaces `platform-gitops/overlays/local-google/grant.sh` and
+  `revoke.sh`; remove them after granting and revoking once through the portal with a real Google login.
+- [ ] **Portal web follow-ups.** The group picker of the grant dialog has no search (pages of a native select);
+  `GET /api/v1/groups/{id}` would let the group page show its name; the apps payload carries no portal-app flag, so the
+  UI shows Disable and Remove host on the portal app and relies on the 409. `npm audit` reports high advisories in
+  Nuxt's build tooling (`braces`, `node-forge` via nitropack/listhen) with no upstream fix; they never reach the
+  embedded output. Recheck on each Nuxt upgrade.
 - [ ] **Non-browser clients for the portal API.** CLI and automation have no way to authenticate yet (block 6 open items).
 - [x] **Flaky test database cleanup.** Closed 2026-10-16. Root cause: every `DROP DATABASE` makes PostgreSQL run an
   immediate checkpoint and wait for it, and the checkpoint's fsync phase covers the files of every live test database
