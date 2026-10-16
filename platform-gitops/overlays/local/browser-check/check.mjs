@@ -27,6 +27,11 @@ const RESERVED_COPY = 'This host is reserved for the sign-in service.'
 const TAKEN_COPY = 'This host is already used by another app.'
 const PORTAL_DISABLE_COPY = 'The portal app cannot be disabled.'
 const PORTAL_LAST_HOST_COPY = 'The portal app needs at least one host.'
+const CURRENT_HOST_TITLE = 'Remove the host you are using?'
+const SMOKE_GROUP = 'smoke-group' // created and deleted by the groups scenario
+const DEMO_EDITORS = 'demo-editors' // seeded group: one member (bob) and a grant on demo
+const GROUP_IN_USE_COPY = 'This group still has members or grants. Remove them first.'
+const ALREADY_MEMBER_COPY = 'This user is already a member of the group.'
 const NOT_FOUND_TEXT ='Page not found' // app/error.vue for a client route without a page
 
 // Console errors tolerated, by substring, ONLY in the unknown-route scenario. NUXT_E1005 ("Error caught during app
@@ -144,13 +149,13 @@ try {
 
   console.log('  -- a client route without a page renders the error page, styled, under the CSP')
   reset()
-  await page.goto(`${BASE}/admin/groups/x`)
+  await page.goto(`${BASE}/admin/nope/x`)
   await page.waitForLoadState('networkidle')
   const nf = await bodyText()
-  check(`/admin/groups/x renders "${NOT_FOUND_TEXT}"`, nf.includes(NOT_FOUND_TEXT), JSON.stringify(nf.slice(0, 200)))
+  check(`/admin/nope/x renders "${NOT_FOUND_TEXT}"`, nf.includes(NOT_FOUND_TEXT), JSON.stringify(nf.slice(0, 200)))
   await page.screenshot({ path: `${OUT}/not-found.png`, fullPage: true })
-  await checkStyled('/admin/groups/x')
-  await report('/admin/groups/x', { tolerated: TOLERATED_CONSOLE })
+  await checkStyled('/admin/nope/x')
+  await report('/admin/nope/x', { tolerated: TOLERATED_CONSOLE })
 
   console.log('  -- carol: no grants -> empty state')
   await login(CAROL.email)
@@ -677,6 +682,7 @@ try {
     reset()
     await appRow(portalApp).getByRole('button', { name: `Remove host ${portalHost.host}`, exact: true }).click()
     await appsAlert().waitFor({ timeout: DATA_TIMEOUT })
+    check('portal last host: the confirm title is "Remove the host you are using?"', (await appsAlert().getByRole('heading', { level: 2 }).innerText()) === CURRENT_HOST_TITLE)
     await appsAlert().getByRole('button', { name: 'Remove host', exact: true }).click()
     await appsAlert().getByText(PORTAL_LAST_HOST_COPY).waitFor({ timeout: DATA_TIMEOUT })
     const remove409 = `${BASE}/api/v1/deployments/${portalHost.id} HTTP 409`
@@ -708,6 +714,322 @@ try {
   await page.getByRole('table').getByRole('row').nth(1).waitFor({ timeout: DATA_TIMEOUT })
   const appsEnd = await appsSnapshot()
   check('demo and platform apps/deployments (API) equal the starting set', appsEnd === appsStart, `${appsStart} != ${appsEnd}`)
+  // ---- 5d-3: groups and members, users, audit. Idempotent: leftovers of an interrupted run (smoke-group, carol disabled) are
+  // cleaned first; the groups, the members of demo-editors and carol's status are compared (through the API) before and after.
+  console.log('  -- admin: Nav (Initiatives, Groups, Users, Audit); Groups list; leftovers of an interrupted run removed')
+  await login(ADMIN.email)
+  await page.goto(`${BASE}/admin/initiatives`)
+  await page.getByRole('table').getByRole('row').nth(1).waitFor({ timeout: DATA_TIMEOUT })
+  const adminNav = () => page.getByRole('navigation', { name: 'Administration', exact: true }) // a function: the page changes with each login
+  const navLinks = async () => (await adminNav().getByRole('link').allInnerTexts()).map((t) => t.trim())
+  check('admin Nav: Initiatives, Groups, Users, Audit', JSON.stringify(await navLinks()) === '["Initiatives","Groups","Users","Audit"]', JSON.stringify(await navLinks()))
+
+  const groupsApi = () => apiAll('/groups', 'groups')
+  const membersApi = (id) => apiAll(`/groups/${id}/members`, 'members')
+  const userByEmail = async (email) => {
+    const r = await apiCall('GET', `/users?email=${encodeURIComponent(email)}`)
+    if (r.status !== 200 || r.body.users.length !== 1) throw new Error(`GET /users?email=${email} answered ${r.status} with ${r.body?.users?.length} users`)
+    return r.body.users[0]
+  }
+  for (const g of (await groupsApi()).filter((g) => g.key === SMOKE_GROUP)) {
+    for (const m of await membersApi(g.id)) await apiCall('DELETE', `/groups/${g.id}/members/${m.user_id}`)
+    await apiCall('DELETE', `/groups/${g.id}`)
+  }
+  const carolUser = await userByEmail(CAROL.email)
+  const adminUser = await userByEmail(ADMIN.email)
+  if (carolUser.status !== 'active') await apiSend('PATCH', `/users/${carolUser.id}`, { status: 'active' })
+  const demoEditors = (await groupsApi()).find((g) => g.key === DEMO_EDITORS)
+  check(`seed: group "${DEMO_EDITORS}" exists`, !!demoEditors)
+  const groupsSnapshot = async () => JSON.stringify({
+    groups: (await groupsApi()).map((g) => `${g.key}|${g.name}`).sort(),
+    demoEditors: (await membersApi(demoEditors.id)).map((m) => `${m.email}|${m.status}`).sort(),
+    carol: (await userByEmail(CAROL.email)).status,
+  })
+  const groupsStart = await groupsSnapshot()
+  console.log(`  (groups, demo-editors members and carol at start: ${groupsStart})`)
+  check('seed: demo-editors has at least one member', (await membersApi(demoEditors.id)).length >= 1)
+  const auditSince = new Date().toISOString() // the audit events of this section are the ones after this instant
+
+  reset()
+  await adminNav().getByRole('link', { name: 'Groups', exact: true }).click()
+  await page.waitForURL(`${BASE}/admin/groups`, { timeout: DATA_TIMEOUT })
+  const gTable = () => page.getByRole('table')
+  const groupRow = (key) => gTable().getByRole('row').filter({ has: page.locator('code', { hasText: new RegExp(`^${key}$`) }) })
+  await groupRow(DEMO_EDITORS).waitFor({ timeout: DATA_TIMEOUT })
+  check('groups: Nav current is Groups', JSON.stringify(await adminNav().locator('[aria-current=page]').allInnerTexts()) === '["Groups"]')
+  check('groups: demo-editors listed once with its name', (await groupRow(DEMO_EDITORS).count()) === 1 && (await groupRow(DEMO_EDITORS).innerText()).includes('Demo editors'))
+  await page.screenshot({ path: `${OUT}/groups-list.png`, fullPage: true })
+  await checkStyled('groups (admin)')
+  await report('groups (admin)')
+
+  console.log('  -- admin: create smoke-group, open it, add carol, add again (409 copy), remove carol, back')
+  reset()
+  await page.getByRole('button', { name: 'New group', exact: true }).click()
+  const grpDlg = page.getByRole('dialog')
+  await grpDlg.waitFor({ timeout: DATA_TIMEOUT })
+  check('new group dialog: initial focus is the Key input', await grpDlg.getByRole('textbox', { name: /^Key/ }).evaluate((el) => el === document.activeElement))
+  await grpDlg.getByRole('textbox', { name: /^Key/ }).fill(SMOKE_GROUP)
+  await grpDlg.getByRole('textbox', { name: /^Name/ }).fill('Smoke group')
+  await grpDlg.getByRole('button', { name: 'Create group', exact: true }).click()
+  await grpDlg.waitFor({ state: 'detached', timeout: DATA_TIMEOUT })
+  await groupRow(SMOKE_GROUP).waitFor({ timeout: DATA_TIMEOUT })
+  check('groups: smoke-group appears with its name', (await groupRow(SMOKE_GROUP).innerText()).includes('Smoke group'))
+  const smokeGroup = (await groupsApi()).find((g) => g.key === SMOKE_GROUP)
+  check('groups: smoke-group exists in the API', !!smokeGroup)
+  await report('create group')
+
+  reset()
+  await groupRow(SMOKE_GROUP).getByRole('link', { name: SMOKE_GROUP, exact: true }).click()
+  await page.waitForURL(`${BASE}/admin/groups/${smokeGroup.id}`, { timeout: DATA_TIMEOUT })
+  await page.getByRole('heading', { name: 'Group members', exact: true }).waitFor({ timeout: DATA_TIMEOUT })
+  await page.getByText('This group has no members yet.').waitFor({ timeout: DATA_TIMEOUT })
+  check('group detail: Nav current stays Groups', JSON.stringify(await adminNav().locator('[aria-current=page]').allInnerTexts()) === '["Groups"]')
+  await report('group detail (empty)')
+
+  const memberRow = (email) => page.getByRole('table').getByRole('row').filter({ hasText: email })
+  const addMember = async (email) => {
+    await page.getByRole('button', { name: 'Add member', exact: true }).click()
+    await grpDlg.waitFor({ timeout: DATA_TIMEOUT })
+    await grpDlg.getByRole('textbox', { name: /^Email/ }).fill(email)
+    await grpDlg.getByRole('button', { name: 'Add member', exact: true }).click()
+  }
+  reset()
+  await page.getByRole('button', { name: 'Add member', exact: true }).click()
+  await grpDlg.waitFor({ timeout: DATA_TIMEOUT })
+  check('add member dialog: initial focus is the Email input', await grpDlg.getByRole('textbox', { name: /^Email/ }).evaluate((el) => el === document.activeElement))
+  await page.keyboard.press('Escape')
+  await grpDlg.waitFor({ state: 'detached', timeout: DATA_TIMEOUT })
+  reset()
+  await addMember(CAROL.email)
+  await grpDlg.waitFor({ state: 'detached', timeout: DATA_TIMEOUT })
+  await memberRow(CAROL.email).waitFor({ timeout: DATA_TIMEOUT })
+  check('members: carol listed with status Active', (await memberRow(CAROL.email).innerText()).includes('Active'))
+  check('members: carol is the only member (API)', JSON.stringify((await membersApi(smokeGroup.id)).map((m) => m.email)) === JSON.stringify([CAROL.email]))
+  await report('add member')
+
+  reset()
+  await addMember(CAROL.email)
+  await grpDlg.getByText(ALREADY_MEMBER_COPY).first().waitFor({ timeout: DATA_TIMEOUT })
+  const dupMember = `${BASE}/api/v1/groups/${smokeGroup.id}/members HTTP 409`
+  check(`add member again: copy "${ALREADY_MEMBER_COPY}" shown and the dialog stays open`, await grpDlg.isVisible())
+  check('add member again: the API answered 409', failedRequests.includes(dupMember), JSON.stringify(failedRequests))
+  await report('add member again 409', { tolerated: ['status of 409'], toleratedRequests: [dupMember] })
+  await grpDlg.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await grpDlg.waitFor({ state: 'detached', timeout: DATA_TIMEOUT })
+  check('add member again: still one member (API)', (await membersApi(smokeGroup.id)).length === 1)
+
+  reset()
+  await page.getByRole('button', { name: `Remove ${CAROL.email}`, exact: true }).click()
+  const mAlert = page.getByRole('alertdialog')
+  await mAlert.waitFor({ timeout: DATA_TIMEOUT })
+  check('remove member: confirm title names carol', (await mAlert.getByRole('heading', { level: 2 }).innerText()) === `Remove ${CAROL.email}?`)
+  await mAlert.getByRole('button', { name: 'Remove', exact: true }).click()
+  await mAlert.waitFor({ state: 'detached', timeout: DATA_TIMEOUT })
+  await memberRow(CAROL.email).waitFor({ state: 'detached', timeout: DATA_TIMEOUT })
+  check('remove member: carol gone (list and API)', (await membersApi(smokeGroup.id)).length === 0)
+  await report('remove member')
+
+  console.log('  -- admin: delete demo-editors -> 409 copy, still listed; delete smoke-group behind a confirmation')
+  reset()
+  await page.getByRole('link', { name: 'All groups', exact: true }).click()
+  await page.waitForURL(`${BASE}/admin/groups`, { timeout: DATA_TIMEOUT })
+  await groupRow(DEMO_EDITORS).waitFor({ timeout: DATA_TIMEOUT })
+  await page.getByRole('button', { name: `Delete group ${DEMO_EDITORS}`, exact: true }).click()
+  const gAlert2 = page.getByRole('alertdialog')
+  await gAlert2.waitFor({ timeout: DATA_TIMEOUT })
+  await gAlert2.getByRole('button', { name: 'Delete group', exact: true }).click()
+  await gAlert2.getByText(GROUP_IN_USE_COPY).waitFor({ timeout: DATA_TIMEOUT })
+  const inUse409 = `${BASE}/api/v1/groups/${demoEditors.id} HTTP 409`
+  check(`delete demo-editors: copy "${GROUP_IN_USE_COPY}" shown in the dialog`, true)
+  check('delete demo-editors: the API answered 409', failedRequests.includes(inUse409), JSON.stringify(failedRequests))
+  await report('delete demo-editors 409', { tolerated: ['status of 409'], toleratedRequests: [inUse409] })
+  await gAlert2.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await gAlert2.waitFor({ state: 'detached', timeout: DATA_TIMEOUT })
+  check('delete demo-editors: still listed after Cancel (list and API)', (await groupRow(DEMO_EDITORS).count()) === 1 && (await groupsApi()).some((g) => g.id === demoEditors.id))
+
+  reset()
+  await page.getByRole('button', { name: `Delete group ${SMOKE_GROUP}`, exact: true }).click()
+  await gAlert2.waitFor({ timeout: DATA_TIMEOUT })
+  check('delete smoke-group: confirm title uses the group name', (await gAlert2.getByRole('heading', { level: 2 }).innerText()) === 'Delete group Smoke group?')
+  await gAlert2.getByRole('button', { name: 'Delete group', exact: true }).click()
+  await gAlert2.waitFor({ state: 'detached', timeout: DATA_TIMEOUT })
+  await groupRow(SMOKE_GROUP).waitFor({ state: 'detached', timeout: DATA_TIMEOUT })
+  check('delete smoke-group: gone (list and API)', !(await groupsApi()).some((g) => g.key === SMOKE_GROUP))
+  await report('delete group')
+
+  console.log('  -- admin: Users (search by exact email, disable/enable behind confirmations, own row, revoke sessions)')
+  reset()
+  await adminNav().getByRole('link', { name: 'Users', exact: true }).click()
+  await page.waitForURL(`${BASE}/admin/users`, { timeout: DATA_TIMEOUT })
+  await page.getByRole('heading', { level: 1, name: 'Users', exact: true }).waitFor({ timeout: DATA_TIMEOUT })
+  check('users: Nav current is Users', JSON.stringify(await adminNav().locator('[aria-current=page]').allInnerTexts()) === '["Users"]')
+  check('users: no results table before the first search', (await page.getByRole('table').count()) === 0)
+  await report('users (before search)')
+  const search = async (email) => {
+    await page.getByRole('textbox', { name: /^Email/ }).fill(email)
+    await page.getByRole('button', { name: 'Search', exact: true }).click()
+    await page.getByRole('table').getByRole('row').filter({ hasText: email }).waitFor({ timeout: DATA_TIMEOUT }) // the previous results stay until the new ones arrive
+  }
+  const userRows = () => page.getByRole('table').getByRole('row')
+  const statusAlert = page.getByRole('alertdialog')
+  const notice = (re) => page.getByText(re).first()
+  reset()
+  await search(CAROL.email)
+  check('users: carol search -> exactly one row', (await userRows().count()) === 2, String(await userRows().count()))
+  check('users: carol row shows the email and status Active, no "You" badge', (await userRows().nth(1).innerText()).includes(CAROL.email) && (await userRows().nth(1).innerText()).includes('Active') && !(await userRows().nth(1).innerText()).includes('You'))
+  await page.screenshot({ path: `${OUT}/users-results.png`, fullPage: true })
+  await checkStyled('users (admin)')
+  await report('users search carol')
+
+  let carolDisabled = false
+  try {
+    reset()
+    await page.getByRole('button', { name: `Disable ${CAROL.email}`, exact: true }).click()
+    await statusAlert.waitFor({ timeout: DATA_TIMEOUT })
+    check('disable carol: confirm title names carol', (await statusAlert.getByRole('heading', { level: 2 }).innerText()) === `Disable ${CAROL.email}?`)
+    await statusAlert.getByRole('button', { name: 'Cancel', exact: true }).click()
+    await statusAlert.waitFor({ state: 'detached', timeout: DATA_TIMEOUT })
+    check('disable carol: Cancel changes nothing (API)', (await userByEmail(CAROL.email)).status === 'active')
+    await page.getByRole('button', { name: `Disable ${CAROL.email}`, exact: true }).click()
+    await statusAlert.waitFor({ timeout: DATA_TIMEOUT })
+    await statusAlert.getByRole('button', { name: 'Disable', exact: true }).click()
+    carolDisabled = true
+    await statusAlert.waitFor({ state: 'detached', timeout: DATA_TIMEOUT })
+    await userRows().nth(1).getByText('Disabled', { exact: true }).waitFor({ timeout: DATA_TIMEOUT })
+    check('disable carol: row shows Disabled and offers Enable instead of Disable', (await page.getByRole('button', { name: `Enable ${CAROL.email}`, exact: true }).count()) === 1 && (await page.getByRole('button', { name: `Disable ${CAROL.email}`, exact: true }).count()) === 0)
+    check('disable carol: the API says disabled', (await userByEmail(CAROL.email)).status === 'disabled')
+    await notice('User disabled and signed out.').waitFor({ timeout: DATA_TIMEOUT })
+    await report('disable carol')
+    reset()
+    await page.getByRole('button', { name: `Enable ${CAROL.email}`, exact: true }).click()
+    await statusAlert.waitFor({ timeout: DATA_TIMEOUT })
+    check('enable carol: confirm title names carol', (await statusAlert.getByRole('heading', { level: 2 }).innerText()) === `Enable ${CAROL.email}?`)
+    await statusAlert.getByRole('button', { name: 'Enable', exact: true }).click()
+    await statusAlert.waitFor({ state: 'detached', timeout: DATA_TIMEOUT })
+    carolDisabled = false
+    await userRows().nth(1).getByText('Active', { exact: true }).waitFor({ timeout: DATA_TIMEOUT })
+    check('enable carol: the API says active', (await userByEmail(CAROL.email)).status === 'active')
+    await report('enable carol')
+  } finally {
+    if (carolDisabled) await apiSend('PATCH', `/users/${carolUser.id}`, { status: 'active' })
+  }
+
+  reset()
+  await page.getByRole('button', { name: `Revoke sessions of ${CAROL.email}`, exact: true }).click()
+  await statusAlert.waitFor({ timeout: DATA_TIMEOUT })
+  check('revoke carol: confirm title names carol', (await statusAlert.getByRole('heading', { level: 2 }).innerText()) === `Revoke the sessions of ${CAROL.email}?`)
+  await statusAlert.getByRole('button', { name: 'Revoke sessions', exact: true }).click()
+  await statusAlert.waitFor({ state: 'detached', timeout: DATA_TIMEOUT })
+  await notice(/^\d+ sessions? revoked\.$/).waitFor({ timeout: DATA_TIMEOUT })
+  check('revoke carol: success notice shown', true)
+  await report('revoke carol sessions')
+
+  reset()
+  await search(ADMIN.email)
+  const ownRow = userRows().nth(1)
+  check('users: admin search -> exactly one row', (await userRows().count()) === 2)
+  check('users: own row has the "You" badge', (await ownRow.innerText()).includes('You'), JSON.stringify(await ownRow.innerText()))
+  check('users: own row has no Disable button', (await page.getByRole('button', { name: `Disable ${ADMIN.email}`, exact: true }).count()) === 0)
+  check('users: own row keeps Revoke sessions (NOT clicked)', (await page.getByRole('button', { name: `Revoke sessions of ${ADMIN.email}`, exact: true }).count()) === 1)
+  await page.screenshot({ path: `${OUT}/users-own-row.png`, fullPage: true })
+  await report('users search admin')
+
+  console.log('  -- admin: Audit (newest first, this section\'s events, details as text, Load more, filter by demo)')
+  reset()
+  await adminNav().getByRole('link', { name: 'Audit', exact: true }).click()
+  await page.waitForURL(`${BASE}/admin/audit`, { timeout: DATA_TIMEOUT })
+  await page.getByRole('heading', { level: 1, name: 'Audit', exact: true }).waitFor({ timeout: DATA_TIMEOUT })
+  const auditRows = () => page.getByRole('table').getByRole('row')
+  await auditRows().nth(1).waitFor({ timeout: DATA_TIMEOUT })
+  const rowAction = (row) => row.locator('td, th').nth(2).innerText().then((t) => t.trim())
+  const rowActions = async () => Promise.all((await auditRows().all()).slice(1).map(rowAction))
+  const firstPage = await apiCall('GET', '/audit')
+  const fresh = firstPage.body.events.filter((e) => e.occurred_at >= auditSince)
+  const EXPECTED_ACTIONS = ['group.create', 'group_member.add', 'group_member.remove', 'group.delete', 'user.disable', 'user.enable', 'user_sessions.revoke']
+  check('audit: Nav current is Audit', JSON.stringify(await adminNav().locator('[aria-current=page]').allInnerTexts()) === '["Audit"]')
+  check('audit (API): the events since the section started are exactly the 7 actions performed', JSON.stringify(fresh.map((e) => e.action).sort()) === JSON.stringify([...EXPECTED_ACTIONS].sort()), JSON.stringify(fresh.map((e) => e.action)))
+  check('audit (API): newest first (occurred_at never increases)', firstPage.body.events.every((e, i, a) => i === 0 || a[i - 1].occurred_at >= e.occurred_at))
+  const uiActions = await rowActions()
+  check('audit (UI): the top rows are those events in the API order (newest first)', JSON.stringify(uiActions.slice(0, fresh.length)) === JSON.stringify(fresh.map((e) => e.action)), JSON.stringify(uiActions.slice(0, fresh.length + 1)))
+  const sg = fresh.find((e) => e.action === 'group.create')
+  check('audit: group.create targets the smoke-group id and carries the actor', sg?.target_id === smokeGroup.id && sg?.actor_email === ADMIN.email)
+  check('audit: user.disable / user.enable target carol', fresh.filter((e) => e.action.startsWith('user.')).every((e) => e.target_id === carolUser.id))
+  check('audit: no event of this section touches the admin user', !fresh.some((e) => e.target_id === adminUser.id))
+  check('audit: every <details> is collapsed at load', (await page.locator('details[open]').count()) === 0)
+
+  const createRow = auditRows().filter({ hasText: smokeGroup.id }).filter({ hasText: 'group.create' })
+  check('audit: the group.create row of smoke-group is in the table', (await createRow.count()) === 1, String(await createRow.count()))
+  await createRow.locator('summary').click()
+  const pre = createRow.locator('details pre').first()
+  await pre.waitFor({ timeout: DATA_TIMEOUT })
+  const preInfo = await pre.evaluate((el) => ({ text: el.textContent, children: el.children.length }))
+  let parsed = null
+  try { parsed = JSON.parse(preInfo.text) } catch { /* reported below */ }
+  check('audit: details JSON renders as text (a <pre> with no child elements, parses as JSON)', preInfo.children === 0 && parsed !== null, JSON.stringify(preInfo).slice(0, 200))
+  check('audit: the details text carries the smoke-group key', preInfo.text.includes(SMOKE_GROUP), preInfo.text.slice(0, 200))
+  await page.screenshot({ path: `${OUT}/audit-details.png`, fullPage: true })
+  await checkStyled('audit (admin)')
+  await report('audit (admin)')
+
+  const loadMore = page.getByRole('button', { name: 'Load more', exact: true })
+  if (await loadMore.count()) {
+    const before = (await auditRows().count()) - 1
+    await Promise.all([page.waitForResponse((r) => r.url().includes('/api/v1/audit?cursor=') && r.status() === 200), loadMore.click()])
+    await page.waitForFunction((n) => document.querySelectorAll('table tbody tr').length > n, before, { timeout: DATA_TIMEOUT })
+    check('audit: "Load more" appends rows', (await auditRows().count()) - 1 > before, `${before} -> ${(await auditRows().count()) - 1}`)
+    await report('audit load more')
+  } else {
+    console.log('  SKIP: audit "Load more" (the log fits one page)')
+  }
+
+  reset()
+  const filterSelect = page.getByLabel('Initiative', { exact: true })
+  await filterSelect.locator('option', { hasText: 'Demo (demo)' }).waitFor({ state: 'attached', timeout: DATA_TIMEOUT })
+  check('audit filter: options start with "All initiatives"', (await filterSelect.locator('option').first().innerText()).trim() === 'All initiatives')
+  await Promise.all([page.waitForResponse((r) => r.url().includes(`/api/v1/audit?initiative_id=${demoId}`) && r.status() === 200), filterSelect.selectOption({ label: 'Demo (demo)' })])
+  await page.waitForFunction(() => !document.querySelector('[aria-busy=true]'), null, { timeout: DATA_TIMEOUT })
+  const initiativeCells = async () => Promise.all((await auditRows().all()).slice(1).map((r) => r.locator('td, th').nth(4).innerText().then((t) => t.trim())))
+  const cells = await initiativeCells()
+  check('audit filter demo: there are rows and every one belongs to Demo', cells.length > 0 && cells.every((c) => c === 'Demo'), JSON.stringify([...new Set(cells)]))
+  check('audit filter demo: none of this section\'s group/user events (they have no initiative)', !(await rowActions()).some((a) => EXPECTED_ACTIONS.includes(a)))
+  await report('audit filter demo')
+
+  console.log('  -- dave (manager of demo): Nav without Groups/Users, Users refused, Audit scoped to demo')
+  await login(DAVE.email)
+  reset()
+  await page.goto(`${BASE}/admin/initiatives`)
+  await page.getByRole('table').getByRole('row').nth(1).waitFor({ timeout: DATA_TIMEOUT })
+  check('dave Nav: Initiatives and Audit only', JSON.stringify(await navLinks()) === '["Initiatives","Audit"]', JSON.stringify(await navLinks()))
+  await report('nav (dave)')
+  for (const [path, label] of [['/admin/users', 'Users'], ['/admin/groups', 'Groups']]) {
+    reset()
+    await page.goto(`${BASE}${path}`)
+    await page.getByText('Platform administrators only').first().waitFor({ timeout: DATA_TIMEOUT })
+    check(`dave ${path}: "Platform administrators only"`, true)
+    check(`dave ${path}: no search field, no table, no New group button`, (await page.getByRole('textbox').count()) === 0 && (await page.getByRole('table').count()) === 0 && (await page.getByRole('button', { name: 'New group' }).count()) === 0)
+    if (path === '/admin/users') await page.screenshot({ path: `${OUT}/users-manager.png`, fullPage: true })
+    await report(`${path} (dave)`)
+  }
+  reset()
+  await page.goto(`${BASE}/admin/initiatives`)
+  await page.getByRole('navigation', { name: 'Administration', exact: true }).getByRole('link', { name: 'Audit', exact: true }).click()
+  await page.waitForURL(`${BASE}/admin/audit`, { timeout: DATA_TIMEOUT })
+  await auditRows().nth(1).waitFor({ timeout: DATA_TIMEOUT })
+  const dFilter = page.getByLabel('Initiative', { exact: true })
+  await dFilter.locator('option', { hasText: 'Demo (demo)' }).waitFor({ state: 'attached', timeout: DATA_TIMEOUT })
+  const dOptions = (await dFilter.locator('option').allInnerTexts()).map((t) => t.trim())
+  check('dave audit: filter options are "All my initiatives" and Demo only', JSON.stringify(dOptions) === '["All my initiatives","Demo (demo)"]', JSON.stringify(dOptions))
+  const dCells = await initiativeCells()
+  check('dave audit: there are rows and every one belongs to Demo', dCells.length > 0 && dCells.every((c) => c === 'Demo'), JSON.stringify([...new Set(dCells)]))
+  await page.screenshot({ path: `${OUT}/audit-manager.png`, fullPage: true })
+  await report('audit (dave)')
+
+  console.log('  -- admin: groups, demo-editors members and carol equal the starting set')
+  await login(ADMIN.email)
+  await page.goto(`${BASE}/admin/initiatives`)
+  await page.getByRole('table').getByRole('row').nth(1).waitFor({ timeout: DATA_TIMEOUT })
+  const groupsEnd = await groupsSnapshot()
+  check('groups, demo-editors members and carol (API) equal the starting set', groupsEnd === groupsStart, `${groupsStart} != ${groupsEnd}`)
 } catch (e) {
   fail(`browser scenario aborted: ${e.message.split('\n')[0]} (url ${page.url().split('?')[0]})`)
   await page.screenshot({ path: `${OUT}/aborted.png` }).catch(() => {})
