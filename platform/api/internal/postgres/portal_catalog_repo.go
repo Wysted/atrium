@@ -173,16 +173,21 @@ func (r CatalogRepo) DeleteRole(ctx context.Context, id string) (bool, error) {
 // a jsonb array, so a page of apps is one query.
 const appSelectSQL = `
 SELECT a.id, a.initiative_id::text, i.key, a.name, a.status, a.created_at,
-       COALESCE((SELECT jsonb_agg(jsonb_build_object('id', d.id, 'host', d.host, 'created_at', d.created_at)
+       COALESCE((SELECT jsonb_agg(jsonb_build_object('id', d.id, 'host', d.host, 'created_at', d.created_at,
+                                                     'last_seen_at', d.last_seen_at, 'last_probe_at', d.last_probe_at,
+                                                     'last_probe_status', d.last_probe_status)
                                   ORDER BY d.host COLLATE "C")
                  FROM deployments d WHERE d.app_id = a.id), '[]'::jsonb)
 FROM apps a JOIN initiatives i ON i.id = a.initiative_id`
 
 // deploymentJSON is one element of the jsonb array of appSelectSQL.
 type deploymentJSON struct {
-	ID        string    `json:"id"`
-	Host      string    `json:"host"`
-	CreatedAt time.Time `json:"created_at"`
+	ID              string     `json:"id"`
+	Host            string     `json:"host"`
+	CreatedAt       time.Time  `json:"created_at"`
+	LastSeenAt      *time.Time `json:"last_seen_at"`
+	LastProbeAt     *time.Time `json:"last_probe_at"`
+	LastProbeStatus *string    `json:"last_probe_status"`
 }
 
 func scanApp(row pgx.CollectableRow) (portal.App, error) {
@@ -197,6 +202,7 @@ func scanApp(row pgx.CollectableRow) (portal.App, error) {
 	for _, d := range deployments {
 		a.Deployments = append(a.Deployments, portal.Deployment{
 			ID: d.ID, AppID: a.ID, InitiativeID: a.InitiativeID, Host: d.Host, CreatedAt: d.CreatedAt,
+			LastSeenAt: d.LastSeenAt, LastProbeAt: d.LastProbeAt, LastProbeStatus: deref(d.LastProbeStatus),
 		})
 	}
 	return a, nil
@@ -304,4 +310,11 @@ func (r CatalogRepo) DeleteDeployment(ctx context.Context, id string) (bool, err
 		return false, fmt.Errorf("delete deployment: %w", err)
 	}
 	return tag.RowsAffected() > 0, nil
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }

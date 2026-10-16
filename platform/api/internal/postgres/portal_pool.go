@@ -23,6 +23,17 @@ var (
 	}
 )
 
+// MinPortalPoolConns is the smallest pool "portal serve" runs with. A probe round pins one connection for its
+// whole duration (the session-level advisory lock), so the default of pgx (the number of CPUs, at least 4) could
+// leave a 1-CPU pod with three connections for every request of the API. The pool is raised to this minimum; a
+// larger configured size is kept.
+const MinPortalPoolConns = 8
+
+// withMinConns raises cfg.MaxConns to MinPortalPoolConns.
+func withMinConns(cfg *pgxpool.Config) {
+	cfg.MaxConns = max(cfg.MaxConns, MinPortalPoolConns)
+}
+
 // NewPortalPool builds the pool "portal serve" uses from the standard PG* variables, as PortalRole, and
 // refuses to return it unless CheckPortalRole passes.
 func NewPortalPool(ctx context.Context) (*pgxpool.Pool, RuntimeIdentity, error) {
@@ -30,6 +41,7 @@ func NewPortalPool(ctx context.Context) (*pgxpool.Pool, RuntimeIdentity, error) 
 	if err != nil {
 		return nil, RuntimeIdentity{}, fmt.Errorf("parse pg config: %w", err)
 	}
+	withMinConns(cfg)
 	return OpenPortalPool(ctx, cfg)
 }
 

@@ -84,6 +84,7 @@ func TestDecideWhoAdministersWhat(t *testing.T) {
 		{"enable user", adminz.UserEnable, adminz.Resource{Type: "user", ID: "u1"}, a, f, f, f},
 		{"revoke user sessions", adminz.UserSessionsRevoke, adminz.Resource{Type: "user", ID: "u1"}, a, f, f, f},
 		{"list users", adminz.UserList, adminz.Resource{Type: "user"}, a, f, f, f},
+		{"list orphan hosts", adminz.OrphanHostList, adminz.Resource{Type: "orphan_host"}, a, f, f, f},
 
 		// Listings are scoped per caller: the unscoped ones need any managed initiative.
 		{"list initiatives", adminz.InitiativeList, adminz.Resource{Type: "initiative"}, a, a, a, f},
@@ -161,7 +162,7 @@ func TestInactiveSubjectIsNeverAllowed(t *testing.T) {
 		adminz.AppDisable, adminz.DeploymentDelete, adminz.GrantCreate, adminz.GrantDelete, adminz.GrantList,
 		adminz.GroupCreate, adminz.GroupList, adminz.GroupMemberList, adminz.RoleList, adminz.RoleUpdate, adminz.AppList,
 		adminz.DeploymentCreate, adminz.UserDisable, adminz.UserSessionsRevoke,
-		adminz.UserList, adminz.AuditList, "unknown.action",
+		adminz.UserList, adminz.OrphanHostList, adminz.AuditList, "unknown.action",
 	}
 	for name, who := range map[string]adminz.Subject{"disabled platform admin": disabledAdmin, "zero value": zero} {
 		for _, action := range actions {
@@ -212,6 +213,8 @@ func TestDecideListingScope(t *testing.T) {
 		{"manager lists no group members", managerA, adminz.GroupMemberList, adminz.Resource{Type: "group_member"}, adminz.Forbidden, false, nil},
 		{"admin lists users", admin, adminz.UserList, adminz.Resource{Type: "user"}, adminz.Allow, true, nil},
 		{"manager lists no users", managerA, adminz.UserList, adminz.Resource{Type: "user"}, adminz.Forbidden, false, nil},
+		{"admin lists orphan hosts", admin, adminz.OrphanHostList, adminz.Resource{Type: "orphan_host"}, adminz.Allow, true, nil},
+		{"manager lists no orphan hosts", managerA, adminz.OrphanHostList, adminz.Resource{Type: "orphan_host"}, adminz.Forbidden, false, nil},
 		{"plain user sees no groups", plain, adminz.GroupList, adminz.Resource{}, adminz.Forbidden, false, nil},
 		{"plain user lists no initiatives", plain, adminz.InitiativeList, adminz.Resource{}, adminz.Forbidden, false, nil},
 	}

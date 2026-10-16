@@ -45,6 +45,9 @@ type AdminService interface {
 	RevokeUserSessions(ctx context.Context, callerID, userID string) (int64, error)
 
 	ListAudit(ctx context.Context, callerID string, q portal.AuditQuery) (portal.Page[portal.AuditEvent], error)
+
+	AppHealth(ctx context.Context, callerID, appID string) (portal.AppHealth, error)
+	ListOrphanHosts(ctx context.Context, callerID string) ([]portal.OrphanHost, error)
 }
 
 var _ AdminService = (*portal.Service)(nil)
@@ -69,6 +72,8 @@ const (
 	PathUser             = "/api/v1/users/{id}"
 	PathUserSessions     = "/api/v1/users/{id}/sessions"
 	PathAudit            = "/api/v1/audit"
+	PathAppHealth        = "/api/v1/apps/{id}/health"
+	PathOrphanHosts      = "/api/v1/health/orphan-hosts"
 )
 
 // Query parameters.
@@ -98,6 +103,9 @@ func (a *api) adminRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE "+PathUserSessions, a.revokeSessions)
 
 	mux.HandleFunc("GET "+PathAudit, a.listAudit)
+
+	mux.HandleFunc("GET "+PathAppHealth, a.appHealth)
+	mux.HandleFunc("GET "+PathOrphanHosts, a.orphanHosts)
 }
 
 // Request bodies. Decoding rejects unknown fields; the values are validated by the use cases.

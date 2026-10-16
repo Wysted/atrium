@@ -250,7 +250,8 @@ func TestCatalogResponseShapes(t *testing.T) {
 	w := do(h, http.MethodGet, "/api/v1/initiatives/"+initiativeID+"/apps", "", nil)
 	const wantApps = `{"apps":[` +
 		`{"id":"` + appID + `","initiative_id":"` + initiativeID + `","name":"Hello","status":"active","created_at":"2030-01-02T03:04:05Z",` +
-		`"deployments":[{"id":"` + deploymentID + `","app_id":"` + appID + `","host":"a.example.test","created_at":"2030-01-02T03:04:05Z"}]},` +
+		`"deployments":[{"id":"` + deploymentID + `","app_id":"` + appID + `","host":"a.example.test","created_at":"2030-01-02T03:04:05Z",` +
+		`"last_seen_at":null,"last_probe_at":null,"last_probe_status":null}]},` +
 		`{"id":"` + appID + `","initiative_id":"` + initiativeID + `","name":"","status":"","created_at":"2030-01-02T03:04:05Z","deployments":[]}` +
 		`],"next_cursor":"next"}`
 	if strings.TrimSpace(w.Body.String()) != wantApps {

@@ -191,6 +191,11 @@ func TestPermissionMatrix(t *testing.T) {
 			_, id, _ := s.freshApp(c.alpha)
 			return req{http.MethodDelete, "/api/v1/deployments/" + id, "{}"}
 		}, [5]int{nc, fb, nf, nf, fb}},
+		{"app health", func() req {
+			id, _, _ := s.freshApp(c.alpha)
+			return req{http.MethodGet, "/api/v1/apps/" + id + "/health", ""}
+		}, [5]int{ok, ok, nf, nf, fb}},
+		{"orphan hosts", func() req { return req{http.MethodGet, "/api/v1/health/orphan-hosts", ""} }, [5]int{ok, fb, fb, fb, fb}},
 		{"audit log", func() req { return req{http.MethodGet, "/api/v1/audit", ""} }, [5]int{ok, ok, ok, fb, fb}},
 		{"audit of the initiative", func() req { return req{http.MethodGet, "/api/v1/audit?initiative_id=" + c.alpha, ""} }, [5]int{ok, ok, nf, nf, fb}},
 	}
@@ -453,4 +458,86 @@ func TestCatalogOverHTTP(t *testing.T) {
 		t.Fatalf("manager's roles = %d %s", w.Code, w.Body.String())
 	}
 	mustStatus(s.api(c.mgrA, http.MethodGet, "/api/v1/initiatives/"+gamma+"/apps", ""), http.StatusNotFound)
+}
+
+// The health endpoints over the real stack: telemetry reaches the JSON, problems are derived from it, and
+// reading changes nothing.
+func TestHealthOverHTTP(t *testing.T) {
+	t.Parallel()
+	s := newStack(t)
+	s.seed()
+	c := s.seedCast()
+	app, _, host := s.freshApp(c.alpha)
+	s.exec(`UPDATE deployments SET last_seen_at = now() - interval '2 days', last_probe_at = now(), last_probe_status = 'unprotected' WHERE host = $1`, host)
+	s.exec(`SELECT create_access_denials_partition(now()::date)`)
+	s.exec(`INSERT INTO access_denials (host, reason) VALUES ('orphan.apps.example.test', 'unknown_host'), ('orphan.apps.example.test', 'unknown_host')`)
+
+	type deployment struct {
+		Host            string  `json:"host"`
+		LastSeenAt      *string `json:"last_seen_at"`
+		LastProbeAt     *string `json:"last_probe_at"`
+		LastProbeStatus *string `json:"last_probe_status"`
+	}
+	type health struct {
+		App struct {
+			ID          string       `json:"id"`
+			Deployments []deployment `json:"deployments"`
+		} `json:"app"`
+		InitiativeStatus       string `json:"initiative_status"`
+		GrantCount             int    `json:"grant_count"`
+		EffectiveManagerGrants int    `json:"effective_manager_grants"`
+		Problems               []struct {
+			Code string  `json:"code"`
+			Host *string `json:"host"`
+		} `json:"problems"`
+	}
+
+	before := s.snapshot()
+	for name, caller := range map[string]string{"admin": c.admin, "manager": c.mgrA} {
+		w := s.api(caller, http.MethodGet, "/api/v1/apps/"+app+"/health", "")
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: status %d: %s", name, w.Code, w.Body.String())
+		}
+		h := decode[health](t, w)
+		if h.App.ID != app || h.InitiativeStatus != "active" || h.GrantCount != 1 || h.EffectiveManagerGrants != 1 || len(h.App.Deployments) != 1 {
+			t.Fatalf("%s: health = %s", name, w.Body.String())
+		}
+		d := h.App.Deployments[0]
+		if d.Host != host || d.LastSeenAt == nil || d.LastProbeAt == nil || d.LastProbeStatus == nil || *d.LastProbeStatus != "unprotected" {
+			t.Fatalf("%s: deployment = %+v", name, d)
+		}
+		var codes []string
+		for _, p := range h.Problems {
+			codes = append(codes, p.Code)
+			if p.Code == "unprotected" && (p.Host == nil || *p.Host != host) {
+				t.Fatalf("%s: unprotected without its host: %s", name, w.Body.String())
+			}
+		}
+		if len(codes) != 2 || codes[0] != "unprotected" || codes[1] != "not_seen_recently" {
+			t.Fatalf("%s: problems = %v", name, codes)
+		}
+	}
+
+	w := s.api(c.admin, http.MethodGet, "/api/v1/health/orphan-hosts", "")
+	orphans := decode[struct {
+		Hosts []struct {
+			Host         string `json:"host"`
+			Count        int    `json:"count"`
+			LastDeniedAt string `json:"last_denied_at"`
+		} `json:"hosts"`
+	}](t, w)
+	if w.Code != http.StatusOK || len(orphans.Hosts) != 1 || orphans.Hosts[0].Host != "orphan.apps.example.test" ||
+		orphans.Hosts[0].Count != 2 || orphans.Hosts[0].LastDeniedAt == "" {
+		t.Fatalf("orphan hosts = %d %s", w.Code, w.Body.String())
+	}
+	if after := s.snapshot(); after != before {
+		t.Fatalf("reading the health changed state:\n before %s\n after  %s", before, after)
+	}
+
+	// Health is read only: no verb but GET exists on these paths.
+	for _, m := range []string{http.MethodPost, http.MethodPatch, http.MethodDelete} {
+		if w := s.api(c.admin, m, "/api/v1/apps/"+app+"/health", "{}"); w.Code != http.StatusNotFound {
+			t.Fatalf("%s health = %d, want 404", m, w.Code)
+		}
+	}
 }

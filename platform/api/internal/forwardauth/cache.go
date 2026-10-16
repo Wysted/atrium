@@ -11,6 +11,10 @@ const (
 	DefaultCacheTTL = 30 * time.Second
 	// maxCacheEntries bounds memory; beyond it entries are not stored (the next request just reads the database).
 	maxCacheEntries = 100_000
+	// sweepInterval is the shortest time between two sweeps of expired entries of a full cache. Sweeping walks
+	// the whole map under the mutex, so a full cache must not do it on every put: between sweeps a put into a
+	// full cache is O(1) and stores nothing.
+	sweepInterval = time.Second
 )
 
 type cacheEntry[V any] struct {
@@ -24,13 +28,21 @@ type ttlCache[K comparable, V any] struct {
 	ttl time.Duration
 	now func() time.Time
 
-	mu  sync.Mutex
-	gen uint64
-	m   map[K]cacheEntry[V]
+	max int // entries held at most
+
+	mu        sync.Mutex
+	gen       uint64
+	m         map[K]cacheEntry[V]
+	lastSweep time.Time
 }
 
 func newTTLCache[K comparable, V any](ttl time.Duration, now func() time.Time) *ttlCache[K, V] {
-	return &ttlCache[K, V]{ttl: ttl, now: now, m: map[K]cacheEntry[V]{}}
+	return newBoundedTTLCache[K, V](ttl, maxCacheEntries, now)
+}
+
+// newBoundedTTLCache is newTTLCache with a chosen bound.
+func newBoundedTTLCache[K comparable, V any](ttl time.Duration, maxEntries int, now func() time.Time) *ttlCache[K, V] {
+	return &ttlCache[K, V]{ttl: ttl, now: now, max: maxEntries, m: map[K]cacheEntry[V]{}}
 }
 
 // get returns the live value for k and the current generation (to be passed to put after loading).
@@ -47,20 +59,32 @@ func (c *ttlCache[K, V]) get(k K) (v V, ok bool, gen uint64) {
 	return v, false, c.gen
 }
 
-func (c *ttlCache[K, V]) put(k K, v V, gen uint64) {
+// put stores v and reports whether it did: a stale generation or a full cache stores nothing.
+func (c *ttlCache[K, V]) put(k K, v V, gen uint64) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if gen != c.gen {
-		return
+		return false
 	}
 	now := c.now()
-	if len(c.m) >= maxCacheEntries {
+	if len(c.m) >= c.max {
+		if now.Sub(c.lastSweep) < sweepInterval {
+			return false
+		}
+		c.lastSweep = now
 		maps.DeleteFunc(c.m, func(_ K, e cacheEntry[V]) bool { return !now.Before(e.expires) })
-		if len(c.m) >= maxCacheEntries {
-			return
+		if len(c.m) >= c.max {
+			return false
 		}
 	}
 	c.m[k] = cacheEntry[V]{value: v, expires: now.Add(c.ttl)}
+	return true
+}
+
+func (c *ttlCache[K, V]) delete(k K) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.m, k)
 }
 
 func (c *ttlCache[K, V]) clear() {

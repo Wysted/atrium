@@ -35,6 +35,8 @@ type config struct {
 	JWKSURL      string // in-cluster URL of platform-api's JWKS (internal listener)
 	// AllowPrivilegedDBLogin is the value of PORTAL_ALLOW_PRIVILEGED_DB_LOGIN (development only).
 	AllowPrivilegedDBLogin bool
+	// Probe configures the integration probe (PORTAL_PROBE_*); Probe.Interval 0 disables it.
+	Probe probeConfig
 }
 
 // loadConfig reads and validates the environment through getenv, reporting every problem at once.
@@ -78,6 +80,9 @@ func loadConfig(getenv func(string) string) (config, error) {
 		}
 		c.AllowPrivilegedDBLogin = b
 	}
+	var perrs []error
+	c.Probe, perrs = loadProbeConfig(getenv)
+	errs = append(errs, perrs...)
 	if err := errors.Join(errs...); err != nil {
 		return config{}, fmt.Errorf("invalid configuration: %w", err)
 	}

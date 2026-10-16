@@ -66,6 +66,9 @@ const (
 	GroupList       Action = "group.list"        // names only: id, key, name
 	GroupMemberList Action = "group_member.list" // admin only: who is in a group
 	UserList        Action = "user.list"
+	// OrphanHostList lists the hosts routed to the platform that have no deployment (admin only: an orphan host
+	// belongs to no app and no initiative).
+	OrphanHostList Action = "orphan_host.list"
 )
 
 // Outcome is the verdict of Decide.
@@ -215,6 +218,7 @@ var rules = map[Action]rule{
 	UserEnable:         {scope: scopeGlobal},
 	UserSessionsRevoke: {scope: scopeGlobal},
 	UserList:           {scope: scopeGlobal},
+	OrphanHostList:     {scope: scopeGlobal},
 }
 
 // Decide is the pure decision function. Rules, in order:
@@ -227,7 +231,7 @@ var rules = map[Action]rule{
 //     GroupList (id, key, name only; groups are global): admins and managers see All, anyone else is forbidden.
 //     GrantList, RoleList and AppList list the rows of one initiative (the apps carry their deployments): allowed
 //     to admins and to its managers with that initiative as scope.
-//     The admin-only listings of global data (GroupMemberList, UserList) answer Scope All to admins.
+//     The admin-only listings of global data (GroupMemberList, UserList, OrphanHostList) answer Scope All to admins.
 //  3. An action on an initiative-scoped resource needs Resource.InitiativeID (otherwise forbidden, even for
 //     admins: the caller forgot to resolve the owner). A caller who is neither platform admin nor manager of
 //     that initiative gets not_found, whatever the action, so the resource's existence is not confirmed.
@@ -281,7 +285,7 @@ func Decide(subject Subject, action Action, resource Resource) Decision {
 var initiativeListings = map[Action]bool{GrantList: true, RoleList: true, AppList: true}
 
 // globalListings are the admin-only listings of global data: allowed, they answer with Scope All.
-var globalListings = map[Action]bool{GroupMemberList: true, UserList: true}
+var globalListings = map[Action]bool{GroupMemberList: true, UserList: true, OrphanHostList: true}
 
 // decideListing answers a listing. globalForManagers: managers see everything (the listed data is global and
 // harmless, like group names); otherwise they see only their initiatives.

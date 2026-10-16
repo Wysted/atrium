@@ -251,6 +251,8 @@ const (
 	TargetRole         = "role"
 	TargetApp          = "app"
 	TargetDeployment   = "deployment"
+	// TargetOrphanHost is the resource type of the orphan host listing (nothing is written for it).
+	TargetOrphanHost = "orphan_host"
 )
 
 // GrantRepo is the storage of grants. Listing methods take the Scope the caller may see as a required

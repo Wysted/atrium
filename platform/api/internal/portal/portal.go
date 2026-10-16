@@ -108,6 +108,7 @@ type Tx interface {
 	// Audit appends to the audit log inside the transaction: if the insert fails the mutation rolls back.
 	Audit() audit.Recorder
 	AuditLog() AuditReader
+	Health() HealthRepo
 }
 
 // Store runs units of work. fn may run more than once (the store retries deadlocks and serialization
@@ -128,18 +129,22 @@ type Config struct {
 	PortalAppID string
 	// AuthHost is the host of the auth server (from the issuer). No deployment may use it. Empty means none.
 	AuthHost string
+	// ProbeInterval is the interval of the integration probe (PORTAL_PROBE_INTERVAL); zero means the probe is
+	// disabled. The health report judges the age of the probe results by it.
+	ProbeInterval time.Duration
 	// Now is the clock for "expires_at must be in the future"; nil means time.Now.
 	Now func() time.Time
 }
 
 // Service implements the use cases of the portal API.
 type Service struct {
-	permissions PermissionsReader
-	home        HomeReader
-	store       Store
-	portalAppID string
-	authHost    string
-	now         func() time.Time
+	permissions   PermissionsReader
+	home          HomeReader
+	store         Store
+	portalAppID   string
+	authHost      string
+	probeInterval time.Duration
+	now           func() time.Time
 }
 
 // NewService builds a Service.
@@ -153,7 +158,7 @@ func NewService(cfg Config) (*Service, error) {
 	}
 	return &Service{
 		permissions: cfg.Permissions, home: cfg.Home, store: cfg.Store, portalAppID: cfg.PortalAppID,
-		authHost: strings.ToLower(cfg.AuthHost), now: now,
+		authHost: strings.ToLower(cfg.AuthHost), probeInterval: cfg.ProbeInterval, now: now,
 	}, nil
 }
 

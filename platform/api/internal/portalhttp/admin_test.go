@@ -41,6 +41,9 @@ type fakeAdmin struct {
 	events  portal.Page[portal.AuditEvent]
 	users   []portal.User
 
+	health  portal.AppHealth
+	orphans []portal.OrphanHost
+
 	catalogCalls
 }
 

@@ -44,6 +44,9 @@ Pending work and open questions for the portal platform. Detailed context lives 
   each checkpoint slower). Related, not fixed: `access_changed`/`signing_keys_changed` triggers use NOTIFY, which
   serializes commits cluster-wide on one lock; timing-sensitive app tests (`TestGoogleCallbackProviderUnavailable`)
   can fail when the disk is saturated by other work.
+- [ ] **Align `deployments.host` CHECK with `hostname.Valid`.** ForwardAuth rejects hosts failing `hostname.Valid` before
+  the lookup, and `Valid` is stricter than the schema CHECK (`a..b`, a numeric last label). A host inserted by SQL
+  that passes the CHECK but not `Valid` would never resolve. Add a matching CHECK in a new migration.
 - [ ] **Reduce `platform_runtime`.** Once the portal owns administration, drop its write access to the authorization
   tables except what ForwardAuth and login need.
 - [ ] **Cookie prefix support in Safari.** `__Host-Http-` is enforced by Chrome 140+ and Firefox 143+; revisit Safari.

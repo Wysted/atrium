@@ -3,6 +3,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 	"platform/api/internal/httpx"
 	"platform/api/internal/jwks"
 	"platform/api/internal/keys"
+	"platform/api/internal/lastseen"
 	"platform/api/internal/postgres"
 	"platform/api/internal/ratelimit"
 	"platform/api/internal/session"
@@ -56,6 +58,11 @@ type App struct {
 	Login *googlelogin.Login
 	// InvalidateAccess clears the decision cache; call it on NOTIFY access_changed.
 	InvalidateAccess func()
+	// LastSeen aggregates the authorized requests per deployment host. The caller must run LastSeen.Run in the
+	// background: it flushes last_seen_at once per minute and once more when its context ends.
+	LastSeen *lastseen.Recorder
+	// RunUnknownHosts writes the queued unknown_host denials (forwardauth.Handler.Run). Run it in the background.
+	RunUnknownHosts func(ctx context.Context)
 }
 
 // New builds the app.
@@ -83,8 +90,13 @@ func New(cfg Config) (*App, error) {
 	users := postgres.NewUserRepo(cfg.Pool)
 	auditLog := postgres.NewAuditRepo(cfg.Pool)
 
+	seen, err := lastseen.New(lastseen.Config{Store: deployments, Logger: log})
+	if err != nil {
+		return nil, err
+	}
 	fa, err := forwardauth.New(forwardauth.Config{
 		AuthHost:       cfg.AuthHost,
+		Seen:           seen,
 		Apps:           deployments,
 		Sessions:       sessions,
 		Evaluator:      access.NewEvaluator(postgres.NewAccessRepository(cfg.Pool), access.WithPortalApp(cfg.PortalAppID)),
@@ -140,5 +152,7 @@ func New(cfg Config) (*App, error) {
 		Sessions:         sessions,
 		Login:            login,
 		InvalidateAccess: fa.Invalidate,
+		LastSeen:         seen,
+		RunUnknownHosts:  fa.Run,
 	}, nil
 }

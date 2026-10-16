@@ -18,6 +18,7 @@ import (
 	"platform/api/internal/access"
 	"platform/api/internal/assertion"
 	"platform/api/internal/audit"
+	"platform/api/internal/hostname"
 	"platform/api/internal/httpx"
 	"platform/api/internal/keys"
 	"platform/api/internal/session"
@@ -52,6 +53,8 @@ const (
 	BindCookieTTL = 10 * time.Minute
 	// DenialRecordTimeout bounds the access_denials insert, which must not delay or alter the response.
 	DenialRecordTimeout = 2 * time.Second
+	// MaxNegativeHostEntries bounds the cache of hosts without deployment.
+	MaxNegativeHostEntries = 10_000
 	// signedOutPath is the page of the auth host shown after logout.
 	signedOutPath = "/signed-out"
 	loginPath     = "/login"
@@ -118,7 +121,12 @@ type Issuer interface {
 	Issue(req assertion.Request) (assertion.Issued, error)
 }
 
-// Config wires a Handler. CacheTTL, RequestTimeout, Now and Logger are optional.
+// SeenRecorder is told which deployment host just received an authorized request (lastseen.Recorder).
+type SeenRecorder interface {
+	Touch(host string)
+}
+
+// Config wires a Handler. Seen, CacheTTL, RequestTimeout, Now and Logger are optional.
 type Config struct {
 	AuthHost  string // lowercase, no scheme or port
 	Apps      AppDirectory
@@ -128,7 +136,10 @@ type Config struct {
 	Denials   Denials
 	Issuer    Issuer
 	Audit     audit.Recorder
-	CacheTTL  time.Duration
+	// Seen receives the host of every authorized decision (a 200 with assertion), for last_seen_at. Nil
+	// disables it.
+	Seen     SeenRecorder
+	CacheTTL time.Duration
 	// RequestTimeout bounds each request, database calls included; on expiry the decision is the explicit
 	// 503. Default httpx.RequestTimeout.
 	RequestTimeout time.Duration
@@ -155,6 +166,12 @@ type Handler struct {
 	log       *slog.Logger
 	decisions *ttlCache[decisionKey, cachedDecision]
 	hosts     *ttlCache[string, appLookup]
+	// noHosts remembers valid hosts that have no deployment, apart from hosts so that a flood of random names
+	// can never take the place of a legitimate entry. It is capped small and invalidated like hosts.
+	noHosts *ttlCache[string, struct{}]
+	// unknown queues the unknown_host denials for the background writer (Run). Invalidate does not touch it: it
+	// is rate limiting, not authorization state.
+	unknown *unknownHostRecorder
 }
 
 // New validates cfg and applies defaults.
@@ -178,6 +195,8 @@ func New(cfg Config) (*Handler, error) {
 	}
 	h.decisions = newTTLCache[decisionKey, cachedDecision](cfg.CacheTTL, cfg.Now)
 	h.hosts = newTTLCache[string, appLookup](cfg.CacheTTL, cfg.Now)
+	h.noHosts = newBoundedTTLCache[string, struct{}](cfg.CacheTTL, MaxNegativeHostEntries, cfg.Now)
+	h.unknown = newUnknownHostRecorder(cfg.Now)
 	return h, nil
 }
 
@@ -185,6 +204,7 @@ func New(cfg Config) (*Handler, error) {
 func (h *Handler) Invalidate() {
 	h.decisions.clear()
 	h.hosts.clear()
+	h.noHosts.clear()
 }
 
 // outcome is what the decision log line reports.
@@ -236,12 +256,19 @@ func (h *Handler) decide(w http.ResponseWriter, r *http.Request, host string) ou
 		return outcome{decision: DecisionBypass, reason: ReasonAuthHost}
 	}
 
-	// 2. A host without deployment is refused.
+	// 2. A host that cannot be a deployment host (not a valid DNS name) is refused without touching the
+	// database or any cache; so is a host without deployment.
+	if !hostname.Valid(host) {
+		h.unknown.invalid.Add(1)
+		h.respondError(w, nav, http.StatusForbidden, "Access denied", "")
+		return outcome{decision: DecisionDeny, reason: access.ReasonUnknownHost}
+	}
 	appID, found, err := h.lookupApp(ctx, host)
 	if err != nil {
 		return h.unavailable(w, nav, ReasonBackend, err)
 	}
 	if !found {
+		h.unknown.offer(host)
 		h.respondError(w, nav, http.StatusForbidden, "Access denied", "")
 		return outcome{decision: DecisionDeny, reason: access.ReasonUnknownHost}
 	}
@@ -303,6 +330,9 @@ func (h *Handler) decide(w http.ResponseWriter, r *http.Request, host string) ou
 	}
 	w.Header().Set(HeaderAssertion, issued.Token)
 	w.WriteHeader(http.StatusOK)
+	if h.cfg.Seen != nil {
+		h.cfg.Seen.Touch(host) // memory only; the flusher writes last_seen_at
+	}
 	return outcome{decision: DecisionAllow, reason: access.ReasonGranted, appID: d.AppID, sid: as.SessionID, userID: as.UserID, jti: issued.JTI}
 }
 
@@ -311,11 +341,19 @@ func (h *Handler) lookupApp(ctx context.Context, host string) (string, bool, err
 	if ok {
 		return v.appID, v.found, nil
 	}
+	_, missing, ngen := h.noHosts.get(host)
+	if missing {
+		return "", false, nil
+	}
 	appID, found, err := h.cfg.Apps.AppForHost(ctx, host)
 	if err != nil {
 		return "", false, err
 	}
-	h.hosts.put(host, appLookup{appID: appID, found: found}, gen)
+	if found {
+		h.hosts.put(host, appLookup{appID: appID, found: true}, gen)
+	} else {
+		h.noHosts.put(host, struct{}{}, ngen)
+	}
 	return appID, found, nil
 }
 

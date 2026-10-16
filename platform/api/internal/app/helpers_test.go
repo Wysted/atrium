@@ -162,6 +162,7 @@ func newEnv(t *testing.T, opts envOptions) *env {
 	wg.Go(func() {
 		postgres.Listen(listenCtx, rt, access.NotifyChannel, a.InvalidateAccess, log)
 	})
+	wg.Go(func() { a.RunUnknownHosts(listenCtx) })
 	t.Cleanup(func() { stop(); wg.Wait() })
 
 	e.seed()

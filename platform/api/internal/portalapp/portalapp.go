@@ -35,6 +35,8 @@ type Config struct {
 	JWKSURL string // fixed in-cluster URL of platform-api's JWKS
 	// Pool must run as postgres.PortalRole (postgres.OpenPortalPool).
 	Pool *pgxpool.Pool
+	// ProbeInterval is PORTAL_PROBE_INTERVAL (zero: the probe is disabled), used to judge probe results.
+	ProbeInterval time.Duration
 	// Web serves the SPA outside /api/ (a later part); nil answers 404.
 	Web            http.Handler
 	RequestTimeout time.Duration // zero means httpx.RequestTimeout
@@ -82,11 +84,12 @@ func New(cfg Config) (*App, error) {
 	}
 	store := postgres.NewPortalStore(cfg.Pool)
 	svc, err := portal.NewService(portal.Config{
-		Permissions: postgres.NewPermissionsRepo(cfg.Pool),
-		Home:        postgres.NewHomeRepo(cfg.Pool),
-		Store:       store,
-		PortalAppID: cfg.AppID,
-		AuthHost:    authHost,
+		Permissions:   postgres.NewPermissionsRepo(cfg.Pool),
+		Home:          postgres.NewHomeRepo(cfg.Pool),
+		Store:         store,
+		PortalAppID:   cfg.AppID,
+		AuthHost:      authHost,
+		ProbeInterval: cfg.ProbeInterval,
 	})
 	if err != nil {
 		return nil, err

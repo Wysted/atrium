@@ -26,7 +26,7 @@ var appIDCheck = regexp.MustCompile(`^app_[0-9A-HJKMNP-TV-Z]{26}$`)
 func newCatalogEnv(t *testing.T) *adminEnv {
 	t.Helper()
 	return newAdminEnvCfg(t, func(s portal.Store) portal.Store { return s }, func(c *portal.Config) {
-		c.PortalAppID, c.AuthHost = portalAppTestID, catalogAuthHost
+		c.PortalAppID, c.AuthHost, c.ProbeInterval = portalAppTestID, catalogAuthHost, 5*time.Minute
 	})
 }
 

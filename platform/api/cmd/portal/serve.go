@@ -16,7 +16,7 @@ import (
 	"platform/api/internal/postgres"
 )
 
-// shutdownTimeout is the single budget for the whole shutdown (both listeners and the pool), kept under the
+// shutdownTimeout is the single budget for the whole shutdown (both listeners, the probe and the pool), kept under the
 // 30 s terminationGracePeriodSeconds default of Kubernetes with margin.
 const shutdownTimeout = 20 * time.Second
 
@@ -51,13 +51,24 @@ func serve(ctx context.Context, cfg config, log *slog.Logger) error {
 	defer closePool()
 
 	a, err := portalapp.New(portalapp.Config{
-		AppID: cfg.AppID, Issuer: cfg.Issuer, JWKSURL: cfg.JWKSURL, Pool: pool, Logger: log,
+		AppID: cfg.AppID, Issuer: cfg.Issuer, JWKSURL: cfg.JWKSURL, Pool: pool, ProbeInterval: cfg.Probe.Interval, Logger: log,
 	})
 	if err != nil {
 		return err
 	}
 
 	checkPortalApp(ctx, postgres.NewAccessRepository(pool), cfg.AppID, log)
+
+	probeJob, err := newProbeJob(cfg.Probe, cfg.Issuer, cfg.AppID, pool, log)
+	if err != nil {
+		return err
+	}
+	bgCtx, stopBackground := context.WithCancel(ctx)
+	defer stopBackground()
+	var background sync.WaitGroup
+	if probeJob != nil {
+		background.Go(func() { probeJob.Run(bgCtx) })
+	}
 
 	servers := map[string]*http.Server{
 		"internal": httpx.NewServer(cfg.InternalAddr, a.Internal),
@@ -87,6 +98,10 @@ func serve(ctx context.Context, cfg config, log *slog.Logger) error {
 		if err := srv.Shutdown(shutdownCtx); err != nil {
 			runErr = errors.Join(runErr, fmt.Errorf("shutdown %s listener: %w", name, err))
 		}
+	}
+	stopBackground()
+	if !waitBounded(shutdownCtx, background.Wait) {
+		runErr = errors.Join(runErr, errors.New("background jobs did not stop within the shutdown budget"))
 	}
 	closePool()
 	return runErr

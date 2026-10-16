@@ -59,13 +59,18 @@ type RolePatch struct {
 	ManagesAccess *bool
 }
 
-// Deployment maps a host to an app. InitiativeID is the initiative that owns the app.
+// Deployment maps a host to an app. InitiativeID is the initiative that owns the app. The last three fields
+// are integration telemetry (contract block 6, "Observability"): when platform-api last authorized a request on
+// the host, and when and with what result the portal last probed it. Nil and empty mean "never".
 type Deployment struct {
-	ID           string
-	AppID        string
-	InitiativeID string
-	Host         string
-	CreatedAt    time.Time
+	ID              string
+	AppID           string
+	InitiativeID    string
+	Host            string
+	CreatedAt       time.Time
+	LastSeenAt      *time.Time
+	LastProbeAt     *time.Time
+	LastProbeStatus string // one of the Probe* constants, empty when never probed
 }
 
 // App is an app of an initiative with its deployments (ordered by host).

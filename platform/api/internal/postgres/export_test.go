@@ -9,6 +9,9 @@ import (
 // HousekeepingLockKey exposes the housekeeping advisory lock key to the external tests.
 const HousekeepingLockKey = housekeepingLockKey
 
+// ProbeLockKey exposes the probe advisory lock key to the external tests.
+const ProbeLockKey = probeLockKey
+
 // CloseBounded and ConnCloseTimeout expose the bounded close of LISTEN connections to the external tests.
 var CloseBounded = closeBounded
 
@@ -23,3 +26,6 @@ func TxExec(ctx context.Context, tx portal.Tx, sql string, args ...any) error {
 	_, err := tx.(portalTx).tx.Exec(ctx, sql, args...)
 	return err
 }
+
+// WithMinConns exposes the pool sizing of the portal to the external tests.
+var WithMinConns = withMinConns

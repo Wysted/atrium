@@ -77,11 +77,15 @@ type roleDetailJSON struct {
 	ManagesAccess bool   `json:"manages_access"`
 }
 
+// deploymentJSON carries the integration telemetry of the deployment: null means never (seen or probed).
 type deploymentJSON struct {
-	ID        string    `json:"id"`
-	AppID     string    `json:"app_id"`
-	Host      string    `json:"host"`
-	CreatedAt time.Time `json:"created_at"`
+	ID              string     `json:"id"`
+	AppID           string     `json:"app_id"`
+	Host            string     `json:"host"`
+	CreatedAt       time.Time  `json:"created_at"`
+	LastSeenAt      *time.Time `json:"last_seen_at"`
+	LastProbeAt     *time.Time `json:"last_probe_at"`
+	LastProbeStatus *string    `json:"last_probe_status"`
 }
 
 type appJSON struct {
@@ -102,7 +106,10 @@ func roleToJSON(r portal.Role) roleDetailJSON {
 }
 
 func deploymentToJSON(d portal.Deployment) deploymentJSON {
-	return deploymentJSON{ID: d.ID, AppID: d.AppID, Host: d.Host, CreatedAt: d.CreatedAt}
+	return deploymentJSON{
+		ID: d.ID, AppID: d.AppID, Host: d.Host, CreatedAt: d.CreatedAt,
+		LastSeenAt: d.LastSeenAt, LastProbeAt: d.LastProbeAt, LastProbeStatus: nilIfEmpty(d.LastProbeStatus),
+	}
 }
 
 func appToJSON(a portal.App) appJSON {

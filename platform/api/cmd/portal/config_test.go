@@ -14,6 +14,7 @@ const (
 func env(overrides map[string]string) func(string) string {
 	base := map[string]string{
 		envPublicAddr: ":8080", envInternalAddr: ":8081", envAppID: okAppID, envIssuer: okIssuer, envJWKSURL: okJWKS,
+		envProbeAddr: "traefik.traefik.svc.cluster.local:443",
 	}
 	for k, v := range overrides {
 		base[k] = v

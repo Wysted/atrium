@@ -67,7 +67,7 @@ func newStack(t *testing.T) *stack {
 	owner := testdb.New(t)
 	pool := testdb.Portal(t, owner)
 	app, err := portalapp.New(portalapp.Config{
-		AppID: portalAppID, Issuer: testIssuer, JWKSURL: jwks.URL, Pool: pool, Logger: discardLog,
+		AppID: portalAppID, Issuer: testIssuer, JWKSURL: jwks.URL, Pool: pool, ProbeInterval: 5 * time.Minute, Logger: discardLog,
 	})
 	if err != nil {
 		t.Fatal(err)

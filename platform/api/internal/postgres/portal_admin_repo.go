@@ -211,16 +211,20 @@ func (r GrantsRepo) LockInitiative(ctx context.Context, id string) error {
 	return nil
 }
 
-// managerGrantsSQL locks the manages_access grants of an initiative, ordered by id, and computes whether each
-// is effective: not expired (the loader's rule, by the database clock read now, after the locks, hence
-// clock_timestamp() and not the transaction's now()) and held by at least one active user,
-// directly or through a group. $1 = initiative id.
-const managerGrantsSQL = `
-SELECT ia.id::text, ia.role_id::text,
-       (ia.expires_at IS NULL OR ia.expires_at > clock_timestamp())
+// effectiveGrantExpr is the definition of an effective grant, shared by the last-manager rule (managerGrantsSQL)
+// and the integration health counts: not expired (by the database clock read now, after any lock wait, hence
+// clock_timestamp() and not the transaction's now()) and held by at least one active user, directly or through
+// a group. It needs the alias ia (initiative_access).
+const effectiveGrantExpr = `(ia.expires_at IS NULL OR ia.expires_at > clock_timestamp())
        AND (EXISTS (SELECT 1 FROM users u WHERE u.id = ia.user_id AND u.status = 'active')
             OR EXISTS (SELECT 1 FROM group_members gm JOIN users u ON u.id = gm.user_id
-                       WHERE gm.group_id = ia.group_id AND u.status = 'active'))
+                       WHERE gm.group_id = ia.group_id AND u.status = 'active'))`
+
+// managerGrantsSQL locks the manages_access grants of an initiative, ordered by id, and computes whether each
+// is effective (effectiveGrantExpr). $1 = initiative id.
+const managerGrantsSQL = `
+SELECT ia.id::text, ia.role_id::text,
+       ` + effectiveGrantExpr + `
 FROM initiative_access ia
 JOIN initiative_roles ir ON ir.initiative_id = ia.initiative_id AND ir.id = ia.role_id
 WHERE ia.initiative_id = $1::uuid AND ir.manages_access

@@ -4,47 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"platform/api/internal/adminz"
+	"platform/api/internal/hostname"
 )
-
-// Limits of a host (RFC 1035 and RFC 1123).
-const (
-	maxHostLength  = 253
-	maxLabelLength = 63
-)
-
-// validHost reports whether host is a lowercase DNS name that can be matched against X-Forwarded-Host: at most
-// 253 bytes, labels of 1 to 63 characters from [a-z0-9-] that neither start nor end with a hyphen, no trailing
-// dot, no wildcard, no port. A name whose last label is all digits is refused too: it would be an IP address
-// (or look like one), and Traefik routes by name. Internationalized names must come in their xn-- form.
-func validHost(host string) bool {
-	if host == "" || len(host) > maxHostLength {
-		return false
-	}
-	labels := strings.Split(host, ".")
-	for _, l := range labels {
-		if l == "" || len(l) > maxLabelLength || l[0] == '-' || l[len(l)-1] == '-' {
-			return false
-		}
-		for i := range len(l) {
-			if c := l[i]; (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '-' {
-				return false
-			}
-		}
-	}
-	return !allDigits(labels[len(labels)-1])
-}
-
-func allDigits(s string) bool {
-	for i := range len(s) {
-		if s[i] < '0' || s[i] > '9' {
-			return false
-		}
-	}
-	return s != ""
-}
 
 // deploymentDoc is the audit document of a deployment.
 type deploymentDoc struct {
@@ -56,7 +19,7 @@ func deploymentResource(d Deployment) adminz.Resource {
 	return adminz.Resource{Type: TargetDeployment, ID: d.ID, InitiativeID: d.InitiativeID}
 }
 
-// CreateDeployment attaches a host to an app (platform admins only). The host must be valid (see validHost)
+// CreateDeployment attaches a host to an app (platform admins only). The host must be valid (see hostname.Valid)
 // and must not be the auth host (CodeReserved). A host that already exists, on this app or on any other one
 // (the portal's own hosts included), is ErrHostTaken and creates nothing.
 func (s *Service) CreateDeployment(ctx context.Context, callerID, appID string, in NewDeployment) (Deployment, error) {
@@ -80,7 +43,7 @@ func (s *Service) CreateDeployment(ctx context.Context, callerID, appID string, 
 		switch {
 		case in.Host == "":
 			return invalid("host", CodeRequired)
-		case !validHost(in.Host):
+		case !hostname.Valid(in.Host):
 			return invalid("host", CodeInvalid)
 		case s.authHost != "" && in.Host == s.authHost:
 			return invalid("host", CodeReserved)
