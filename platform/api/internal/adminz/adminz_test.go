@@ -85,7 +85,7 @@ func TestDecideWhoAdministersWhat(t *testing.T) {
 		{"list areas", adminz.AreaList, adminz.Resource{Type: "area"}, a, f, f, f},
 		{"add area member", adminz.AreaMemberAdd, adminz.Resource{Type: "area", ID: "a1"}, a, f, f, f},
 		{"remove area member", adminz.AreaMemberRemove, adminz.Resource{Type: "area", ID: "a1"}, a, f, f, f},
-		{"list area members", adminz.AreaMemberList, adminz.Resource{Type: "area", ID: "a1"}, a, f, f, f},
+		{"list area members", adminz.AreaMemberList, adminz.Resource{Type: "area", ID: "a1"}, a, n, n, n},
 		{"add area supervisor", adminz.AreaSupervisorAdd, adminz.Resource{Type: "area", ID: "a1"}, a, f, f, f},
 		{"remove area supervisor", adminz.AreaSupervisorRemove, adminz.Resource{Type: "area", ID: "a1"}, a, f, f, f},
 		{"list area supervisors", adminz.AreaSupervisorList, adminz.Resource{Type: "area", ID: "a1"}, a, f, f, f},
@@ -99,8 +99,13 @@ func TestDecideWhoAdministersWhat(t *testing.T) {
 		{"create robot", adminz.RobotCreate, adminz.Resource{Type: "robot"}, a, f, f, f},
 		{"update robot", adminz.RobotUpdate, adminz.Resource{Type: "robot", ID: "r1"}, a, f, f, f},
 		{"create robot token", adminz.RobotTokenCreate, adminz.Resource{Type: "token"}, a, f, f, f},
-		{"list robot tokens", adminz.RobotTokenList, adminz.Resource{Type: "token"}, a, f, f, f},
+		{"list robot tokens", adminz.RobotTokenList, adminz.Resource{Type: "token"}, a, n, n, n},
 		{"revoke any token", adminz.TokenRevokeAny, adminz.Resource{Type: "token", ID: "t1"}, a, f, f, f},
+		// Supervised actions without a resolved area: admins pass, everyone else is hidden.
+		{"list user tokens", adminz.UserTokenList, adminz.Resource{Type: "user", ID: "u1"}, a, n, n, n},
+		{"list user robots", adminz.UserRobotList, adminz.Resource{Type: "user", ID: "u1"}, a, n, n, n},
+		{"revoke supervised token", adminz.TokenRevokeSupervised, adminz.Resource{Type: "token", ID: "t1"}, a, n, n, n},
+		{"reassign robot", adminz.RobotReassign, adminz.Resource{Type: "robot", ID: "r1"}, a, n, n, n},
 
 		// Own tokens: any active user, roles or not.
 		{"create own token", adminz.TokenCreateOwn, adminz.Resource{Type: "token"}, a, a, a, a},
@@ -274,5 +279,75 @@ func TestScope(t *testing.T) {
 	some := adminz.Scope{Initiatives: []string{initA}}
 	if some.Empty() || !some.Includes(initA) || some.Includes(initB) {
 		t.Fatal("an initiative scope must match only its initiatives")
+	}
+}
+
+const (
+	areaA = "00000000-0000-0000-0000-0000000000a1"
+	areaB = "00000000-0000-0000-0000-0000000000b1"
+)
+
+// Area-scoped actions (contract block 6, "Area supervisors"): the area belongs to the target person and Decide only
+// compares it with the caller's supervised areas.
+func TestDecideAreaScope(t *testing.T) {
+	t.Parallel()
+	supA := adminz.ActiveSubject("u-sup-a", false, nil).WithSupervised([]string{areaA})
+	supAB := adminz.ActiveSubject("u-sup-ab", false, nil).WithSupervised([]string{areaA, areaB})
+	adminSupA := adminz.ActiveSubject("u-admin-sup", true, nil).WithSupervised([]string{areaA})
+	mgrSupA := adminz.ActiveSubject("u-mgr-sup", false, []string{initA}).WithSupervised([]string{areaA})
+	// Dropping the areas is what portal.subject does under a token: the capacity disappears, the rest stays.
+	tokenSup := adminz.ActiveSubject("u-sup-token", false, []string{initA}).WithSupervised(nil)
+	inactive := adminz.Subject{ID: "u-off"}.WithSupervised([]string{areaA})
+	actions := []adminz.Action{
+		adminz.UserTokenList, adminz.UserRobotList, adminz.RobotTokenList, adminz.TokenRevokeSupervised, adminz.RobotReassign, adminz.AreaMemberList,
+	}
+	tests := []struct {
+		name   string
+		who    adminz.Subject
+		areaID string
+		want   adminz.Outcome
+		reason string
+	}{
+		{"supervisor of the area", supA, areaA, adminz.Allow, adminz.ReasonAreaSupervisor},
+		{"supervisor of two areas, the second", supAB, areaB, adminz.Allow, adminz.ReasonAreaSupervisor},
+		{"supervisor of another area", supA, areaB, adminz.NotFound, adminz.ReasonOutOfArea},
+		{"no supervisable area", supA, "", adminz.NotFound, adminz.ReasonOutOfArea},
+		{"platform admin in no area", admin, "", adminz.Allow, adminz.ReasonPlatformAdmin},
+		{"platform admin in any area", admin, areaB, adminz.Allow, adminz.ReasonPlatformAdmin},
+		{"an admin that also supervises the area stays an admin", adminSupA, areaA, adminz.Allow, adminz.ReasonPlatformAdmin},
+		{"a manager that supervises, from a session", mgrSupA, areaA, adminz.Allow, adminz.ReasonAreaSupervisor},
+		{"a manager under a token", tokenSup, areaA, adminz.NotFound, adminz.ReasonOutOfArea},
+		{"a plain user", plain, areaA, adminz.NotFound, adminz.ReasonOutOfArea},
+		{"a manager of an initiative", managerA, areaA, adminz.NotFound, adminz.ReasonOutOfArea},
+		{"an inactive subject", inactive, areaA, adminz.Forbidden, adminz.ReasonInactiveSubject},
+		{"the zero subject", zero, areaA, adminz.Forbidden, adminz.ReasonInactiveSubject},
+	}
+	for _, tt := range tests {
+		for _, action := range actions {
+			t.Run(tt.name+"/"+string(action), func(t *testing.T) {
+				t.Parallel()
+				got := adminz.Decide(tt.who, action, adminz.Resource{Type: "x", ID: "r1", AreaID: tt.areaID})
+				if got.Outcome != tt.want || got.Reason != tt.reason {
+					t.Errorf("Decide = %q (%s), want %q (%s)", got.Outcome, got.Reason, tt.want, tt.reason)
+				}
+			})
+		}
+	}
+
+	// The supervisor capacity opens nothing outside the area-scoped actions.
+	for _, action := range []adminz.Action{
+		adminz.GrantCreate, adminz.RobotUpdate, adminz.RobotCreate, adminz.RobotTokenCreate, adminz.TokenRevokeAny, adminz.UserDisable,
+		adminz.UserSessionsRevoke, adminz.AuditList, adminz.GroupMemberList, adminz.AreaSupervisorList, adminz.RobotList,
+	} {
+		if d := adminz.Decide(supA, action, adminz.Resource{Type: "x", ID: "r1", AreaID: areaA, InitiativeID: initA}); d.Outcome == adminz.Allow {
+			t.Errorf("a supervisor was allowed %s", action)
+		}
+	}
+	// Only a platform admin gets the unscoped member listing.
+	if d := adminz.Decide(admin, adminz.AreaMemberList, adminz.Resource{Type: "area", AreaID: areaA}); !d.Scope.All {
+		t.Errorf("admin scope = %+v", d.Scope)
+	}
+	if d := adminz.Decide(supA, adminz.AreaMemberList, adminz.Resource{Type: "area", AreaID: areaA}); d.Scope.All {
+		t.Errorf("a supervisor got Scope All")
 	}
 }

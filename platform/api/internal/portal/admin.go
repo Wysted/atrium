@@ -243,6 +243,7 @@ type AuditEvent struct {
 	Before       json.RawMessage
 	After        json.RawMessage
 	TokenID      string // the API token that made the request; empty for a browser session
+	AreaID       string // the area a supervisor acted through; empty for every other event
 }
 
 // AuditQuery filters the audit listing. InitiativeID is optional.

@@ -21,9 +21,12 @@ var _ portal.RobotRepo = RobotsRepo{}
 // robotColumns are the columns of a robot without its last use; lastUsedSQL is the newest use of any of the
 // robot's tokens (the portal role may select it), computed only where it is returned.
 const (
-	robotColumns = `u.id::text, u.name, u.status, COALESCE(u.owner_user_id::text, ''), COALESCE(o.email, ''), COALESCE(o.name, ''), u.created_at, NULL::timestamptz`
+	robotBase    = `u.id::text, u.name, u.status, COALESCE(u.owner_user_id::text, ''), COALESCE(o.email, ''), COALESCE(o.name, ''), u.created_at`
 	ownerJoin    = ` LEFT JOIN users o ON o.id = u.owner_user_id`
 	lastUsedSQL  = `(SELECT max(t.last_used_at) FROM api_tokens t WHERE t.user_id = u.id)`
+	robotColumns = robotBase + `, NULL::timestamptz`
+	// robotListColumns are the columns of the listings, which return the last use too. The order is scanRobot's.
+	robotListColumns = robotBase + `, ` + lastUsedSQL
 )
 
 func scanRobot(row pgx.CollectableRow) (portal.Robot, error) {
@@ -37,7 +40,7 @@ func (r RobotsRepo) ListRobots(ctx context.Context, scope adminz.Scope, q portal
 	if !scope.All {
 		return nil, nil
 	}
-	rows, err := r.db.Query(ctx, `SELECT u.id::text, u.name, u.status, COALESCE(u.owner_user_id::text, ''), COALESCE(o.email, ''), COALESCE(o.name, ''), u.created_at, `+lastUsedSQL+`
+	rows, err := r.db.Query(ctx, `SELECT `+robotListColumns+`
 FROM users u`+ownerJoin+` WHERE u.kind = 'robot' AND ($1::uuid IS NULL OR u.id > $1::uuid) AND ($3::text = '' OR u.status = $3::text) ORDER BY u.id LIMIT $2`, afterID(q.After), q.Limit, q.Status)
 	if err != nil {
 		return nil, fmt.Errorf("query robots: %w", err)
@@ -45,6 +48,21 @@ FROM users u`+ownerJoin+` WHERE u.kind = 'robot' AND ($1::uuid IS NULL OR u.id >
 	robots, err := pgx.CollectRows(rows, scanRobot)
 	if err != nil {
 		return nil, fmt.Errorf("read robots: %w", err)
+	}
+	return robots, nil
+}
+
+// ListRobotsOf implements portal.RobotRepo.
+func (r RobotsRepo) ListRobotsOf(ctx context.Context, ownerID string, q portal.PageQuery) ([]portal.Robot, error) {
+	rows, err := r.db.Query(ctx, `SELECT `+robotListColumns+`
+FROM users u`+ownerJoin+` WHERE u.kind = 'robot' AND u.owner_user_id = $3::uuid AND ($1::uuid IS NULL OR u.id > $1::uuid) ORDER BY u.id LIMIT $2`,
+		afterID(q.After), q.Limit, ownerID)
+	if err != nil {
+		return nil, fmt.Errorf("query robots of owner: %w", err)
+	}
+	robots, err := pgx.CollectRows(rows, scanRobot)
+	if err != nil {
+		return nil, fmt.Errorf("read robots of owner: %w", err)
 	}
 	return robots, nil
 }

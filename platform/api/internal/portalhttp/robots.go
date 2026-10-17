@@ -161,3 +161,37 @@ func (a *api) createRobotToken(w http.ResponseWriter, r *http.Request) {
 	}
 	WriteJSON(w, http.StatusCreated, createdTokenJSON{tokenJSON: tokenToJSON(t.APIToken), Secret: t.Secret})
 }
+
+func (a *api) listUserTokens(w http.ResponseWriter, r *http.Request) {
+	uid, ok := a.caller(w, r)
+	if !ok {
+		return
+	}
+	req, ok := pageRequest(w, r)
+	if !ok {
+		return
+	}
+	p, err := a.admin.ListUserTokens(r.Context(), uid, r.PathValue("id"), req)
+	if err != nil {
+		a.fail(w, r, "user_tokens_list", err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, listResponse("tokens", mapSlice(p.Items, tokenToJSON), p.NextCursor))
+}
+
+func (a *api) listUserRobots(w http.ResponseWriter, r *http.Request) {
+	uid, ok := a.caller(w, r)
+	if !ok {
+		return
+	}
+	req, ok := pageRequest(w, r)
+	if !ok {
+		return
+	}
+	p, err := a.admin.ListUserRobots(r.Context(), uid, r.PathValue("id"), req)
+	if err != nil {
+		a.fail(w, r, "user_robots_list", err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, listResponse("robots", mapSlice(p.Items, robotToJSON), p.NextCursor))
+}

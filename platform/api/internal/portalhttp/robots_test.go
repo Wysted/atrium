@@ -55,6 +55,16 @@ func (f *fakeAdmin) ListRobotTokens(_ context.Context, caller, id string, req po
 	return f.tokens, f.note(caller, id)
 }
 
+func (f *fakeAdmin) ListUserTokens(_ context.Context, caller, id string, req portal.PageRequest) (portal.Page[portal.APIToken], error) {
+	f.req = req
+	return f.tokens, f.note(caller, id)
+}
+
+func (f *fakeAdmin) ListUserRobots(_ context.Context, caller, id string, req portal.PageRequest) (portal.Page[portal.Robot], error) {
+	f.req = req
+	return f.robots, f.note(caller, id)
+}
+
 func TestRobotRoutes(t *testing.T) {
 	t.Parallel()
 	rp := robotPath()
@@ -71,6 +81,8 @@ func TestRobotRoutes(t *testing.T) {
 		{"list tokens", http.MethodGet, rp + "/tokens", "", http.StatusOK},
 		{"create token", http.MethodPost, rp + "/tokens", `{"name":"n","scope":"read"}`, http.StatusCreated},
 		{"get one", http.MethodGet, rp, "", http.StatusOK},
+		{"tokens of a user", http.MethodGet, "/api/v1/users/" + callerID + "/tokens", "", http.StatusOK},
+		{"robots of a user", http.MethodGet, "/api/v1/users/" + callerID + "/robots", "", http.StatusOK},
 		{"no DELETE of a robot", http.MethodDelete, rp, "{}", http.StatusNotFound},
 		{"no PUT of the collection", http.MethodPut, PathRobots, "{}", http.StatusNotFound},
 	}
@@ -186,6 +198,8 @@ func TestRobotErrorMapping(t *testing.T) {
 				{http.MethodPatch, robotPath(), `{"status":"active"}`},
 				{http.MethodGet, robotPath() + "/tokens", ""},
 				{http.MethodPost, robotPath() + "/tokens", `{"name":"n","scope":"read"}`},
+				{http.MethodGet, "/api/v1/users/" + callerID + "/tokens", ""},
+				{http.MethodGet, "/api/v1/users/" + callerID + "/robots", ""},
 			} {
 				w := do(h, req.method, req.path, req.body, nil)
 				if w.Code != tt.status {

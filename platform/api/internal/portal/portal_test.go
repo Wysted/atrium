@@ -127,6 +127,12 @@ func TestPermissionsSubject(t *testing.T) {
 		t.Fatalf("an active admin must be allowed: %+v", d)
 	}
 
+	// The areas a user supervises reach the subject (portal.subject drops them under a token).
+	withAreas := portal.Permissions{UserID: "u2", Status: "active", Supervised: []portal.AreaRef{{ID: "x"}}}
+	if sub, err := withAreas.Subject(); err != nil || !sub.Supervises("x") || sub.Supervises("y") {
+		t.Fatalf("Subject = %+v, %v", sub, err)
+	}
+
 	// A disabled platform admin gets no subject at all.
 	disabled := active
 	disabled.Status = "disabled"

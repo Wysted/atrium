@@ -69,6 +69,8 @@ type AdminService interface {
 	UpdateRobot(ctx context.Context, callerID, robotID string, p portal.RobotPatch) (portal.Robot, error)
 	CreateRobotToken(ctx context.Context, callerID, robotID string, in portal.NewToken) (portal.CreatedToken, error)
 	ListRobotTokens(ctx context.Context, callerID, robotID string, req portal.PageRequest) (portal.Page[portal.APIToken], error)
+	ListUserTokens(ctx context.Context, callerID, userID string, req portal.PageRequest) (portal.Page[portal.APIToken], error)
+	ListUserRobots(ctx context.Context, callerID, userID string, req portal.PageRequest) (portal.Page[portal.Robot], error)
 
 	ListAudit(ctx context.Context, callerID string, q portal.AuditQuery) (portal.Page[portal.AuditEvent], error)
 
@@ -97,6 +99,8 @@ const (
 	PathUsers            = "/api/v1/users"
 	PathUser             = "/api/v1/users/{id}"
 	PathUserSessions     = "/api/v1/users/{id}/sessions"
+	PathUserTokens       = "/api/v1/users/{id}/tokens" //nolint:gosec // G101: a URL path, not a credential
+	PathUserRobots       = "/api/v1/users/{id}/robots"
 	PathAudit            = "/api/v1/audit"
 	PathAppHealth        = "/api/v1/apps/{id}/health"
 	PathOrphanHosts      = "/api/v1/health/orphan-hosts"
@@ -130,6 +134,8 @@ func (a *api) adminRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET "+PathUsers, a.findUsers)
 	mux.HandleFunc("PATCH "+PathUser, a.patchUser)
 	mux.HandleFunc("DELETE "+PathUserSessions, a.revokeSessions)
+	mux.HandleFunc("GET "+PathUserTokens, a.listUserTokens)
+	mux.HandleFunc("GET "+PathUserRobots, a.listUserRobots)
 
 	a.areaRoutes(mux)
 	a.tokenRoutes(mux)
@@ -231,6 +237,7 @@ type auditEventJSON struct {
 	Before       json.RawMessage `json:"before"`
 	After        json.RawMessage `json:"after"`
 	TokenID      *string         `json:"token_id"` // the API token that made the request; null for a browser session
+	AreaID       *string         `json:"area_id"`  // the area a supervisor acted through; null unless a supervisor acted
 }
 
 // listResponse is {"<name>": [...], "next_cursor": "..."} with the list under a per-endpoint name.
@@ -506,7 +513,7 @@ func eventToJSON(e portal.AuditEvent) auditEventJSON {
 		ID: e.ID, OccurredAt: e.OccurredAt, ActorID: nilIfEmpty(e.ActorID), ActorEmail: nilIfEmpty(e.ActorEmail),
 		ActorName:    nilIfEmpty(e.ActorName),
 		InitiativeID: nilIfEmpty(e.InitiativeID), Action: e.Action, TargetType: e.TargetType, TargetID: e.TargetID,
-		Before: rawOrNull(e.Before), After: rawOrNull(e.After), TokenID: nilIfEmpty(e.TokenID),
+		Before: rawOrNull(e.Before), After: rawOrNull(e.After), TokenID: nilIfEmpty(e.TokenID), AreaID: nilIfEmpty(e.AreaID),
 	}
 }
 

@@ -391,10 +391,10 @@ func TestListResponsesCarryTheNextCursor(t *testing.T) {
 	w = do(h, http.MethodGet, "/api/v1/audit", "", nil)
 	const wantAudit = `{"events":[{"id":"` + grantID + `","occurred_at":"2030-01-02T03:04:05Z","actor_id":"` + callerID +
 		`","actor_email":null,"actor_name":null,"initiative_id":null,"action":"grant.create","target_type":"grant","target_id":"` + grantID +
-		`","before":null,"after":{"k":"v"},"token_id":null},` +
+		`","before":null,"after":{"k":"v"},"token_id":null,"area_id":null},` +
 		`{"id":"` + tokenID + `","occurred_at":"2030-01-02T03:04:05Z","actor_id":"` + callerID +
 		`","actor_email":null,"actor_name":null,"initiative_id":null,"action":"token.revoke","target_type":"token","target_id":"` + tokenID +
-		`","before":null,"after":null,"token_id":"` + tokenID + `"}]}`
+		`","before":null,"after":null,"token_id":"` + tokenID + `","area_id":null}]}`
 	if strings.TrimSpace(w.Body.String()) != wantAudit {
 		t.Fatalf("audit = %s\nwant    %s", w.Body.String(), wantAudit)
 	}

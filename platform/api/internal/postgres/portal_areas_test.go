@@ -147,7 +147,11 @@ func TestAreasAdministration(t *testing.T) {
 				"list supervisors":  func() error { _, err := e.svc.ListAreaSupervisors(ctx, caller, area, portal.PageRequest{}); return err }(),
 			}
 			for op, err := range checks {
-				if !errors.Is(err, portal.ErrForbidden) {
+				want := portal.ErrForbidden
+				if op == "list members" { // area scope: out of scope is hidden, not forbidden
+					want = portal.ErrNotFound
+				}
+				if !errors.Is(err, want) {
 					t.Errorf("%s %s: %v", name, op, err)
 				}
 			}

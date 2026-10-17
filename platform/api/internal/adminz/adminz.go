@@ -62,8 +62,18 @@ const (
 	RobotTokenCreate Action = "robot_token.create" //nolint:gosec // G101: an action name, not a credential
 	RobotTokenList   Action = "robot_token.list"
 
-	// TokenRevokeAny revokes the API token of any owner (block 6, "Non-browser clients").
+	// TokenRevokeAny authorizes revocation by secret only (block 6, "Non-browser clients"): global, so a supervisor
+	// never gets it. DELETE /tokens/{id} of another owner uses TokenRevokeSupervised, which admins pass.
 	TokenRevokeAny Action = "token.revoke_any"
+)
+
+// Actions of the area supervisors (block 6, "Area supervisors"): platform admins pass them whatever the target,
+// a supervisor only for a person of an area they supervise.
+const (
+	// TokenRevokeSupervised revokes a token that is not the caller's (DELETE /tokens/{id}).
+	TokenRevokeSupervised Action = "token.revoke_supervised" //nolint:gosec // G101: an action name, not a credential
+	// RobotReassign changes the owner of a robot, by a caller who is not a platform admin.
+	RobotReassign Action = "robot.reassign"
 )
 
 // Actions on the caller's own personal API tokens: any active user may perform them, whatever their roles.
@@ -81,21 +91,23 @@ const (
 
 // Reads. The ones on an initiative resource are open to its managers; the global ones are admin-only.
 const (
-	InitiativeList  Action = "initiative.list" // each caller sees only what InitiativeRead allows
-	InitiativeRead  Action = "initiative.read"
-	RoleList        Action = "role.list"
-	AppList         Action = "app.list"
-	AppHealth       Action = "app.health"
-	GrantList       Action = "grant.list"
-	AuditList       Action = "audit.list"
-	GroupList       Action = "group.list"        // names only: id, key, name
-	GroupMemberList Action = "group_member.list" // admin only: who is in a group
-	RobotList       Action = "robot.list"        // admins see everything; managers get id, name and status (the use case trims)
-	UserList        Action = "user.list"
-	// Admin only until the supervisors read their areas' members (block 6, "Area supervisors", part 1b).
+	InitiativeList     Action = "initiative.list" // each caller sees only what InitiativeRead allows
+	InitiativeRead     Action = "initiative.read"
+	RoleList           Action = "role.list"
+	AppList            Action = "app.list"
+	AppHealth          Action = "app.health"
+	GrantList          Action = "grant.list"
+	AuditList          Action = "audit.list"
+	GroupList          Action = "group.list"        // names only: id, key, name
+	GroupMemberList    Action = "group_member.list" // admin only: who is in a group
+	RobotList          Action = "robot.list"        // admins see everything; managers get id, name and status (the use case trims)
+	UserList           Action = "user.list"
 	AreaList           Action = "area.list"
-	AreaMemberList     Action = "area_member.list"
+	AreaMemberList     Action = "area_member.list" // area scope: AreaID is the area itself
 	AreaSupervisorList Action = "area_supervisor.list"
+	// UserTokenList and UserRobotList list the tokens and the robots of a human (area scope).
+	UserTokenList Action = "user_token.list" //nolint:gosec // G101: an action name, not a credential
+	UserRobotList Action = "user_robot.list"
 	// OrphanHostList lists the hosts routed to the platform that have no deployment (admin only: an orphan host
 	// belongs to no app and no initiative).
 	OrphanHostList Action = "orphan_host.list"
@@ -125,6 +137,8 @@ const (
 	ReasonMissingInitiative = "missing_initiative"
 	ReasonUnknownAction     = "unknown_action"
 	ReasonInactiveSubject   = "inactive_subject"
+	ReasonAreaSupervisor    = "area_supervisor"
+	ReasonOutOfArea         = "out_of_area"
 )
 
 // Subject is the caller, as loaded from the database on every request (never from the assertion).
@@ -138,6 +152,9 @@ type Subject struct {
 	// Managed is the set of initiative ids where the caller holds a non-expired grant of a role with
 	// manages_access, directly or through a group.
 	Managed map[string]struct{}
+	// Supervised is the set of area ids the caller supervises. Empty under an API token: the supervisor capacity
+	// is browser-session only (portal.subject drops it).
+	Supervised map[string]struct{}
 
 	active bool
 }
@@ -150,6 +167,21 @@ func ActiveSubject(id string, platformAdmin bool, managed []string) Subject {
 		s.Managed[m] = struct{}{}
 	}
 	return s
+}
+
+// WithSupervised returns the subject with the areas it supervises. An inactive subject stays inactive.
+func (s Subject) WithSupervised(areas []string) Subject {
+	s.Supervised = make(map[string]struct{}, len(areas))
+	for _, a := range areas {
+		s.Supervised[a] = struct{}{}
+	}
+	return s
+}
+
+// Supervises reports whether the subject supervises the area.
+func (s Subject) Supervises(areaID string) bool {
+	_, ok := s.Supervised[areaID]
+	return ok
 }
 
 // Manages reports whether the subject manages the initiative.
@@ -183,11 +215,13 @@ func (s Scope) Empty() bool { return !s.All && len(s.Initiatives) == 0 }
 
 // Resource is the target of the action. InitiativeID is the initiative that owns it, resolved by the caller
 // from storage (for example an app or a grant looked up by id); it is empty for global resources (groups,
-// users, the list of initiatives) and for an unfiltered audit listing.
+// users, the list of initiatives) and for an unfiltered audit listing. AreaID is the supervisable area of the
+// target person (see scopeArea), resolved from storage by the use case; empty when there is none.
 type Resource struct {
 	Type         string
 	ID           string
 	InitiativeID string
+	AreaID       string
 }
 
 // Decision is the outcome of Decide plus a reason for logs. Scope is set on an allowed listing (see Decide) and
@@ -205,6 +239,7 @@ const (
 	scopeGlobal     scope = iota // groups, users, creating initiatives: no initiative owns the target
 	scopeInitiative              // the target belongs to one initiative
 	scopeOwn                     // the caller's own data: any active subject
+	scopeArea                    // the target is a person of an area: platform admins, or a supervisor of that area
 )
 
 // rule is one row of the "Who administers what" table.
@@ -251,7 +286,7 @@ var rules = map[Action]rule{
 	AreaList:             {scope: scopeGlobal},
 	AreaMemberAdd:        {scope: scopeGlobal},
 	AreaMemberRemove:     {scope: scopeGlobal},
-	AreaMemberList:       {scope: scopeGlobal},
+	AreaMemberList:       {scope: scopeArea},
 	AreaSupervisorAdd:    {scope: scopeGlobal},
 	AreaSupervisorRemove: {scope: scopeGlobal},
 	AreaSupervisorList:   {scope: scopeGlobal},
@@ -265,7 +300,12 @@ var rules = map[Action]rule{
 	RobotCreate:      {scope: scopeGlobal},
 	RobotUpdate:      {scope: scopeGlobal},
 	RobotTokenCreate: {scope: scopeGlobal},
-	RobotTokenList:   {scope: scopeGlobal},
+	RobotTokenList:   {scope: scopeArea},
+
+	UserTokenList:         {scope: scopeArea},
+	UserRobotList:         {scope: scopeArea},
+	TokenRevokeSupervised: {scope: scopeArea},
+	RobotReassign:         {scope: scopeArea},
 
 	TokenRevokeAny: {scope: scopeGlobal},
 	TokenCreateOwn: {scope: scopeOwn},
@@ -292,6 +332,9 @@ var rules = map[Action]rule{
 //     know the initiative exists).
 //  5. Global actions are for platform admins only; anyone else is forbidden.
 //  6. Actions on the caller's own data (their API tokens) are allowed to any active subject.
+//  7. Area-scoped actions: a platform admin is allowed whatever Resource.AreaID says (reason platform_admin, checked
+//     before the supervised areas, so the use case never records an area for an admin); a supervisor only when
+//     AreaID is non-empty and one of Supervised (reason area_supervisor); anyone else gets not_found.
 //
 // Being a platform admin gives no access to the apps themselves (see access.Decide); it only governs the portal.
 func Decide(subject Subject, action Action, resource Resource) Decision {
@@ -321,6 +364,9 @@ func Decide(subject Subject, action Action, resource Resource) Decision {
 		// The action only touches the caller's own rows (the use case enforces the owner), so being active is
 		// enough; this is what lets a user without roles manage their tokens.
 		return Decision{Outcome: Allow, Reason: ReasonOwnData}
+	}
+	if r.scope == scopeArea {
+		return decideArea(subject, action, resource)
 	}
 	if r.scope == scopeGlobal {
 		if !subject.PlatformAdmin {
@@ -360,6 +406,21 @@ func decideListing(subject Subject, globalForManagers bool) Decision {
 		return Decision{Outcome: Allow, Reason: ReasonInitiativeManager, Scope: Scope{Initiatives: subject.managedIDs()}}
 	default:
 		return Decision{Outcome: Forbidden, Reason: ReasonNoManagedScope}
+	}
+}
+
+func decideArea(subject Subject, action Action, resource Resource) Decision {
+	switch {
+	case subject.PlatformAdmin:
+		d := Decision{Outcome: Allow, Reason: ReasonPlatformAdmin}
+		if globalListings[action] {
+			d.Scope = Scope{All: true}
+		}
+		return d
+	case resource.AreaID != "" && subject.Supervises(resource.AreaID):
+		return Decision{Outcome: Allow, Reason: ReasonAreaSupervisor}
+	default:
+		return Decision{Outcome: NotFound, Reason: ReasonOutOfArea}
 	}
 }
 

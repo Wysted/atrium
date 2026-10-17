@@ -59,6 +59,28 @@ func (s *Service) FindUsers(ctx context.Context, callerID, email string) ([]User
 	return out, err
 }
 
+// authorizeUserTarget authorizes an area-scoped action on a human (the target of GET /users/{id}/...). The area is
+// resolved from storage unless the caller is a platform admin, who passes whatever it says. A robot or unknown id is
+// ErrNotFound before anything else, like the rest of /users/*.
+func authorizeUserTarget(ctx context.Context, tx Tx, callerID, userID string, action adminz.Action) error {
+	sub, err := subject(ctx, tx, callerID)
+	if err != nil {
+		return err
+	}
+	u, err := tx.Users().GetUser(ctx, userID) // humans only
+	if err != nil {
+		return err
+	}
+	res := adminz.Resource{Type: TargetUser, ID: u.ID}
+	if !sub.PlatformAdmin {
+		if res.AreaID, err = personArea(ctx, tx, u.ID); err != nil {
+			return err
+		}
+	}
+	_, err = authorize(sub, action, res)
+	return err
+}
+
 // SetUserStatus disables or enables a user (platform admins only). Disabling also deletes the user's sessions
 // and revokes their API tokens in the same transaction, so the cutoff does not wait for the sessions to expire. An administrator cannot
 // disable themselves (ErrSelfDisable): it would lock them out of the portal. Setting the status a user already

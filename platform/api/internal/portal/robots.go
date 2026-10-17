@@ -66,6 +66,9 @@ type RobotPatch struct {
 type RobotRepo interface {
 	// ListRobots lists by id; only Scope.All lists them (robots are global).
 	ListRobots(ctx context.Context, scope adminz.Scope, q PageQuery) ([]Robot, error)
+	// ListRobotsOf lists the robots whose owner is ownerID, by id, with the same fields as ListRobots (the
+	// caller has already authorized the owner as a target).
+	ListRobotsOf(ctx context.Context, ownerID string, q PageQuery) ([]Robot, error)
 	// GetRobot returns ErrNotFound for an unknown id or a human. LastUsedAt is only filled by ListRobots (and
 	// LastUsed): the other callers do not return it.
 	GetRobot(ctx context.Context, id string) (Robot, error)
@@ -237,13 +240,16 @@ func (s *Service) CreateRobot(ctx context.Context, callerID string, in NewRobot)
 	return out, err
 }
 
-// UpdateRobot renames a robot, disables or enables it, or changes its owner (platform admins only). Disabling
+// UpdateRobot renames a robot, disables or enables it, or changes its owner (platform admins only; an area
+// supervisor, browser session only, may change the owner and nothing else, see authorizeRobotUpdate). Disabling
 // revokes every live token of the robot in the same transaction, through the repository function shared with the
 // disable of a human, and the audit row lists the revoked ids; re-enabling brings nothing back. A patch that
 // changes nothing writes no audit row and returns the robot as it is. A human id is ErrNotFound.
 //
 // The robot row is locked FOR NO KEY UPDATE (the lock token creation takes), so a disable and a creation for the
-// same robot run one after the other. It is a leaf lock: no other explicit lock is held with it.
+// same robot run one after the other. It is a leaf lock: no other explicit lock is held with it. The caller is
+// authorized before the lock (one with no scope locks nothing) and again from the locked row, so two reassignments
+// of one robot run one after the other and the second is checked against the owner the first one wrote.
 func (s *Service) UpdateRobot(ctx context.Context, callerID, robotID string, p RobotPatch) (Robot, error) {
 	robotID, ok := canonicalUUID(robotID)
 	if !ok {
@@ -256,8 +262,7 @@ func (s *Service) UpdateRobot(ctx context.Context, callerID, robotID string, p R
 	var out Robot
 	err := s.store.WithTx(ctx, func(tx Tx) error {
 		out = Robot{}
-		res := adminz.Resource{Type: TargetRobot, ID: robotID}
-		if _, _, err := begin(ctx, tx, callerID, adminz.RobotUpdate, res); err != nil {
+		if _, _, _, err := authorizeRobotUpdate(ctx, tx, callerID, robotID, p, nil); err != nil {
 			return err
 		}
 		if err := validateRobotPatch(p); err != nil {
@@ -267,8 +272,12 @@ func (s *Service) UpdateRobot(ctx context.Context, callerID, robotID string, p R
 		if err != nil {
 			return err
 		}
-		if _, _, err := begin(ctx, tx, callerID, adminz.RobotUpdate, res); err != nil {
+		sub, d, areaID, err := authorizeRobotUpdate(ctx, tx, callerID, robotID, p, &cur)
+		if err != nil {
 			return err
+		}
+		if d.Reason == adminz.ReasonAreaSupervisor && *p.OwnerUserID == "" {
+			return invalid("owner_user_id", CodeNotAllowed) // it would drop the robot out of every supervisor's scope
 		}
 		next := cur
 		if p.Name != nil {
@@ -287,7 +296,7 @@ func (s *Service) UpdateRobot(ctx context.Context, callerID, robotID string, p R
 			return fillLastUsed(ctx, tx, &out)
 		}
 		if next.OwnerUserID != "" && next.OwnerUserID != cur.OwnerUserID {
-			if err := checkRobotOwner(ctx, tx, next.OwnerUserID); err != nil {
+			if err := checkNewOwner(ctx, tx, sub, d, next.OwnerUserID); err != nil {
 				return err
 			}
 		}
@@ -302,7 +311,7 @@ func (s *Service) UpdateRobot(ctx context.Context, callerID, robotID string, p R
 		}
 		if err := record(ctx, tx, event{
 			actor: callerID, action: AuditRobotUpdate, targetType: TargetRobot, targetID: next.ID,
-			before: docOfRobot(cur), after: after,
+			areaID: supervisorArea(d, areaID), before: docOfRobot(cur), after: after,
 		}); err != nil {
 			return err
 		}
@@ -313,6 +322,56 @@ func (s *Service) UpdateRobot(ctx context.Context, callerID, robotID string, p R
 		return fillLastUsed(ctx, tx, &out)
 	})
 	return out, err
+}
+
+// authorizeRobotUpdate authorizes a robot patch. Platform admins pass robot.update. Anyone else needs robot.reassign
+// and may send only owner_user_id (ErrForbidden otherwise); adminz sees the area of the robot's current owner, read
+// from cur when the robot is already locked, otherwise from the database. It returns the subject, the decision and
+// that area (the one an audit row records when the decision is area_supervisor).
+func authorizeRobotUpdate(ctx context.Context, tx Tx, callerID, robotID string, p RobotPatch, cur *Robot) (adminz.Subject, adminz.Decision, string, error) {
+	sub, err := subject(ctx, tx, callerID)
+	if err != nil {
+		return sub, adminz.Decision{}, "", err
+	}
+	res := adminz.Resource{Type: TargetRobot, ID: robotID}
+	if sub.PlatformAdmin {
+		d, err := authorize(sub, adminz.RobotUpdate, res)
+		return sub, d, "", err
+	}
+	if p.Name != nil || p.Status != nil || p.OwnerUserID == nil {
+		return sub, adminz.Decision{}, "", ErrForbidden
+	}
+	if cur == nil {
+		r, err := tx.Robots().GetRobot(ctx, robotID)
+		if err != nil {
+			return sub, adminz.Decision{}, "", err
+		}
+		cur = &r
+	}
+	if res.AreaID, err = personArea(ctx, tx, cur.OwnerUserID); err != nil {
+		return sub, adminz.Decision{}, "", err
+	}
+	d, err := authorize(sub, adminz.RobotReassign, res)
+	return sub, d, res.AreaID, err
+}
+
+// checkNewOwner validates the owner a patch sets. A supervisor's new owner must also be supervisable and in an area
+// the supervisor supervises (any of them); all the failures are the same 422 as for an unknown owner.
+func checkNewOwner(ctx context.Context, tx Tx, sub adminz.Subject, d adminz.Decision, ownerID string) error {
+	if err := checkRobotOwner(ctx, tx, ownerID); err != nil {
+		return err
+	}
+	if d.Reason != adminz.ReasonAreaSupervisor {
+		return nil
+	}
+	area, err := personArea(ctx, tx, ownerID)
+	if err != nil {
+		return err
+	}
+	if area == "" || !sub.Supervises(area) {
+		return invalid("owner_user_id", CodeUnknown)
+	}
+	return nil
 }
 
 func fillLastUsed(ctx context.Context, tx Tx, r *Robot) error {
@@ -408,7 +467,8 @@ func (s *Service) CreateRobotToken(ctx context.Context, callerID, robotID string
 	return out, err
 }
 
-// ListRobotTokens lists a robot's tokens, newest first, including the recently dead ones (platform admins only).
+// ListRobotTokens lists a robot's tokens, newest first, including the recently dead ones: platform admins for any
+// robot, a supervisor (browser session only) for the robots owned by a supervisable person of their areas.
 func (s *Service) ListRobotTokens(ctx context.Context, callerID, robotID string, req PageRequest) (Page[APIToken], error) {
 	robotID, ok := canonicalUUID(robotID)
 	if !ok {
@@ -418,10 +478,21 @@ func (s *Service) ListRobotTokens(ctx context.Context, callerID, robotID string,
 	var out Page[APIToken]
 	err := s.store.WithTx(ctx, func(tx Tx) error {
 		out = Page[APIToken]{}
-		if _, _, err := begin(ctx, tx, callerID, adminz.RobotTokenList, adminz.Resource{Type: TargetToken}); err != nil {
+		sub, err := subject(ctx, tx, callerID)
+		if err != nil {
 			return err
 		}
-		if _, err := tx.Robots().GetRobot(ctx, robotID); err != nil {
+		r, err := tx.Robots().GetRobot(ctx, robotID)
+		if err != nil {
+			return err
+		}
+		res := adminz.Resource{Type: TargetToken}
+		if !sub.PlatformAdmin {
+			if res.AreaID, err = personArea(ctx, tx, r.OwnerUserID); err != nil {
+				return err
+			}
+		}
+		if _, err := authorize(sub, adminz.RobotTokenList, res); err != nil {
 			return err
 		}
 		after, err := decodeCursor(cursorKindTokens, req.Cursor, false)
@@ -433,6 +504,37 @@ func (s *Service) ListRobotTokens(ctx context.Context, callerID, robotID string,
 			return fmt.Errorf("list robot tokens: %w", err)
 		}
 		out = pageOf(rows, size, cursorKindTokens, func(t APIToken) Cursor { return Cursor{ID: t.ID} })
+		return nil
+	})
+	return out, err
+}
+
+// ListUserRobots lists the robots a human owns, by id, with the fields platform admins see: platform admins for any
+// human, a supervisor (browser session only) for the supervisable people of their areas.
+func (s *Service) ListUserRobots(ctx context.Context, callerID, userID string, req PageRequest) (Page[Robot], error) {
+	userID, ok := canonicalUUID(userID)
+	if !ok {
+		return Page[Robot]{}, ErrNotFound
+	}
+	size := pageSize(req.Limit)
+	var out Page[Robot]
+	err := s.store.WithTx(ctx, func(tx Tx) error {
+		out = Page[Robot]{}
+		if err := authorizeUserTarget(ctx, tx, callerID, userID, adminz.UserRobotList); err != nil {
+			return err
+		}
+		after, err := decodeCursor(cursorKindRobots, req.Cursor, false)
+		if err != nil {
+			return err
+		}
+		rows, err := tx.Robots().ListRobotsOf(ctx, userID, PageQuery{After: after, Limit: size + 1})
+		if err != nil {
+			return fmt.Errorf("list user robots: %w", err)
+		}
+		for i := range rows {
+			rows[i].Detail = true
+		}
+		out = pageOf(rows, size, cursorKindRobots, func(r Robot) Cursor { return Cursor{ID: r.ID} })
 		return nil
 	})
 	return out, err

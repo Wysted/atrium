@@ -20,6 +20,11 @@ func subject(ctx context.Context, tx Tx, callerID string) (adminz.Subject, error
 	if err != nil {
 		return adminz.Subject{}, fmt.Errorf("load permissions: %w", err)
 	}
+	if TokenFrom(ctx) != "" {
+		// Rule 8 of "Area supervisors": the supervisor capacity is browser-session only, reads included. Every use
+		// case obtains its subject here, so no handler can forget the gate.
+		p.Supervised = nil
+	}
 	return p.Subject()
 }
 
@@ -71,6 +76,7 @@ type event struct {
 	targetType   string
 	targetID     string
 	initiativeID string
+	areaID       string // set only when the permission came from the area_supervisor reason (supervisorArea)
 	before       any
 	after        any
 }
@@ -78,13 +84,34 @@ type event struct {
 // record appends the event, with the API token of the request when there is one; its failure aborts the unit of work, so the mutation rolls back with it.
 func record(ctx context.Context, tx Tx, e event) error {
 	err := tx.Audit().RecordAudit(ctx, audit.Event{
-		ActorID: e.actor, InitiativeID: e.initiativeID, TokenID: TokenFrom(ctx), Action: string(e.action),
+		ActorID: e.actor, InitiativeID: e.initiativeID, AreaID: e.areaID, TokenID: TokenFrom(ctx), Action: string(e.action),
 		TargetType: e.targetType, TargetID: e.targetID, Before: e.before, After: e.after,
 	})
 	if err != nil {
 		return fmt.Errorf("audit %s: %w", e.action, err)
 	}
 	return nil
+}
+
+// supervisorArea is the area an audit row records: areaID when the permission came from the supervisor capacity,
+// never for a platform admin (even one who also supervises the area).
+func supervisorArea(d adminz.Decision, areaID string) string {
+	if d.Reason == adminz.ReasonAreaSupervisor {
+		return areaID
+	}
+	return ""
+}
+
+// personArea is the supervisable area of a person (empty: none, or no person). A robot's person is its owner.
+func personArea(ctx context.Context, tx Tx, personID string) (string, error) {
+	if personID == "" {
+		return "", nil
+	}
+	area, err := tx.Areas().SupervisableArea(ctx, personID)
+	if err != nil {
+		return "", fmt.Errorf("resolve supervisable area: %w", err)
+	}
+	return area, nil
 }
 
 // normalizeEmail trims the address; comparisons against users.email are case-insensitive in SQL.

@@ -26,6 +26,7 @@ const WriteTimeout = 2 * time.Second
 type Event struct {
 	ActorID      string
 	InitiativeID string
+	AreaID       string // the area a supervisor acted through; empty (NULL) for every other event
 	TokenID      string
 	Action       string
 	TargetType   string

@@ -650,7 +650,7 @@ func TestCreateRobotToken(t *testing.T) {
 		if len(seen) != 4 || !slices.IsSortedFunc(seen, func(a, b string) int { return strings.Compare(b, a) }) {
 			t.Fatalf("seen %v (created %v)", seen, ids)
 		}
-		if _, err := e.svc.ListRobotTokens(ctx, mgr, robot, portal.PageRequest{}); !errors.Is(err, portal.ErrForbidden) {
+		if _, err := e.svc.ListRobotTokens(ctx, mgr, robot, portal.PageRequest{}); !errors.Is(err, portal.ErrNotFound) { // area scope: out of scope is hidden
 			t.Errorf("manager: %v", err)
 		}
 		if _, err := e.svc.ListRobotTokens(ctx, admin, human, portal.PageRequest{}); !errors.Is(err, portal.ErrNotFound) {

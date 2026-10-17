@@ -106,11 +106,7 @@ LIMIT $3`, areaID, afterID(q.After), q.Limit)
 	if err != nil {
 		return nil, fmt.Errorf("query area %s: %w", rel, err)
 	}
-	people, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (portal.AreaPerson, error) {
-		var p portal.AreaPerson
-		err := row.Scan(&p.UserID, &p.Email, &p.Name, &p.Status, &p.AddedAt)
-		return p, err
-	})
+	people, err := pgx.CollectRows(rows, scanAreaPerson)
 	if err != nil {
 		return nil, fmt.Errorf("read area %s: %w", rel, err)
 	}
@@ -135,4 +131,47 @@ func (r AreasRepo) DeletePerson(ctx context.Context, rel portal.AreaRelation, ar
 		return false, fmt.Errorf("delete area %s: %w", rel, err)
 	}
 	return tag.RowsAffected() > 0, nil
+}
+
+// supervisablePredicate is "this member is supervisable" for a row of area_members aliased m: not a platform admin
+// and not a supervisor of any area, whatever their status.
+const supervisablePredicate = `NOT EXISTS (SELECT 1 FROM platform_admins pa WHERE pa.user_id = m.user_id)
+  AND NOT EXISTS (SELECT 1 FROM area_supervisors s WHERE s.user_id = m.user_id)`
+
+// SupervisableArea implements portal.AreaRepo.
+func (r AreasRepo) SupervisableArea(ctx context.Context, personID string) (string, error) {
+	var area string
+	err := r.db.QueryRow(ctx, `SELECT m.area_id::text FROM area_members m WHERE m.user_id = $1::uuid AND `+supervisablePredicate,
+		personID).Scan(&area)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("query supervisable area: %w", err)
+	}
+	return area, nil
+}
+
+// ListSupervisableMembers implements portal.AreaRepo.
+func (r AreasRepo) ListSupervisableMembers(ctx context.Context, areaID string, q portal.PageQuery) ([]portal.AreaPerson, error) {
+	rows, err := r.db.Query(ctx, `
+SELECT u.id::text, u.email, u.name, u.status, m.added_at
+FROM area_members m JOIN users u ON u.id = m.user_id
+WHERE m.area_id = $1::uuid AND ($2::uuid IS NULL OR m.user_id > $2::uuid) AND `+supervisablePredicate+`
+ORDER BY m.user_id
+LIMIT $3`, areaID, afterID(q.After), q.Limit)
+	if err != nil {
+		return nil, fmt.Errorf("query supervisable members: %w", err)
+	}
+	people, err := pgx.CollectRows(rows, scanAreaPerson)
+	if err != nil {
+		return nil, fmt.Errorf("read supervisable members: %w", err)
+	}
+	return people, nil
+}
+
+func scanAreaPerson(row pgx.CollectableRow) (portal.AreaPerson, error) {
+	var p portal.AreaPerson
+	err := row.Scan(&p.UserID, &p.Email, &p.Name, &p.Status, &p.AddedAt)
+	return p, err
 }

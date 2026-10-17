@@ -258,8 +258,9 @@ func (s *Service) RevokeOwnToken(ctx context.Context, callerID, tokenID string) 
 	return s.revokeToken(ctx, callerID, tokenID, false)
 }
 
-// RevokeToken revokes a token of any owner: its owner can, and so can a platform admin. Anyone else gets
-// ErrNotFound, so the existence of the token is not confirmed.
+// RevokeToken revokes a token of any owner: its owner can, and so can a platform admin, and an area supervisor
+// (browser session only) when the token belongs to a supervisable person of their areas or to a robot such a person
+// owns. Anyone else gets ErrNotFound, so the existence of the token is not confirmed.
 func (s *Service) RevokeToken(ctx context.Context, callerID, tokenID string) error {
 	return s.revokeToken(ctx, callerID, tokenID, true)
 }
@@ -275,7 +276,8 @@ func (s *Service) RevokeCurrentToken(ctx context.Context, callerID string) error
 }
 
 // revokeToken is the one revocation. Revoking a token that is already revoked changes nothing, writes no audit
-// row and succeeds, so a retry is harmless. anyOwner lets a platform admin revoke the token of another owner.
+// row and succeeds, so a retry is harmless. anyOwner lets a platform admin or a supervisor revoke the token of
+// another owner. It takes no lock: the scope is read in the same transaction and the revocation is one UPDATE.
 func (s *Service) revokeToken(ctx context.Context, callerID, tokenID string, anyOwner bool) error {
 	tokenID, ok := canonicalUUID(tokenID)
 	if !ok {
@@ -295,9 +297,15 @@ func (s *Service) revokeToken(ctx context.Context, callerID, tokenID string, any
 			if !anyOwner {
 				return ErrNotFound
 			}
-			action = adminz.TokenRevokeAny
+			action = adminz.TokenRevokeSupervised
+			if !sub.PlatformAdmin { // admins pass whatever the area says
+				if res.AreaID, err = tokenPersonArea(ctx, tx, tok.UserID); err != nil {
+					return err
+				}
+			}
 		}
-		if _, err := authorize(sub, action, res); err != nil {
+		d, err := authorize(sub, action, res)
+		if err != nil {
 			if tok.UserID != callerID {
 				return ErrNotFound // not an admin: do not confirm that the token exists
 			}
@@ -312,8 +320,52 @@ func (s *Service) revokeToken(ctx context.Context, callerID, tokenID string, any
 		}
 		return record(ctx, tx, event{
 			actor: callerID, action: AuditTokenRevoke, targetType: TargetToken, targetID: tokenID, before: docOfToken(tok),
+			areaID: supervisorArea(d, res.AreaID),
 		})
 	})
+}
+
+// tokenPersonArea is the supervisable area of the person behind a token owner: the human themselves, or the owner
+// of the robot ("" when none).
+func tokenPersonArea(ctx context.Context, tx Tx, ownerID string) (string, error) {
+	person := ownerID
+	r, err := tx.Robots().GetRobot(ctx, ownerID) // robots only
+	switch {
+	case err == nil:
+		person = r.OwnerUserID
+	case !errors.Is(err, ErrNotFound):
+		return "", fmt.Errorf("get token owner: %w", err)
+	}
+	return personArea(ctx, tx, person)
+}
+
+// ListUserTokens lists a human's tokens, newest first, including the recently dead ones: platform admins for any
+// human, a supervisor (browser session only) for the supervisable people of their areas. A robot id, an unknown id
+// and a person out of scope are all ErrNotFound.
+func (s *Service) ListUserTokens(ctx context.Context, callerID, userID string, req PageRequest) (Page[APIToken], error) {
+	userID, ok := canonicalUUID(userID)
+	if !ok {
+		return Page[APIToken]{}, ErrNotFound
+	}
+	size := pageSize(req.Limit)
+	var out Page[APIToken]
+	err := s.store.WithTx(ctx, func(tx Tx) error {
+		out = Page[APIToken]{}
+		if err := authorizeUserTarget(ctx, tx, callerID, userID, adminz.UserTokenList); err != nil {
+			return err
+		}
+		after, err := decodeCursor(cursorKindTokens, req.Cursor, false)
+		if err != nil {
+			return err
+		}
+		rows, err := tx.Tokens().TokensOf(ctx, userID, PageQuery{After: after, Limit: size + 1})
+		if err != nil {
+			return fmt.Errorf("list user tokens: %w", err)
+		}
+		out = pageOf(rows, size, cursorKindTokens, func(t APIToken) Cursor { return Cursor{ID: t.ID} })
+		return nil
+	})
+	return out, err
 }
 
 // RevokeBySecret revokes the live token a secret belongs to (platform admins only, from a session or an admin

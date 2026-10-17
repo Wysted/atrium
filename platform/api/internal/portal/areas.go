@@ -9,8 +9,8 @@ import (
 	"platform/api/internal/adminz"
 )
 
-// Areas (contract block 6, "Area supervisors", part 1a): the administration of areas, their members and their
-// supervisors, by platform admins only. The scope of the supervisors themselves is part 1b.
+// Areas (contract block 6, "Area supervisors"): the administration of areas, their members and their supervisors,
+// by platform admins only. What the supervisors reach through them is in tokens.go and robots.go.
 
 // Bounds of the free-text inputs of an area (the key CHECK of areas mirrors maxAreaKey).
 const (
@@ -91,6 +91,12 @@ type AreaRepo interface {
 	InsertPerson(ctx context.Context, rel AreaRelation, areaID, userID string) (time.Time, error)
 	// DeletePerson reports whether a row was deleted.
 	DeletePerson(ctx context.Context, rel AreaRelation, areaID, userID string) (bool, error)
+	// SupervisableArea is the area of a person who is supervisable: a member of an area who is not a platform admin
+	// and supervises no area, read from the rows whatever the statuses (fail closed). "" when the person is not
+	// (an unknown id included). It reads inside the transaction of the use case, never cached.
+	SupervisableArea(ctx context.Context, personID string) (string, error)
+	// ListSupervisableMembers lists the supervisable members of an area by user id (what a supervisor sees).
+	ListSupervisableMembers(ctx context.Context, areaID string, q PageQuery) ([]AreaPerson, error)
 }
 
 type areaDoc struct {
@@ -242,7 +248,8 @@ func (s *Service) DeleteArea(ctx context.Context, callerID, areaID string) error
 	})
 }
 
-// ListAreaMembers lists the members of an area (platform admins only), by user id.
+// ListAreaMembers lists the members of an area by user id: all of them for platform admins, the supervisable ones
+// for a supervisor of the area.
 func (s *Service) ListAreaMembers(ctx context.Context, callerID, areaID string, req PageRequest) (Page[AreaPerson], error) {
 	return s.listAreaPeople(ctx, memberRelation, callerID, areaID, req)
 }
@@ -282,7 +289,8 @@ func (s *Service) listAreaPeople(ctx context.Context, r areaRelation, callerID, 
 	var out Page[AreaPerson]
 	err := s.store.WithTx(ctx, func(tx Tx) error {
 		out = Page[AreaPerson]{}
-		_, d, err := begin(ctx, tx, callerID, r.list, adminz.Resource{Type: TargetArea, ID: areaID})
+		// The area is the resource and its own scope: a supervisor of it passes, with the members they can act on only.
+		_, d, err := begin(ctx, tx, callerID, r.list, adminz.Resource{Type: TargetArea, ID: areaID, AreaID: areaID})
 		if err != nil {
 			return err
 		}
@@ -293,7 +301,12 @@ func (s *Service) listAreaPeople(ctx context.Context, r areaRelation, callerID, 
 		if err != nil {
 			return err
 		}
-		rows, err := tx.Areas().ListPeople(ctx, r.rel, d.Scope, areaID, PageQuery{After: after, Limit: size + 1})
+		var rows []AreaPerson
+		if d.Reason == adminz.ReasonAreaSupervisor {
+			rows, err = tx.Areas().ListSupervisableMembers(ctx, areaID, PageQuery{After: after, Limit: size + 1})
+		} else {
+			rows, err = tx.Areas().ListPeople(ctx, r.rel, d.Scope, areaID, PageQuery{After: after, Limit: size + 1})
+		}
 		if err != nil {
 			return fmt.Errorf("list area %s: %w", r.rel, err)
 		}

@@ -73,7 +73,15 @@ func (p Permissions) Subject() (adminz.Subject, error) {
 	if p.Status != UserStatusActive {
 		return adminz.Subject{}, ErrUserInactive
 	}
-	return adminz.ActiveSubject(p.UserID, p.PlatformAdmin, p.ManagedIDs()), nil
+	return adminz.ActiveSubject(p.UserID, p.PlatformAdmin, p.ManagedIDs()).WithSupervised(p.supervisedIDs()), nil
+}
+
+func (p Permissions) supervisedIDs() []string {
+	ids := make([]string, 0, len(p.Supervised))
+	for _, a := range p.Supervised {
+		ids = append(ids, a.ID)
+	}
+	return ids
 }
 
 // HomeApp is one app the caller can open, with every host it is deployed on.
@@ -201,7 +209,7 @@ func (s *Service) Me(ctx context.Context, userID string) (Permissions, error) {
 		return Permissions{}, ErrUserInactive
 	}
 	if TokenFrom(ctx) != "" {
-		// Rule 8 of "Area supervisors": a token never carries the supervisor capacity. subject() gains the same gate in 1b; Me keeps this one.
+		// Rule 8 of "Area supervisors": a token never carries the supervisor capacity. subject() applies the same gate; Me does not use subject(), so it keeps its own.
 		p.Supervised = []AreaRef{}
 	}
 	return p, nil
