@@ -1,4 +1,4 @@
--- Development seed, run as platform_owner. Idempotent.
+-- Development seed, run as platform_owner. Idempotent (the portal rows already exist: overlays/local/migrate bootstraps them).
 --
 --   initiative platform (reserved)        apps: portal         host portal.apps.wysted.dev
 --   initiative demo   roles viewer, editor, manager (manages_access)   apps: hello-a        host hello-a.apps.wysted.dev

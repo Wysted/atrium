@@ -1,3 +1,14 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources: [../../../base/migrate]
+# Bootstrap: the migrate Job registers the portal app (same values as seed.sql, which then finds the rows in place).
+# The first-admin variable (PLATFORM_BOOTSTRAP_ADMIN_EMAIL) is not set here: seed.sql creates the dev admin.
+patches:
+  - target: {kind: Job, name: migrate}
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: {name: PLATFORM_PORTAL_APP_ID, value: app_01HQ3PD7RTA5M2XKWV9N8B4CYE}
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: {name: PLATFORM_PORTAL_HOST, value: portal.apps.wysted.dev}

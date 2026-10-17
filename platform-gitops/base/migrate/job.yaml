@@ -60,6 +60,8 @@ spec:
             - {name: PGDATABASE, value: platform}
             - {name: PGSSLMODE, value: disable}
             - {name: PGPASSFILE, value: /etc/platform/pgpass/pgpass}
+            # Optional bootstrap, set by the overlay (docs/install.md section 9): PLATFORM_PORTAL_APP_ID and
+            # PLATFORM_PORTAL_HOST (both) register the portal; PLATFORM_BOOTSTRAP_ADMIN_EMAIL grants the first admin.
           resources:
             requests: {cpu: 50m, memory: 64Mi}
             limits: {cpu: 500m, memory: 256Mi}
