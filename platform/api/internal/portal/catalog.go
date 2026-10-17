@@ -82,6 +82,9 @@ type App struct {
 	Status        string
 	CreatedAt     time.Time
 	Deployments   []Deployment
+	// PortalApp is filled by the Service (isPortalApp), never by the repo: the UI hides the actions its lockout
+	// guards refuse.
+	PortalApp bool
 }
 
 // NewApp is the request to create an app; its id is generated.

@@ -165,6 +165,7 @@ func (s *Service) AppHealth(ctx context.Context, callerID, appID string) (AppHea
 		if _, err := authorize(sub, adminz.AppHealth, appResource(a)); err != nil {
 			return err
 		}
+		a.PortalApp = s.isPortalApp(a)
 		in, err := tx.Catalog().GetInitiative(ctx, a.InitiativeID)
 		if err != nil {
 			return err

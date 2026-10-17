@@ -800,6 +800,29 @@ func TestAppCatalog(t *testing.T) {
 		}
 	})
 
+	t.Run("only the portal app inside the platform initiative is flagged", func(t *testing.T) {
+		pid := scalar[string](t, e.owner, `SELECT initiative_id::text FROM apps WHERE id = $1`, portalAppTestID)
+		p, err := e.svc.ListApps(ctx, c.admin, pid, portal.PageRequest{})
+		if err != nil || len(p.Items) != 1 || !p.Items[0].PortalApp {
+			t.Fatalf("platform apps = %+v, %v", p, err)
+		}
+		if p, err = e.svc.ListApps(ctx, c.admin, alpha.id, portal.PageRequest{}); err != nil || len(p.Items) == 0 || p.Items[0].PortalApp {
+			t.Fatalf("alpha apps = %+v, %v", p, err)
+		}
+	})
+
+	t.Run("health and create carry the portal_app flag", func(t *testing.T) {
+		if h, err := e.svc.AppHealth(ctx, c.admin, portalAppTestID); err != nil || !h.App.PortalApp {
+			t.Fatalf("portal app health = %+v, %v", h.App, err)
+		}
+		if h, err := e.svc.AppHealth(ctx, c.admin, e.w.app(t, alpha.id, uniqueHost())); err != nil || h.App.PortalApp {
+			t.Fatalf("normal app health = %+v, %v", h.App, err)
+		}
+		if a, err := e.svc.CreateApp(ctx, c.admin, alpha.id, portal.NewApp{Name: "x"}); err != nil || a.PortalApp {
+			t.Fatalf("created app = %+v, %v", a, err)
+		}
+	})
+
 	t.Run("the portal app cannot be disabled but can be renamed", func(t *testing.T) {
 		before := e.auditCount()
 		if _, err := e.svc.UpdateApp(ctx, c.admin, portalAppTestID, portal.AppPatch{Status: str("disabled")}); !errors.Is(err, portal.ErrPortalApp) {
@@ -808,7 +831,7 @@ func TestAppCatalog(t *testing.T) {
 		if st := scalar[string](t, e.owner, `SELECT status FROM apps WHERE id = $1`, portalAppTestID); st != "active" || e.auditCount() != before {
 			t.Fatalf("status %q, audit %d -> %d", st, before, e.auditCount())
 		}
-		if a, err := e.svc.UpdateApp(ctx, c.admin, portalAppTestID, portal.AppPatch{Name: str("Portal 2"), Status: str("active")}); err != nil || a.Name != "Portal 2" {
+		if a, err := e.svc.UpdateApp(ctx, c.admin, portalAppTestID, portal.AppPatch{Name: str("Portal 2"), Status: str("active")}); err != nil || a.Name != "Portal 2" || !a.PortalApp {
 			t.Fatalf("rename: %+v, %v", a, err)
 		}
 	})
@@ -828,6 +851,9 @@ func TestMistypedPortalAppIsNotGuarded(t *testing.T) {
 
 	if _, err := e.svc.UpdateApp(ctx, admin, portalAppTestID, portal.AppPatch{Status: &disabled}); err != nil {
 		t.Fatalf("disable: %v", err)
+	}
+	if p, err := e.svc.ListApps(ctx, admin, other.id, portal.PageRequest{}); err != nil || len(p.Items) != 1 || p.Items[0].PortalApp {
+		t.Fatalf("mistyped portal app flagged: %+v, %v", p, err)
 	}
 	if err := e.svc.DeleteDeployment(ctx, admin, e.deploymentID(host)); err != nil {
 		t.Fatalf("delete the last deployment: %v", err)

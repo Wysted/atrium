@@ -237,7 +237,7 @@ func TestCatalogResponseShapes(t *testing.T) {
 	fake := &fakeAdmin{}
 	fake.apps = portal.Page[portal.App]{
 		Items: []portal.App{
-			{ID: appID, InitiativeID: initiativeID, Name: "Hello", Status: "active", CreatedAt: at, Deployments: []portal.Deployment{
+			{ID: appID, InitiativeID: initiativeID, Name: "Hello", Status: "active", CreatedAt: at, PortalApp: true, Deployments: []portal.Deployment{
 				{ID: deploymentID, AppID: appID, InitiativeID: initiativeID, Host: "a.example.test", CreatedAt: at},
 			}},
 			{ID: appID, InitiativeID: initiativeID, CreatedAt: at}, // no deployments: an empty list, never null
@@ -249,10 +249,10 @@ func TestCatalogResponseShapes(t *testing.T) {
 
 	w := do(h, http.MethodGet, "/api/v1/initiatives/"+initiativeID+"/apps", "", nil)
 	const wantApps = `{"apps":[` +
-		`{"id":"` + appID + `","initiative_id":"` + initiativeID + `","name":"Hello","status":"active","created_at":"2030-01-02T03:04:05Z",` +
+		`{"id":"` + appID + `","initiative_id":"` + initiativeID + `","name":"Hello","status":"active","created_at":"2030-01-02T03:04:05Z","portal_app":true,` +
 		`"deployments":[{"id":"` + deploymentID + `","app_id":"` + appID + `","host":"a.example.test","created_at":"2030-01-02T03:04:05Z",` +
 		`"last_seen_at":null,"last_probe_at":null,"last_probe_status":null}]},` +
-		`{"id":"` + appID + `","initiative_id":"` + initiativeID + `","name":"","status":"","created_at":"2030-01-02T03:04:05Z","deployments":[]}` +
+		`{"id":"` + appID + `","initiative_id":"` + initiativeID + `","name":"","status":"","created_at":"2030-01-02T03:04:05Z","portal_app":false,"deployments":[]}` +
 		`],"next_cursor":"next"}`
 	if strings.TrimSpace(w.Body.String()) != wantApps {
 		t.Fatalf("apps = %s\nwant   %s", w.Body.String(), wantApps)

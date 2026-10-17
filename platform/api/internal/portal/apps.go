@@ -60,6 +60,9 @@ func (s *Service) ListApps(ctx context.Context, callerID, initiativeID string, r
 		if err != nil {
 			return fmt.Errorf("list apps: %w", err)
 		}
+		for i := range rows {
+			rows[i].PortalApp = s.isPortalApp(rows[i])
+		}
 		out = pageOf(rows, size, cursorKindApps, func(a App) Cursor { return Cursor{ID: a.ID} })
 		return nil
 	})
@@ -209,5 +212,6 @@ func (s *Service) UpdateApp(ctx context.Context, callerID, appID string, p AppPa
 		out = next
 		return nil
 	})
+	out.PortalApp = s.isPortalApp(out)
 	return out, err
 }

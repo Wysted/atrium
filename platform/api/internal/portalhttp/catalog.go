@@ -94,6 +94,7 @@ type appJSON struct {
 	Name         string           `json:"name"`
 	Status       string           `json:"status"`
 	CreatedAt    time.Time        `json:"created_at"`
+	PortalApp    bool             `json:"portal_app"`
 	Deployments  []deploymentJSON `json:"deployments"`
 }
 
@@ -115,7 +116,7 @@ func deploymentToJSON(d portal.Deployment) deploymentJSON {
 func appToJSON(a portal.App) appJSON {
 	return appJSON{
 		ID: a.ID, InitiativeID: a.InitiativeID, Name: a.Name, Status: a.Status, CreatedAt: a.CreatedAt,
-		Deployments: mapSlice(a.Deployments, deploymentToJSON),
+		PortalApp: a.PortalApp, Deployments: mapSlice(a.Deployments, deploymentToJSON),
 	}
 }
 

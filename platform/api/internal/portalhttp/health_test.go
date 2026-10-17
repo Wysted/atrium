@@ -85,7 +85,7 @@ func TestHealthResponseShapes(t *testing.T) {
 	h := newTestHandler(t, fakeService{}, fake, nil)
 
 	w := do(h, http.MethodGet, "/api/v1/apps/"+appID+"/health", "", nil)
-	const wantHealth = `{"app":{"id":"` + appID + `","initiative_id":"` + initiativeID + `","name":"Hello","status":"active","created_at":"2030-01-02T03:04:05Z","deployments":[` +
+	const wantHealth = `{"app":{"id":"` + appID + `","initiative_id":"` + initiativeID + `","name":"Hello","status":"active","created_at":"2030-01-02T03:04:05Z","portal_app":false,"deployments":[` +
 		`{"id":"` + deploymentID + `","app_id":"` + appID + `","host":"a.example.test","created_at":"2030-01-02T03:04:05Z",` +
 		`"last_seen_at":"2030-01-02T03:03:05Z","last_probe_at":"2030-01-02T03:02:05Z","last_probe_status":"ok"},` +
 		`{"id":"` + deploymentID + `","app_id":"` + appID + `","host":"b.example.test","created_at":"2030-01-02T03:04:05Z",` +
