@@ -3,7 +3,6 @@ package main
 import (
 	"errors"
 	"fmt"
-	"net/url"
 	"regexp"
 	"slices"
 	"strconv"
@@ -130,10 +129,9 @@ func loadConfig(getenv func(string) string) (config, error) {
 	if c.AuthHost != "" && !hostPattern.MatchString(c.AuthHost) {
 		errs = append(errs, fmt.Errorf("%s must be a lowercase host without scheme, port or path", envAuthHost))
 	}
-	if c.Issuer != "" && c.AuthHost != "" {
-		if u, err := url.Parse(c.Issuer); err != nil || u.Scheme != "https" || u.Host != c.AuthHost || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.User != nil {
-			errs = append(errs, fmt.Errorf("%s must be exactly https://<%s>", envIssuer, envAuthHost))
-		}
+	// Exact comparison: the raw value is signed as iss, so no URL parser normalization (scheme case, "?", "#").
+	if c.Issuer != "" && c.AuthHost != "" && c.Issuer != "https://"+c.AuthHost {
+		errs = append(errs, fmt.Errorf("%s must be exactly https://<%s>", envIssuer, envAuthHost))
 	}
 	if v := strings.TrimSpace(getenv(envIdleTimeout)); v != "" {
 		d, err := time.ParseDuration(v)
