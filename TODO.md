@@ -49,7 +49,7 @@ Pending work and open questions for the portal platform. Detailed context lives 
   (`Authorization` in `authRequestHeaders`, strip on the portal route) + smoke checks; (4) web: tokens page and robots
   admin page; (5) CLI replacing `grant.sh`/`revoke.sh`. Phases 2 (workload identity) and 3 (device flow) stay open.
   Part 1 (1a schema, privileges, kind filters, purge; 1b tokens and robots API, grants by robot, revocation by
-  secret) done 2026-10-16; part 2 (ForwardAuth token path, assertion claims, SDK) next.
+  secret) and part 2 (ForwardAuth token path, assertion claims, SDK) done 2026-10-16; part 3 (Traefik) next.
 - [ ] **Area supervisor (design).** Someone who administers the robots and tokens of the people of their area (list,
   revoke, reassign owner on offboarding) without acting as them or touching their access. Needs a person hierarchy;
   see the open point at the end of contract block 6, "Non-browser clients".

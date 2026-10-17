@@ -662,6 +662,8 @@ platform-api (`platform_`):
 | `platform_signing_key_kek_mismatch` | gauge | none; 1 when the KEK does not match the active or next keys |
 | `platform_lastseen_pending_hosts` | gauge | none |
 | `platform_lastseen_flush_errors_total` | counter | none |
+| `platform_token_use_pending_tokens` | gauge | none; API tokens waiting for the next `last_used_at` flush |
+| `platform_token_use_dropped_total` | counter | none; `last_used_at` observations discarded because the queue was full |
 | `platform_unknown_host_drops_total` | counter | `reason` (`invalid`, `budget`, `marker`, `queue`) |
 | `platform_db_pool_{acquired,idle,total,max}_connections` | gauge | none |
 | `platform_db_pool_{acquires,acquires_waited,acquires_canceled}_total`, `platform_db_pool_acquire_wait_seconds_total` | counter | none |
@@ -813,7 +815,7 @@ the `platform_portal` role may select; no extra index is kept: `unknown_host` ro
 ### Non-browser clients
 
 Design for CLI and automation that call the portal API (phase 1 decided 2026-10-16; research notes: Engram
-`architecture/portal-non-browser-clients`). Part 1a (schema, privileges, `kind` filters, token revocation on disable, purge), part 1b-1 (token secret package, scope middleware, `token_id` in the audit, personal token endpoints and the `PORTAL_TOKEN_MAX_TTL_*` settings below; revocation by secret included, through the function of migration 0013) and part 1b-2 (robots API, robot tokens, grants by `robot_id`) are implemented, which completes part 1; the rest is design only. The product is multi-company: the design
+`architecture/portal-non-browser-clients`). Part 1a (schema, privileges, `kind` filters, token revocation on disable, purge), part 1b-1 (token secret package, scope middleware, `token_id` in the audit, personal token endpoints and the `PORTAL_TOKEN_MAX_TTL_*` settings below; revocation by secret included, through the function of migration 0013) and part 1b-2 (robots API, robot tokens, grants by `robot_id`) are implemented, which completes part 1; part 2 (ForwardAuth token path, assertion claims, SDK fields) is implemented too, and the rest is design only. The product is multi-company: the design
 assumes no CI system, secret manager or stack on the adopter's side.
 
 | Phase | Mechanism | Status |
@@ -972,6 +974,29 @@ Changes block 2 as follows; only platform-api decides.
 8. CORS preflights (`OPTIONS` + `Origin` + `Access-Control-Request-Method`) keep answering 200 without assertion before
    any token handling; the portal never answers CORS.
 
+As implemented (part 2), where the rules above left a choice:
+
+- The portal fact is read from the Evaluator (`Decision.PortalApp`, set whenever the host is known) through the decision
+  cache under a nil-UUID subject, only when a request carries `Authorization`; on a host that is not the portal the
+  header is not read again and the cookie path runs as before. The app and initiative rules of rule 3 come from
+  that same cache (`authorize` for the owner); the token row and the owner's `status` never do.
+- The lookup selects the row by hash and the database computes `revoked`, `expired` (against `now()`) and `owner active`
+  as flags, instead of filtering them in the `WHERE`: same single indexed query, and the log can tell unknown,
+  revoked, expired and inactive-owner apart. The response cannot.
+- Several `Authorization` headers, an empty value, another scheme and `Bearer` without credentials all answer
+  `WWW-Authenticate: Bearer` (reason `token_no_bearer`); a Bearer value with the wrong format (including two tokens in
+  one header) answers `error="invalid_token"` (`token_malformed`), before any query. All 401 share one body.
+- App or initiative inactive (or any other deny of the portal rules) answers 403 problem+json without a challenge;
+  no `access_denials` row is written for token requests (that table is keyed to sessions). A scope that is not
+  `read` or `admin` fails closed as `insufficient_scope`.
+- Reasons added to the decision log and `platform_forwardauth_decisions_total`: `token_no_bearer`, `token_malformed`,
+  `token_unknown`, `token_revoked`, `token_expired`, `token_owner_inactive`, `token_scope` (401 and the scope 403 use
+  decision `unauthenticated` and `deny`); the line gains `tid` (empty for sessions).
+- `last_used_at` goes through `internal/tokenuse` (a bounded set of at most 10 000 tokens per replica flushed once a
+  minute by one writer, with a final flush at shutdown; observations beyond the bound are dropped and counted, see
+  the metrics table). The statement locks rows with `SKIP LOCKED`, caps the time at the database clock and never moves
+  the column backwards; a revoked or locked token is simply not written.
+
 New claims (block 1), present only on assertions issued by the token path; session assertions are unchanged:
 
 | Claim | Value |
@@ -1063,7 +1088,7 @@ email today).
    else today; the audit recording (`audit.Event`, which carries only the caller id) needs a way to carry `tid`.
    Concurrency test: token creation against a parallel disable of the owner, and against 26 parallel creations of
    the same owner (no token survives a disable; never more than 25).
-2. ForwardAuth token path in platform-api, assertion claims, SDK fields (`SubjectType`, `APITokenID`, `Scope`),
+2. (Implemented.) ForwardAuth token path in platform-api, assertion claims, SDK fields (`SubjectType`, `APITokenID`, `Scope`),
    `assertion.Request` token fields with `SessionID` optional only when `APITokenID` is set (`issuer.go` rejects an
    empty session id today).
 3. Traefik: `Authorization` in `authRequestHeaders`, `strip-authorization` in the `portal` namespace referenced by
