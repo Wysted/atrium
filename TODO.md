@@ -20,6 +20,10 @@ Pending work and open questions for the portal platform. Detailed context lives 
   global bucket. Verify the client IP behind the production load balancer.
 - [ ] **Egress filtering.** The `local-google` overlay allows platform-api HTTPS egress to any public address.
   FQDN-level filtering (Google endpoints only) needs an egress proxy or a CNI with L7 policies.
+- [ ] **Local Grafana restarts in a loop.** Seen 2026-10-17: the pod restarted 8 times in 16 h and an `up.sh` Grafana
+  upgrade timed out; deleting the pod fixed it. Likely cause, not yet confirmed in the logs: Grafana downloads
+  plugins from the internet at start-up (automatic plugin preinstall) and the start-up probe kills it when that is
+  slow. Check the logs of a failing start; if confirmed, set `[plugins] preinstall_disabled = true` in the local values.
 - [x] **Internal TLS for the JWKS.** Closed 2026-10-16: opt-in HTTPS on the JWKS listener (`PLATFORM_JWKS_TLS_CERT_FILE` /
   `_KEY_FILE`, reloaded every 30 s) and a CA file for verifiers (`PORTAL_JWKS_CA_FILE`, SDK `RootCAs`). `base/` stays HTTP;
   the local overlay enables it with a local CA. Production adopters must supply the certificate (cert-manager, Vault or

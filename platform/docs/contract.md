@@ -599,10 +599,10 @@ human user: zero or several matches fail (`users.email` is not unique, `google_s
 | `GET, POST /api/v1/groups`; `GET, DELETE /api/v1/groups/{id}`; `GET, POST /api/v1/groups/{id}/members`; `DELETE /api/v1/groups/{id}/members/{user_id}` | Groups (members: platform admins only). `GET /groups?q=` filters by a case-insensitive substring of key or name (max 64 characters, `422` on `q` otherwise; wildcards are literal) and keeps the keyset pagination. `GET /groups/{id}` returns `id, key, name, created_at` with the same access as the list (admins and managers; `404` for an unknown id), never members |
 | `GET /api/v1/users?email=` (humans only); `PATCH /api/v1/users/{id}`; `DELETE /api/v1/users/{id}/sessions` | Users (`status`) and session revocation |
 | `GET, POST /api/v1/me/tokens`; `DELETE /api/v1/me/tokens/{id}` | Own personal tokens (block 6 "Non-browser clients"). `POST` returns the secret once and only from a browser session; lists never return `token_hash` |
-| `GET, POST /api/v1/robots`; `PATCH /api/v1/robots/{id}` | Robots (`PATCH`: `name`, `status`, `owner_user_id`). Platform admins; managers may list id, name and status |
+| `GET, POST /api/v1/robots`; `GET, PATCH /api/v1/robots/{id}` | Robots (`PATCH`: `name`, `status`, `owner_user_id`). Platform admins get `id, name, status, owner_user_id, owner_email, owner_name, created_at, last_used_at` (owner fields `null` without owner); managers may list and get id, name and status; a human or unknown id is 404 |
 | `GET, POST /api/v1/robots/{id}/tokens`; `DELETE /api/v1/tokens/{id}` | Robot tokens (platform admins; `POST` from a browser session only); `DELETE` revokes any token |
 | `POST /api/v1/tokens/revoke`; `DELETE /api/v1/me/tokens/current` | Revocation by secret: a platform admin posts `{token}` (a leaked secret from any scanner report); the request that carries an `admin` token revokes that same token (a `read` token gets 403). Both answer 204 |
-| `GET /api/v1/audit?initiative_id=&cursor=` | Audit log, newest first, keyset pagination |
+| `GET /api/v1/audit?initiative_id=&cursor=` | Audit log, newest first, keyset pagination; each event carries `token_id` (the API token that made the request, `null` for a browser session) |
 | `GET /api/v1/apps/{id}/health` | Integration health of an app (admins and managers of its initiative) |
 | `GET /api/v1/health/orphan-hosts` | Hosts refused as `unknown_host` that have no deployment (platform admins only) |
 
