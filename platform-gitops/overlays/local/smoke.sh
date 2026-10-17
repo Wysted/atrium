@@ -93,6 +93,13 @@ drop_smoke_grants() {
   $K -n platform-db exec postgres-0 -- psql -q -U platform_owner -d platform \
     -c "DELETE FROM initiative_access a USING users u, initiative_roles r, initiatives i WHERE a.user_id = u.id AND r.id = a.role_id AND i.id = a.initiative_id AND i.key = 'demo' AND r.key = 'viewer' AND (u.email = 'carol@example.com' OR (u.kind = 'robot' AND u.name = 'smoke-robot'))" >/dev/null 2>&1
 }
+# Areas section 24 creates (smoke-area, smoke-area-b), as the owner: members and supervisors first (ON DELETE RESTRICT).
+drop_smoke_areas() {
+  $K -n platform-db exec postgres-0 -- psql -q -U platform_owner -d platform \
+    -c "DELETE FROM area_members WHERE area_id IN (SELECT id FROM areas WHERE key LIKE 'smoke-area%')" \
+    -c "DELETE FROM area_supervisors WHERE area_id IN (SELECT id FROM areas WHERE key LIKE 'smoke-area%')" \
+    -c "DELETE FROM areas WHERE key LIKE 'smoke-area%'" >/dev/null 2>&1
+}
 # Token cleanup as the owner (the trap must not depend on a session): revokes every live smoke token and disables the robot.
 drop_smoke_tokens() {
   $K -n platform-db exec postgres-0 -- psql -q -U platform_owner -d platform \
@@ -112,6 +119,7 @@ cleanup() {
   $K delete namespace smoke-app --ignore-not-found --wait=false >/dev/null 2>&1
   $K delete -f "$REL/smoke-whoami.yaml" -f "$REL/smoke-whoami-portal.yaml" --ignore-not-found --wait=false >/dev/null 2>&1
   drop_smoke_groups
+  drop_smoke_areas
   drop_smoke_tokens
   drop_smoke_grants
   $K -n monitoring delete pod probe-prom probe-grafana probe-other --ignore-not-found --wait=false >/dev/null 2>&1
@@ -1323,6 +1331,68 @@ if [[ -x "$CTL" ]]; then
   code=$(mutate "$JTM" DELETE "$P/api/v1/me/tokens/$(tid ctl-last)" same-origin application/json); check "ctl-last token revoked" "$code" 204
   if leaks "$WORK/ctl-all.out"; then fail "a Bearer value is in the portalctl output"; else pass "no Bearer value in any portalctl output ($(wc -l < "$WORK/ctl-all.out") lines, success and failure paths)"; fi
 fi
+
+section "24. Areas (contract block 6, part 1a): admin-only CRUD, one area per member, supervisors, supervised_areas in /me"
+AR="$P/api/v1/areas"
+JAR_AD="$WORK/area-admin"; JAR_AL="$WORK/area-alice"; JAR_CA="$WORK/area-carol"
+login "$JAR_AD" admin@example.com "$P" >/dev/null; login "$JAR_AL" alice@example.com "$P" >/dev/null; login "$JAR_CA" carol@example.com "$P" >/dev/null
+drop_smoke_areas # re-runnable: leftovers of an interrupted run (the trap also removes them)
+code=$(api "$JAR_AL" "$AR"); check "alice (not admin) cannot list areas" "$code" 403
+code=$(api "$JAR_CA" "$AR"); check "carol (not admin) cannot list areas" "$code" 403
+code=$(mutate "$JAR_CA" POST "$AR" same-origin application/json '{"key":"smoke-area-rejected","name":"Smoke"}'); check "carol (not admin) cannot create an area" "$code" 403
+code=$(mutate "$JAR_AD" POST "$AR" same-origin application/json '{"key":"smoke-area","name":"Smoke area"}'); check "admin creates smoke-area" "$code" 201
+AID="$(json_get "$WORK/b" 'd["id"]')"; check "  (key)" "$(json_get "$WORK/b" 'd["key"]')" smoke-area
+code=$(mutate "$JAR_AD" POST "$AR" same-origin application/json '{"key":"smoke-area","name":"Again"}'); check "duplicate key" "$code" 409
+code=$(mutate "$JAR_AD" POST "$AR" same-origin application/json '{"key":"Bad Key","name":"Smoke"}'); check "invalid key" "$code" 422
+code=$(mutate "$JAR_AD" POST "$AR" same-origin application/json '{"key":"smoke-area-b","name":"Smoke area B"}'); check "admin creates smoke-area-b" "$code" 201
+BID="$(json_get "$WORK/b" 'd["id"]')"
+code=$(api "$JAR_AD" "$AR"); check "admin lists areas" "$code" 200
+check "  (smoke-area listed)" "$(json_get "$WORK/b" '"smoke-area" in [a["key"] for a in d["areas"]]')" True
+code=$(api "$JAR_AD" "$AR?limit=1"); check "list with limit=1" "$code" 200
+check "  (one area)" "$(json_get "$WORK/b" 'len(d["areas"])')" 1
+check "  (next_cursor present: two smoke areas exist)" "$(json_get "$WORK/b" 'bool(d.get("next_cursor"))')" True
+code=$(api "$JAR_AD" "$AR/$AID"); check "admin GET area" "$code" 200
+check "  (key)" "$(json_get "$WORK/b" 'd["key"]')" smoke-area
+code=$(api "$JAR_AL" "$AR/$AID"); check "alice (not admin) GET area" "$code" 403
+code=$(api "$JAR_AD" "$AR/00000000-0000-4000-8000-000000000000"); check "GET unknown area" "$code" 404
+
+echo "  -- members: one area per person"
+code=$(mutate "$JAR_AD" POST "$AR/$AID/members" same-origin application/json '{"email":"alice@example.com"}'); check "add alice as member" "$code" 201
+ALICE_UID="$(json_get "$WORK/b" 'd["user_id"]')"; check "  (email)" "$(json_get "$WORK/b" 'd["email"]')" alice@example.com
+code=$(mutate "$JAR_AD" POST "$AR/$AID/members" same-origin application/json '{"email":"alice@example.com"}'); check "add alice again to the same area" "$code" 409
+code=$(mutate "$JAR_AD" POST "$AR/$BID/members" same-origin application/json '{"email":"alice@example.com"}'); check "add alice to a second area" "$code" 409
+code=$(mutate "$JAR_AD" POST "$AR/$AID/members" same-origin application/json '{"email":"nobody@example.com"}'); check "unknown email" "$code" 422
+check "  (code no_unique_active_user)" "$(cat "$WORK/b")" no_unique_active_user
+code=$(api "$JAR_AD" "$AR/$AID/members"); check "list members" "$code" 200
+check "  (alice listed)" "$(json_get "$WORK/b" '[m["email"] for m in d["members"]]')" "['alice@example.com']"
+code=$(api "$JAR_AL" "$AR/$AID/members"); check "alice (not admin) cannot list members" "$code" 403
+
+echo "  -- supervisors: several areas per person, supervised_areas in /me"
+code=$(mutate "$JAR_AD" POST "$AR/$AID/supervisors" same-origin application/json '{"email":"carol@example.com"}'); check "add carol as supervisor" "$code" 201
+CAROL_UID="$(json_get "$WORK/b" 'd["user_id"]')"
+code=$(mutate "$JAR_AD" POST "$AR/$AID/supervisors" same-origin application/json '{"email":"carol@example.com"}'); check "add carol again as supervisor" "$code" 409
+code=$(api "$JAR_AD" "$AR/$AID/supervisors"); check "list supervisors" "$code" 200
+check "  (carol listed)" "$(json_get "$WORK/b" '[m["email"] for m in d["supervisors"]]')" "['carol@example.com']"
+code=$(api "$JAR_CA" "$P/api/v1/me"); check "carol GET /me (browser session)" "$code" 200
+check "  (supervised_areas lists smoke-area only)" "$(json_get "$WORK/b" '[a["key"] for a in d["permissions"]["supervised_areas"]]')" "['smoke-area']"
+check "  (carol is still not a platform admin)" "$(json_get "$WORK/b" 'd["permissions"]["platform_admin"]')" False
+mk_token "$JAR_CA" "$P/api/v1/me/tokens" carol-area read
+code=$(bcall carol-area "$P/api/v1/me"); check "carol GET /me under her personal token" "$code" 200
+check "  (supervised_areas is [] under a token)" "$(json_get "$WORK/b" 'd["permissions"]["supervised_areas"]')" "[]"
+code=$(bcall carol-area "$AR"); check "carol's token cannot list areas" "$code" 403
+code=$(mutate "$JAR_CA" DELETE "$P/api/v1/me/tokens/$(tid carol-area)" same-origin application/json); check "carol-area token revoked" "$code" 204
+
+echo "  -- delete: only an empty area"
+code=$(mutate "$JAR_AD" DELETE "$AR/$AID" same-origin application/json); check "DELETE non-empty area" "$code" 409
+check "  (message)" "$(cat "$WORK/b")" "the area still has members or supervisors"
+code=$(mutate "$JAR_AD" DELETE "$AR/$AID/members/$ALICE_UID" same-origin application/json); check "remove alice from the area" "$code" 204
+code=$(mutate "$JAR_AD" DELETE "$AR/$AID/members/$ALICE_UID" same-origin application/json); check "remove alice again" "$code" 404
+code=$(mutate "$JAR_AD" DELETE "$AR/$AID" same-origin application/json); check "DELETE area with a supervisor left" "$code" 409
+code=$(mutate "$JAR_AD" DELETE "$AR/$AID/supervisors/$CAROL_UID" same-origin application/json); check "remove carol as supervisor" "$code" 204
+code=$(mutate "$JAR_AD" DELETE "$AR/$AID/supervisors/$CAROL_UID" same-origin application/json); check "remove carol again" "$code" 404
+code=$(mutate "$JAR_AD" DELETE "$AR/$AID" same-origin application/json); check "DELETE empty area" "$code" 204
+code=$(mutate "$JAR_AD" DELETE "$AR/$AID" same-origin application/json); check "DELETE area again" "$code" 404
+code=$(mutate "$JAR_AD" DELETE "$AR/$BID" same-origin application/json); check "DELETE smoke-area-b (cleanup)" "$code" 204
 
 echo
 if (( FAILS == 0 )); then echo "ALL CHECKS PASSED${BROWSER_SKIPPED:+ (browser check SKIPPED)}"; else
