@@ -24,7 +24,7 @@ overlays/local-google  real Google login on top of overlays/local: image tag, cl
 | Script | Purpose |
 |---|---|
 | `up.sh` | secrets (`.tools/secrets/k3d-*`, generated once), image import (`BUILD=1` rebuilds the three images), apply in order (namespaces, DB, portal roles, migrate Job, seed, platform-api, hello-a/b, portal, monitoring), `down-spike.sh`, Traefik helm upgrade |
-| `roles.sh` / `roles.sql` | `platform_portal` (NOLOGIN) and the `portal_app` login role (member of `platform_portal` only) as the bootstrap superuser; idempotent, works on an existing volume (initdb.sh only runs once) |
+| `roles.sh` / `roles.sql` | `platform_portal` (NOLOGIN) and the `portal_app` login role (member of `platform_portal` only) as the bootstrap superuser; idempotent; `base/postgres/initdb.sh` now creates them on a fresh volume, so this is for volumes initialized before that |
 | `seed.sh` / `seed.sql` | dev data as platform_owner; idempotent, also restores grants revoked by the smoke |
 | `jwks-tls.sh` | local PKI for the JWKS listener (ECDSA P-256 CA 10 y + leaf 90 days, SANs of `platform-api-jwks`), Secret `platform-api-jwks-tls` and ConfigMap `platform-jwks-ca` per app namespace; idempotent, re-issues the leaf 30 days before expiry; called by `up.sh` before the rollouts |
 | `smoke.sh` | end-to-end checks with curl from the host; leaves the cluster as found |
@@ -49,7 +49,7 @@ the local overlay's `seed.sql`, never in base.
 - Namespace `portal`, labelled `atrium.wysted.dev/app-namespace=true` like any app namespace: platform-api's JWKS listener
   (8083) already accepts it; the internal listener (8081) admits only Traefik. `platform-db` accepts it too (`allow-ingress-platform` selects `platform` and `portal`).
 - Database: login role `portal_app`, member only of `platform_portal`; password in `.tools/secrets/k3d-pg-portal-password`, pgpass
-  Secret `portal/portal-pgpass` (`fsGroup` + `defaultMode: 0440`, like platform-api). The role is created by `roles.sh`, not by
+  Secret `portal/portal-pgpass` (`fsGroup` + `defaultMode: 0440`, like platform-api). The role is created by `base/postgres/initdb.sh` (key `portal-password` of `postgres-bootstrap`; `roles.sh` covers older volumes), not by
   the migrations: `platform_owner` has no CREATEROLE and migration 0009 only creates `platform_portal` if it is missing.
 - Probe: `PORTAL_PROBE_ADDR=traefik.traefik.svc.cluster.local:443`. The wildcard certificate is the real Let's Encrypt one, so the
   system roots verify it: no `PORTAL_PROBE_CA_FILE` and no `PORTAL_PROBE_INSECURE_TLS`. Local interval 1m (`PORTAL_PROBE_INTERVAL`).

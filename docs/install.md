@@ -57,7 +57,7 @@ kubectl -n portal   create secret generic portal-pgpass         --from-file=pgpa
 kubectl -n platform create secret generic platform-google-client-secret --from-file=secret=./google-client-secret
 # Option A only:
 kubectl -n platform-db create secret generic postgres-bootstrap \
-  --from-file=admin-password=pw-admin --from-file=owner-password=pw-owner --from-file=api-password=pw-api
+  --from-file=admin-password=pw-admin --from-file=owner-password=pw-owner --from-file=api-password=pw-api --from-file=portal-password=pw-portal
 ```
 
 | Secret | Key | Mounted by |
@@ -67,7 +67,7 @@ kubectl -n platform-db create secret generic postgres-bootstrap \
 | `platform/platform-api-pgpass` | `pgpass` | platform-api |
 | `portal/portal-pgpass` | `pgpass` | portal |
 | `platform/platform-google-client-secret` | `secret` | platform-api |
-| `platform-db/postgres-bootstrap` | `admin-password`, `owner-password`, `api-password` | `base/postgres` (Option A) |
+| `platform-db/postgres-bootstrap` | `admin-password`, `owner-password`, `api-password`, `portal-password` | `base/postgres` (Option A) |
 
 **KEK.** It encrypts the signing keys stored in PostgreSQL ([keys](reference/keys.md)). Generate it once, back it up outside the cluster, and never regenerate it: if it changes, the stored signing keys cannot be unsealed, platform-api reports `KEKMismatch`, fails readiness and refuses to rotate. Files must be regular and at most mode 0640; the manifests mount them with `defaultMode: 0440` plus `fsGroup`. See [TODO.md](../TODO.md) on who can read this Secret. Variables and file rules: [reference/configuration.md](reference/configuration.md).
 
@@ -77,13 +77,7 @@ PostgreSQL 18 or later is required (the migrations use `uuidv7()`); 18.6 is the 
 
 **Option A: `base/postgres`** (single instance, dev-grade; `storageClassName: local-path` and 2Gi are hardcoded, patch them).
 
-1. Create `postgres-bootstrap` (section 3). On first start `initdb.sh` creates `platform_owner`, `platform_runtime`, `platform_api` and the database `platform`, using the owner and api passwords of the Secret, which must equal the ones in the pgpass files.
-2. `initdb.sh` does not create the portal roles. After the StatefulSet is ready, create them with `overlays/local/roles.sql` (idempotent; it expects the psql variable `portal_password`):
-
-```bash
-{ printf "\\set portal_password '%s'\n" "$(<pw-portal)"; cat platform-gitops/overlays/local/roles.sql; } |
-  kubectl -n platform-db exec -i postgres-0 -- psql -v ON_ERROR_STOP=1 -q -U postgres_admin -d platform
-```
+Create `postgres-bootstrap` (section 3). On first start `initdb.sh` creates `platform_owner`, `platform_runtime`, `platform_api`, `platform_portal`, `portal_app` and the database `platform`, using the owner, api and portal passwords of the Secret, which must equal the ones in the pgpass files. `initdb.sh` runs only on an empty data directory: for a volume initialized earlier, apply `overlays/local/roles.sql` once (it expects the psql variable `portal_password`; see Option B for the invocation).
 
 **Option B: your own PostgreSQL.** Run as a superuser. Passwords go through psql variables read from files, never in an argument list:
 

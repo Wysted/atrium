@@ -38,8 +38,6 @@ Found while writing `docs/install.md`. Adopters work around each one by hand tod
 - [ ] **No migration creates the `platform` initiative, the portal app and its deployment.** Without the deployment
   row the portal host does not resolve, so the API cannot create it (chicken and egg). Only `overlays/local/seed.sql`
   (development data) does it; adopters INSERT by hand.
-- [ ] **`platform_portal` and `portal_app` exist only in `overlays/local/roles.sql`.** `initdb.sh` creates three
-  roles; migration 0009 needs `platform_portal` and `platform_owner` has no `CREATEROLE`.
 - [ ] **NetworkPolicy selectors are fixed** to `kube-system`/`k8s-app=kube-dns`, `traefik`/`app.kubernetes.io/name=traefik`,
   the Traefik pod port 8443, `platform-db` and `monitoring`/`prometheus`.
 - [ ] **Egress to Google exists only in `overlays/local-google`**, and its `except` list is k3d-specific.
