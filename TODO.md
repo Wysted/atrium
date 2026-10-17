@@ -66,9 +66,12 @@ Pending work and open questions for the portal platform. Detailed context lives 
   admin page; (5) CLI replacing `grant.sh`/`revoke.sh`. Phases 2 (workload identity) and 3 (device flow) stay open.
   Part 1 (1a schema, privileges, kind filters, purge; 1b tokens and robots API, grants by robot, revocation by
   secret) and part 2 (ForwardAuth token path, assertion claims, SDK) done 2026-10-16; part 3 (Traefik, smoke section 22), part 4 (web) and part 5 (`portalctl`, smoke section 23) done 2026-10-17: phase 1 complete.
-- [ ] **Area supervisor (design).** Someone who administers the robots and tokens of the people of their area (list,
-  revoke, reassign owner on offboarding) without acting as them or touching their access. Needs a person hierarchy;
-  see the open point at the end of contract block 6, "Non-browser clients".
+- [ ] **Area supervisor.** Someone who administers the robots and tokens of the people of their area (list, revoke,
+  reassign owner on offboarding) without acting as them or touching their access. Designed 2026-10-17 in
+  `platform/docs/contract.md` block 6, "Area supervisors" (local areas managed by platform admins, browser session
+  only). Parts: (1) migration 0014 + portal API (repos, adminz `scopeArea`, use cases, handlers, `/me`, audit
+  `area_id`, `portalGrants`, the required tests listed there); (2) web: area administration and supervisor screen.
+  Later: IdP sync of members, area hierarchy, rename, supervisor audit view, `portalctl` commands.
 - [x] **Flaky test database cleanup.** Closed 2026-10-16. Root cause: every `DROP DATABASE` makes PostgreSQL run an
   immediate checkpoint and wait for it, and the checkpoint's fsync phase covers the files of every live test database
   (hundreds each) across all parallel test binaries. On Docker/WSL storage that phase takes seconds, and a slow one
