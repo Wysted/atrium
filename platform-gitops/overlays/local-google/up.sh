@@ -45,4 +45,4 @@ if [[ "${BUILD:-0}" == 1 ]]; then
   kc -n platform rollout restart deploy/platform-api
 fi
 kc -n platform rollout status deploy/platform-api --timeout="$ROLLOUT_TIMEOUT"
-echo "==> done. Users are created on first login; grant access with portalctl (see README; $REL/grant.sh is the bootstrap fallback until you have a token)"
+echo "==> done. Users are created on first login; make the first platform admin with $REL/admin.sh, then grant access in the portal or with portalctl (see README)"
