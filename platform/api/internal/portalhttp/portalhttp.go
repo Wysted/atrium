@@ -83,7 +83,7 @@ type Config struct {
 // New builds the public handler with the middleware chain of the contract, outermost first:
 //
 //	metrics -> response headers -> request log -> recover -> read isolation (/api/*) -> CrossOriginProtection ->
-//	JSON content type (mutations) -> assertion validation (SDK) -> deadline -> routes
+//	JSON content type (mutations) -> assertion validation (SDK) -> token scope -> deadline -> routes
 //
 // The guards run before authentication on purpose: a cross-site request is rejected without learning
 // whether it carried a valid assertion.
@@ -122,6 +122,7 @@ func New(cfg Config) (http.Handler, error) {
 // protect wraps routes with the middleware chain, innermost last.
 func protect(auth func(http.Handler) http.Handler, timeout time.Duration, log *slog.Logger, routes http.Handler) http.Handler {
 	h := httpx.WithDeadline(timeout, routes)
+	h = TokenScope(h)
 	h = auth(h)
 	h = RequireJSON(h)
 	h = CrossOrigin(h)

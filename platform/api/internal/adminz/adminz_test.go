@@ -85,6 +85,12 @@ func TestDecideWhoAdministersWhat(t *testing.T) {
 		{"revoke user sessions", adminz.UserSessionsRevoke, adminz.Resource{Type: "user", ID: "u1"}, a, f, f, f},
 		{"list users", adminz.UserList, adminz.Resource{Type: "user"}, a, f, f, f},
 		{"list orphan hosts", adminz.OrphanHostList, adminz.Resource{Type: "orphan_host"}, a, f, f, f},
+		{"revoke any token", adminz.TokenRevokeAny, adminz.Resource{Type: "token", ID: "t1"}, a, f, f, f},
+
+		// Own tokens: any active user, roles or not.
+		{"create own token", adminz.TokenCreateOwn, adminz.Resource{Type: "token"}, a, a, a, a},
+		{"list own tokens", adminz.TokenListOwn, adminz.Resource{Type: "token"}, a, a, a, a},
+		{"revoke own token", adminz.TokenRevokeOwn, adminz.Resource{Type: "token", ID: "t1"}, a, a, a, a},
 
 		// Listings are scoped per caller: the unscoped ones need any managed initiative.
 		{"list initiatives", adminz.InitiativeList, adminz.Resource{Type: "initiative"}, a, a, a, f},
@@ -162,7 +168,8 @@ func TestInactiveSubjectIsNeverAllowed(t *testing.T) {
 		adminz.AppDisable, adminz.DeploymentDelete, adminz.GrantCreate, adminz.GrantDelete, adminz.GrantList,
 		adminz.GroupCreate, adminz.GroupList, adminz.GroupMemberList, adminz.RoleList, adminz.RoleUpdate, adminz.AppList,
 		adminz.DeploymentCreate, adminz.UserDisable, adminz.UserSessionsRevoke,
-		adminz.UserList, adminz.OrphanHostList, adminz.AuditList, "unknown.action",
+		adminz.UserList, adminz.OrphanHostList, adminz.AuditList, adminz.TokenRevokeAny,
+		adminz.TokenCreateOwn, adminz.TokenListOwn, adminz.TokenRevokeOwn, "unknown.action",
 	}
 	for name, who := range map[string]adminz.Subject{"disabled platform admin": disabledAdmin, "zero value": zero} {
 		for _, action := range actions {

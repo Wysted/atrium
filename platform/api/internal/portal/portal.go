@@ -105,6 +105,7 @@ type Tx interface {
 	Catalog() CatalogRepo
 	Groups() GroupRepo
 	Users() UserRepo
+	Tokens() TokenRepo
 	// Audit appends to the audit log inside the transaction: if the insert fails the mutation rolls back.
 	Audit() audit.Recorder
 	AuditLog() AuditReader
@@ -132,6 +133,9 @@ type Config struct {
 	// ProbeInterval is the interval of the integration probe (PORTAL_PROBE_INTERVAL); zero means the probe is
 	// disabled. The health report judges the age of the probe results by it.
 	ProbeInterval time.Duration
+	// TokenMaxTTLPersonal caps the lifetime of a personal API token (PORTAL_TOKEN_MAX_TTL_PERSONAL) and is the
+	// one a request without expires_in gets; zero means DefaultTokenMaxTTLPersonal.
+	TokenMaxTTLPersonal time.Duration
 	// Now is the clock for "expires_at must be in the future"; nil means time.Now.
 	Now func() time.Time
 }
@@ -145,6 +149,8 @@ type Service struct {
 	authHost      string
 	probeInterval time.Duration
 	now           func() time.Time
+
+	tokenMaxTTLPersonal time.Duration
 }
 
 // NewService builds a Service.
@@ -156,9 +162,16 @@ func NewService(cfg Config) (*Service, error) {
 	if now == nil {
 		now = time.Now
 	}
+	if cfg.TokenMaxTTLPersonal < 0 {
+		return nil, errors.New("portal: the token lifetime cap cannot be negative")
+	}
+	tokenTTL := cfg.TokenMaxTTLPersonal
+	if tokenTTL == 0 {
+		tokenTTL = DefaultTokenMaxTTLPersonal
+	}
 	return &Service{
 		permissions: cfg.Permissions, home: cfg.Home, store: cfg.Store, portalAppID: cfg.PortalAppID,
-		authHost: strings.ToLower(cfg.AuthHost), probeInterval: cfg.ProbeInterval, now: now,
+		authHost: strings.ToLower(cfg.AuthHost), probeInterval: cfg.ProbeInterval, now: now, tokenMaxTTLPersonal: tokenTTL,
 	}, nil
 }
 

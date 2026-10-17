@@ -47,6 +47,23 @@ func begin(ctx context.Context, tx Tx, callerID string, action adminz.Action, re
 	return sub, d, err
 }
 
+// tokenKey carries the id of the API token that authenticated the request through the context.
+type tokenKey struct{}
+
+// WithToken marks ctx as belonging to a request authenticated by the API token tokenID (the assertion's tid
+// claim). Every audit row written under it records the token (audit_events.token_id), and the token endpoints
+// that must not be reached with a token (creation) or that act on the current one read it. The HTTP layer sets
+// it once, after the assertion and its scope were checked; a browser session never sets it.
+func WithToken(ctx context.Context, tokenID string) context.Context {
+	return context.WithValue(ctx, tokenKey{}, tokenID)
+}
+
+// TokenFrom returns the id set by WithToken, or "" for a browser session.
+func TokenFrom(ctx context.Context) string {
+	id, _ := ctx.Value(tokenKey{}).(string)
+	return id
+}
+
 // event is an audit row under construction: every mutation writes exactly one, in its own transaction.
 type event struct {
 	actor        string
@@ -58,10 +75,10 @@ type event struct {
 	after        any
 }
 
-// record appends the event; its failure aborts the unit of work, so the mutation rolls back with it.
+// record appends the event, with the API token of the request when there is one; its failure aborts the unit of work, so the mutation rolls back with it.
 func record(ctx context.Context, tx Tx, e event) error {
 	err := tx.Audit().RecordAudit(ctx, audit.Event{
-		ActorID: e.actor, InitiativeID: e.initiativeID, Action: string(e.action),
+		ActorID: e.actor, InitiativeID: e.initiativeID, TokenID: TokenFrom(ctx), Action: string(e.action),
 		TargetType: e.targetType, TargetID: e.targetID, Before: e.before, After: e.after,
 	})
 	if err != nil {

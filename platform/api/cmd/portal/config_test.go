@@ -3,6 +3,7 @@ package main
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 const (
@@ -58,6 +59,10 @@ func TestLoadConfig(t *testing.T) {
 		{"jwks wrong scheme", map[string]string{envJWKSURL: "ftp://x/jwks"}, []string{envJWKSURL}},
 		{"jwks with credentials", map[string]string{envJWKSURL: "http://u:p@x/jwks"}, []string{envJWKSURL}}, //nolint:gosec // invalid input on purpose
 		{"bad privileged flag", map[string]string{envAllowPrivilegedDBLogin: "maybe"}, []string{envAllowPrivilegedDBLogin}},
+		{"token caps set", map[string]string{envTokenMaxTTLPersonal: "24h", envTokenMaxTTLRobot: "48h"}, nil},
+		{"token cap not a duration", map[string]string{envTokenMaxTTLPersonal: "30d"}, []string{envTokenMaxTTLPersonal}},
+		{"token cap zero", map[string]string{envTokenMaxTTLRobot: "0"}, []string{envTokenMaxTTLRobot}},
+		{"token cap negative", map[string]string{envTokenMaxTTLPersonal: "-1h"}, []string{envTokenMaxTTLPersonal}},
 		{"values are trimmed", map[string]string{envPublicAddr: " :8080 "}, nil},
 	}
 	for _, tt := range tests {
@@ -93,5 +98,17 @@ func TestPrivilegedFlag(t *testing.T) {
 	}
 	if cfg, err = loadConfig(env(nil)); err != nil || cfg.AllowPrivilegedDBLogin {
 		t.Fatalf("default must be off: %+v, %v", cfg, err)
+	}
+}
+
+func TestTokenCapDefaults(t *testing.T) {
+	t.Parallel()
+	cfg, err := loadConfig(env(nil))
+	if err != nil || cfg.TokenMaxTTLPersonal != 720*time.Hour || cfg.TokenMaxTTLRobot != 2160*time.Hour {
+		t.Fatalf("defaults: %+v, %v", cfg, err)
+	}
+	cfg, err = loadConfig(env(map[string]string{envTokenMaxTTLPersonal: "24h", envTokenMaxTTLRobot: "48h"}))
+	if err != nil || cfg.TokenMaxTTLPersonal != 24*time.Hour || cfg.TokenMaxTTLRobot != 48*time.Hour {
+		t.Fatalf("set: %+v, %v", cfg, err)
 	}
 }

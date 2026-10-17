@@ -54,7 +54,8 @@ func newTestHandler(t *testing.T, svc Service, admin AdminService, logs *bytes.B
 					w.WriteHeader(http.StatusUnauthorized)
 					return
 				}
-				next.ServeHTTP(w, r.WithContext(platformauth.ContextWithClaims(r.Context(), &platformauth.Claims{Subject: sub})))
+				claims := &platformauth.Claims{Subject: sub, APITokenID: r.Header.Get("X-Test-Tid"), Scope: r.Header.Get("X-Test-Scope"), SubjectType: r.Header.Get("X-Test-SubType")}
+				next.ServeHTTP(w, r.WithContext(platformauth.ContextWithClaims(r.Context(), claims)))
 			})
 		},
 		Logger: log,

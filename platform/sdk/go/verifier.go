@@ -94,6 +94,10 @@ type wireClaims struct {
 	Name  string   `json:"name"`
 	SID   string   `json:"sid"`
 	Roles []string `json:"roles"`
+	// Present only on assertions issued for an API token (contract block 1).
+	SubType string `json:"sub_type"`
+	TID     string `json:"tid"`
+	Scope   string `json:"scope"`
 }
 
 // NewVerifier validates cfg and applies defaults.
@@ -235,17 +239,20 @@ func (v *Verifier) Verify(ctx context.Context, token string) (*Claims, error) {
 		return nil, fmt.Errorf("%w: lifetime exceeds %s", ErrInvalidAssertion, AssertionTTL)
 	}
 	claims := &Claims{
-		Issuer:    wc.Issuer,
-		Audience:  wc.Audience[0],
-		Subject:   wc.Subject,
-		Email:     wc.Email,
-		Name:      wc.Name,
-		SessionID: wc.SID,
-		TokenID:   wc.ID,
-		Roles:     wc.Roles,
-		IssuedAt:  numericDate(wc.IssuedAt),
-		NotBefore: numericDate(wc.NotBefore),
-		ExpiresAt: numericDate(wc.ExpiresAt),
+		Issuer:      wc.Issuer,
+		Audience:    wc.Audience[0],
+		Subject:     wc.Subject,
+		Email:       wc.Email,
+		Name:        wc.Name,
+		SessionID:   wc.SID,
+		TokenID:     wc.ID,
+		Roles:       wc.Roles,
+		SubjectType: wc.SubType,
+		APITokenID:  wc.TID,
+		Scope:       wc.Scope,
+		IssuedAt:    numericDate(wc.IssuedAt),
+		NotBefore:   numericDate(wc.NotBefore),
+		ExpiresAt:   numericDate(wc.ExpiresAt),
 	}
 	return claims, nil
 }

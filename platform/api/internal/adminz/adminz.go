@@ -46,6 +46,16 @@ const (
 	UserDisable        Action = "user.disable"
 	UserEnable         Action = "user.enable"
 	UserSessionsRevoke Action = "user_sessions.revoke"
+
+	// TokenRevokeAny revokes the API token of any owner (block 6, "Non-browser clients").
+	TokenRevokeAny Action = "token.revoke_any"
+)
+
+// Actions on the caller's own personal API tokens: any active user may perform them, whatever their roles.
+const (
+	TokenCreateOwn Action = "token.create_own"
+	TokenListOwn   Action = "token.list_own"
+	TokenRevokeOwn Action = "token.revoke_own"
 )
 
 // Mutations that platform admins and the managers of the initiative may perform.
@@ -88,6 +98,7 @@ const (
 const (
 	ReasonPlatformAdmin     = "platform_admin"
 	ReasonInitiativeManager = "initiative_manager"
+	ReasonOwnData           = "own_data"
 	ReasonAdminOnly         = "admin_only"
 	ReasonNotManager        = "not_manager"
 	ReasonNoManagedScope    = "no_managed_initiative"
@@ -173,6 +184,7 @@ type scope int
 const (
 	scopeGlobal     scope = iota // groups, users, creating initiatives: no initiative owns the target
 	scopeInitiative              // the target belongs to one initiative
+	scopeOwn                     // the caller's own data: any active subject
 )
 
 // rule is one row of the "Who administers what" table.
@@ -219,6 +231,11 @@ var rules = map[Action]rule{
 	UserSessionsRevoke: {scope: scopeGlobal},
 	UserList:           {scope: scopeGlobal},
 	OrphanHostList:     {scope: scopeGlobal},
+
+	TokenRevokeAny: {scope: scopeGlobal},
+	TokenCreateOwn: {scope: scopeOwn},
+	TokenListOwn:   {scope: scopeOwn},
+	TokenRevokeOwn: {scope: scopeOwn},
 }
 
 // Decide is the pure decision function. Rules, in order:
@@ -238,6 +255,7 @@ var rules = map[Action]rule{
 //  4. A manager of the initiative is allowed only where the table says so; otherwise forbidden (they already
 //     know the initiative exists).
 //  5. Global actions are for platform admins only; anyone else is forbidden.
+//  6. Actions on the caller's own data (their API tokens) are allowed to any active subject.
 //
 // Being a platform admin gives no access to the apps themselves (see access.Decide); it only governs the portal.
 func Decide(subject Subject, action Action, resource Resource) Decision {
@@ -262,6 +280,11 @@ func Decide(subject Subject, action Action, resource Resource) Decision {
 	r, ok := rules[action]
 	if !ok {
 		return Decision{Outcome: Forbidden, Reason: ReasonUnknownAction}
+	}
+	if r.scope == scopeOwn {
+		// The action only touches the caller's own rows (the use case enforces the owner), so being active is
+		// enough; this is what lets a user without roles manage their tokens.
+		return Decision{Outcome: Allow, Reason: ReasonOwnData}
 	}
 	if r.scope == scopeGlobal {
 		if !subject.PlatformAdmin {

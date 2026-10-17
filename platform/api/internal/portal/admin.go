@@ -340,4 +340,5 @@ const (
 	cursorKindGroups  = "groups"
 	cursorKindMembers = "members"
 	cursorKindAudit   = "audit"
+	cursorKindTokens  = "tokens"
 )

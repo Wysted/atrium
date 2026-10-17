@@ -128,6 +128,7 @@ func (t portalTx) Grants() portal.GrantRepo              { return GrantsRepo{db:
 func (t portalTx) Catalog() portal.CatalogRepo           { return CatalogRepo{db: t.tx} }
 func (t portalTx) Groups() portal.GroupRepo              { return GroupsRepo{db: t.tx} }
 func (t portalTx) Users() portal.UserRepo                { return UsersRepo{db: t.tx} }
+func (t portalTx) Tokens() portal.TokenRepo              { return TokensRepo{db: t.tx} }
 func (t portalTx) Audit() audit.Recorder                 { return txAudit{db: t.tx} }
 func (t portalTx) AuditLog() portal.AuditReader          { return AuditLogRepo{db: t.tx} }
 func (t portalTx) Health() portal.HealthRepo             { return HealthRepo{db: t.tx} }

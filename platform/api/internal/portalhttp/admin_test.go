@@ -46,6 +46,7 @@ type fakeAdmin struct {
 	orphans []portal.OrphanHost
 
 	catalogCalls
+	tokenCalls
 }
 
 func (f *fakeAdmin) note(caller, id string) error {

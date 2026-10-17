@@ -45,6 +45,13 @@ type AdminService interface {
 	SetUserStatus(ctx context.Context, callerID, userID, status string) (portal.User, error)
 	RevokeUserSessions(ctx context.Context, callerID, userID string) (int64, error)
 
+	CreateOwnToken(ctx context.Context, callerID string, in portal.NewToken) (portal.CreatedToken, error)
+	ListOwnTokens(ctx context.Context, callerID string, req portal.PageRequest) (portal.Page[portal.APIToken], error)
+	RevokeOwnToken(ctx context.Context, callerID, tokenID string) error
+	RevokeCurrentToken(ctx context.Context, callerID string) error
+	RevokeToken(ctx context.Context, callerID, tokenID string) error
+	RevokeBySecret(ctx context.Context, callerID, secret string) error
+
 	ListAudit(ctx context.Context, callerID string, q portal.AuditQuery) (portal.Page[portal.AuditEvent], error)
 
 	AppHealth(ctx context.Context, callerID, appID string) (portal.AppHealth, error)
@@ -104,6 +111,8 @@ func (a *api) adminRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET "+PathUsers, a.findUsers)
 	mux.HandleFunc("PATCH "+PathUser, a.patchUser)
 	mux.HandleFunc("DELETE "+PathUserSessions, a.revokeSessions)
+
+	a.tokenRoutes(mux)
 
 	mux.HandleFunc("GET "+PathAudit, a.listAudit)
 

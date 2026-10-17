@@ -7,8 +7,10 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"platform/api/internal/httpx"
+	"platform/api/internal/portal"
 	"platform/api/internal/webui"
 )
 
@@ -28,6 +30,10 @@ const (
 	// portal role is assumed with a startup parameter, so a privileged login role could undo it with
 	// RESET ROLE. Setting it only downgrades the refusal to a loud WARN. Never set it in production.
 	envAllowPrivilegedDBLogin = "PORTAL_ALLOW_PRIVILEGED_DB_LOGIN"
+	// Caps of the lifetime of an API token, one per owner kind (contract block 6, "Non-browser clients"). Optional Go
+	// durations above zero; a request without expires_in gets the cap. Raising one is the adopter's decision.
+	envTokenMaxTTLPersonal = "PORTAL_TOKEN_MAX_TTL_PERSONAL" // default 720h
+	envTokenMaxTTLRobot    = "PORTAL_TOKEN_MAX_TTL_ROBOT"    // default 2160h; used by robot tokens (a later part)
 )
 
 // appIDPattern matches apps.id (the CHECK of migration 0001).
@@ -44,6 +50,9 @@ type config struct {
 	JWKSCAFile   string // optional CA bundle for an https JWKSURL; empty means system roots
 	// AllowPrivilegedDBLogin is the value of PORTAL_ALLOW_PRIVILEGED_DB_LOGIN (development only).
 	AllowPrivilegedDBLogin bool
+	// TokenMaxTTLPersonal and TokenMaxTTLRobot are PORTAL_TOKEN_MAX_TTL_PERSONAL and PORTAL_TOKEN_MAX_TTL_ROBOT.
+	TokenMaxTTLPersonal time.Duration
+	TokenMaxTTLRobot    time.Duration
 	// Probe configures the integration probe (PORTAL_PROBE_*); Probe.Interval 0 disables it.
 	Probe probeConfig
 }
@@ -96,6 +105,11 @@ func loadConfig(getenv func(string) string) (config, error) {
 		}
 		c.AllowPrivilegedDBLogin = b
 	}
+	var terrs []error
+	c.TokenMaxTTLPersonal, terrs = tokenTTL(getenv, envTokenMaxTTLPersonal, portal.DefaultTokenMaxTTLPersonal)
+	errs = append(errs, terrs...)
+	c.TokenMaxTTLRobot, terrs = tokenTTL(getenv, envTokenMaxTTLRobot, portal.DefaultTokenMaxTTLRobot)
+	errs = append(errs, terrs...)
 	var perrs []error
 	c.Probe, perrs = loadProbeConfig(getenv)
 	errs = append(errs, perrs...)
@@ -109,4 +123,20 @@ func loadConfig(getenv func(string) string) (config, error) {
 func isScheme(rawURL, scheme string) bool {
 	u, err := url.Parse(rawURL)
 	return err == nil && u.Scheme == scheme
+}
+
+// tokenTTL reads an optional token lifetime cap: a Go duration above zero, def when unset.
+func tokenTTL(getenv func(string) string, name string, def time.Duration) (time.Duration, []error) {
+	v := strings.TrimSpace(getenv(name))
+	if v == "" {
+		return def, nil
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return def, []error{fmt.Errorf("%s: %w", name, err)}
+	}
+	if d <= 0 {
+		return def, []error{fmt.Errorf("%s must be greater than zero", name)}
+	}
+	return d, nil
 }

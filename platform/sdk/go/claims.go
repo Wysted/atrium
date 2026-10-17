@@ -16,9 +16,15 @@ type Claims struct {
 	SessionID string
 	TokenID   string // jti, for log correlation only
 	Roles     []string
-	IssuedAt  time.Time
-	NotBefore time.Time
-	ExpiresAt time.Time
+	// SubjectType (sub_type: "human" or "robot"), APITokenID (tid) and Scope (scope: "read" or "admin") are
+	// set only on assertions issued for an API token, and only the portal receives them. All three are empty
+	// for a browser-session assertion.
+	SubjectType string
+	APITokenID  string
+	Scope       string
+	IssuedAt    time.Time
+	NotBefore   time.Time
+	ExpiresAt   time.Time
 }
 
 type claimsKey struct{}

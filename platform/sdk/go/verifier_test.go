@@ -338,3 +338,37 @@ func TestNewVerifierValidatesConfig(t *testing.T) {
 		})
 	}
 }
+
+func TestVerifyTokenClaims(t *testing.T) {
+	signer := newKey(t)
+	tests := []struct {
+		name                         string
+		mutate                       func(c jwt.MapClaims)
+		wantType, wantTID, wantScope string
+	}{
+		{name: "session assertion has none"},
+		{
+			name:     "token assertion",
+			mutate:   func(c jwt.MapClaims) { c["sub_type"], c["tid"], c["scope"] = "robot", "tid-1", "read" },
+			wantType: "robot", wantTID: "tid-1", wantScope: "read",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := newJWKSServer(t, map[string]*ecdsa.PrivateKey{testKID: signer})
+			clock := newClock()
+			v := newVerifier(t, srv, clock)
+			claims := baseClaims(clock.Now())
+			if tt.mutate != nil {
+				tt.mutate(claims)
+			}
+			got, err := v.Verify(context.Background(), mint(t, signer, nil, claims))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.SubjectType != tt.wantType || got.APITokenID != tt.wantTID || got.Scope != tt.wantScope || got.TokenID != "jti-1" {
+				t.Errorf("claims = %+v", got)
+			}
+		})
+	}
+}
