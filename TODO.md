@@ -21,7 +21,7 @@ Pending work and open questions for the portal platform. Detailed context lives 
 - [ ] **Egress filtering.** The `local-google` overlay allows platform-api HTTPS egress to any public address.
   FQDN-level filtering (Google endpoints only) needs an egress proxy or a CNI with L7 policies.
 - [ ] **Internal TLS for the JWKS.** Apps fetch the JWKS over in-cluster HTTP; integrity relies on NetworkPolicy.
-- [ ] **`client_secret` rotation runbook.** Google allows two active secrets: add, deploy, disable the old one, delete.
+- [x] **`client_secret` rotation runbook.** Closed 2026-10-16. `platform-gitops/docs/runbooks/google-client-secret-rotation.md`: add, deploy (restart required), verify a real login, disable the old one, observe, delete; rollback and leak variants. Original note: Google allows two active secrets.
 - [ ] **NOTIFY commit serialization.** The `access_changed` and `signing_keys_changed` triggers use NOTIFY, and
   PostgreSQL serializes the commit of every notifying transaction on one cluster-wide lock (waits of up to ~3 s were
   seen under disk load in tests). Admin changes are rare today; measure under the production write rate before

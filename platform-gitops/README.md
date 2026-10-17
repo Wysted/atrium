@@ -261,6 +261,8 @@ Access: users are created on their first login (JIT) with no grants (403 on ever
 `revoke.sh` (or `grant.sh --revoke`) removes it. Platform-api sees the change through NOTIFY, no restart. Example:
 `grant.sh you@example.com demo viewer` (demo = hello-a).
 
+Rotating the Google client secret: [docs/runbooks/google-client-secret-rotation.md](docs/runbooks/google-client-secret-rotation.md).
+
 ### Egress tradeoff (NetworkPolicy `allow-egress-google`)
 
 Google discovery/token/JWKS need HTTPS to accounts.google.com, oauth2.googleapis.com and www.googleapis.com. A standard
