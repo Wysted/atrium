@@ -159,13 +159,22 @@ The app is resolved only from `X-Forwarded-Host` (exact, lowercase) against `dep
 ### Verified in the spike (Traefik v3.7.14, 2026-10-14)
 
 1. With `authRequestHeaders` as an allowlist, `X-Forwarded-Method/Host/Uri/Proto/For/Port` still reach platform-api
-   (Traefik provides them); headers outside the list (`Authorization` at the time, custom ones) do not. A client-sent
+   (Traefik provides them); headers outside the list (`Authorization` at the time of the spike, custom ones) do not. A client-sent
    `X-Forwarded-Host` is replaced by the real host.
 2. `strip-assertion` (`customRequestHeaders` with an empty value) removes a client-sent assertion on the auth host
    and on preflight requests; authorized requests still receive the assertion issued by platform-api.
 3. `maxResponseBodySize` is in bytes; a larger auth response is rejected with 401.
 4. `trustForwardHeader` is deprecated in v3.7 (removed in the next major); it stays explicitly `false` and is
    revisited on the Traefik major upgrade.
+5. Part 3 (Traefik v3.7.14, 2026-10-17, smoke section 22): `Authorization` in `authRequestHeaders` reaches platform-api
+   and nothing else changes for apps (a `whoami` behind hello-a still echoes the `Authorization` it was sent, behind a
+   valid session; without one the request is a 401 as before). On 401/403 from ForwardAuth, Traefik copies the auth response's `WWW-Authenticate` to the client
+   (`Bearer error="invalid_token"`, bare `Bearer`, `insufficient_scope`), with no redirect and no `Set-Cookie`.
+   `strip-authorization` (`customRequestHeaders` with an empty value, referenced by name from the `portal` namespace)
+   runs after the entrypoint ForwardAuth: a `whoami` fixture routed by the portal host rule plus `PathPrefix(/__smoke_whoami)`
+   (it wins on that path only) with the same middleware list, which the smoke asserts equal to the real route's, receives
+   the `Platform-Assertion` but no `Authorization`. The access log (headers explicitly dropped in `local/traefik-values.yaml`) and the platform-api and portal logs hold no
+   Bearer value sent by the smoke; the smoke fails if a log cannot be read or lacks the section's traffic.
 
 ## 3. Signing keys, rotation, JWKS
 
@@ -817,7 +826,7 @@ the `platform_portal` role may select; no extra index is kept: `unknown_host` ro
 ### Non-browser clients
 
 Design for CLI and automation that call the portal API (phase 1 decided 2026-10-16; research notes: Engram
-`architecture/portal-non-browser-clients`). Part 1a (schema, privileges, `kind` filters, token revocation on disable, purge), part 1b-1 (token secret package, scope middleware, `token_id` in the audit, personal token endpoints and the `PORTAL_TOKEN_MAX_TTL_*` settings below; revocation by secret included, through the function of migration 0013) and part 1b-2 (robots API, robot tokens, grants by `robot_id`) are implemented, which completes part 1; part 2 (ForwardAuth token path, assertion claims, SDK fields) is implemented too, and the rest is design only. The product is multi-company: the design
+`architecture/portal-non-browser-clients`). Part 1a (schema, privileges, `kind` filters, token revocation on disable, purge), part 1b-1 (token secret package, scope middleware, `token_id` in the audit, personal token endpoints and the `PORTAL_TOKEN_MAX_TTL_*` settings below; revocation by secret included, through the function of migration 0013) and part 1b-2 (robots API, robot tokens, grants by `robot_id`) are implemented, which completes part 1; part 2 (ForwardAuth token path, assertion claims, SDK fields) and part 3 (Traefik and smoke checks) are implemented too, and the rest is design only. The product is multi-company: the design
 assumes no CI system, secret manager or stack on the adopter's side.
 
 | Phase | Mechanism | Status |
@@ -1000,6 +1009,12 @@ As implemented (part 2), where the rules above left a choice:
   the column backwards; a token whose row is locked is kept in memory and retried on the next tick (a revoked one
   is simply not written). Both this and `lastseen` are thin users of `internal/touchset`.
 
+As implemented (part 3): `strip-authorization` is in `platform-gitops/base/portal/ingressroute.yaml` next to the route that
+references it. Smoke section 22 covers (a)-(g), the revocation (next request, no cache) and the `last_used_at` flush. Check (d) also lists standard `Ingress` objects and fails on any public route without `Host(`, with
+`HostRegexp`, or an Ingress without a host rule, because those could match the portal host unnoticed. A `read` or `admin` token is created through the real portal API with a session; secrets live only in header
+files (`curl -H @file`) and are searched in the logs with `grep -F -f`. A request with a Bearer on a navigation is a 401, never
+a login redirect.
+
 New claims (block 1), present only on assertions issued by the token path; session assertions are unchanged:
 
 | Claim | Value |
@@ -1094,7 +1109,7 @@ email today).
 2. (Implemented.) ForwardAuth token path in platform-api, assertion claims, SDK fields (`SubjectType`, `APITokenID`, `Scope`),
    `assertion.Request` token fields with `SessionID` optional only when `APITokenID` is set (`issuer.go` rejects an
    empty session id today).
-3. Traefik: `Authorization` in `authRequestHeaders`, `strip-authorization` in the `portal` namespace referenced by
+3. (Implemented.) Traefik: `Authorization` in `authRequestHeaders`, `strip-authorization` in the `portal` namespace referenced by
    every portal-host route, and smoke checks: (a) token accepted on the portal host; (b) `Authorization` ignored on
    another host and kept for that app (stripped only on the portal route); (c) a valid cookie with an invalid
    `Authorization` on the portal host answers 401; (d) every IngressRoute matching a portal host references the

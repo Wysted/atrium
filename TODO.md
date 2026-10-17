@@ -46,10 +46,10 @@ Pending work and open questions for the portal platform. Detailed context lives 
 - [ ] **Non-browser clients for the portal API.** Phase 1 designed in `platform/docs/contract.md` block 6, "Non-browser
   clients" (personal and robot tokens). Parts: (1) schema + portal API (migration, repos, handlers, adminz, audit,
   grants by robot, last-manager rule); (2) ForwardAuth token path + assertion claims + SDK fields; (3) Traefik
-  (`Authorization` in `authRequestHeaders`, strip on the portal route) + smoke checks; (4) web: tokens page and robots
+  (`Authorization` in `authRequestHeaders`, strip on the portal route) + smoke checks (done); (4) web: tokens page and robots
   admin page; (5) CLI replacing `grant.sh`/`revoke.sh`. Phases 2 (workload identity) and 3 (device flow) stay open.
   Part 1 (1a schema, privileges, kind filters, purge; 1b tokens and robots API, grants by robot, revocation by
-  secret) and part 2 (ForwardAuth token path, assertion claims, SDK) done 2026-10-16; part 3 (Traefik) next.
+  secret) and part 2 (ForwardAuth token path, assertion claims, SDK) done 2026-10-16; part 3 (Traefik, smoke section 22) done 2026-10-17; part 4 (web) next.
 - [ ] **Area supervisor (design).** Someone who administers the robots and tokens of the people of their area (list,
   revoke, reassign owner on offboarding) without acting as them or touching their access. Needs a person hierarchy;
   see the open point at the end of contract block 6, "Non-browser clients".
