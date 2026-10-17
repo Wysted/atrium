@@ -249,6 +249,8 @@ BUILD=1 platform-gitops/overlays/local-google/up.sh   # build portal-platform-ap
 platform-gitops/overlays/local-google/down.sh          # back to the fake login (removes egress policy, client secret and client id)
 ```
 
+Without `BUILD=1` the script imports the image already on the host and prints a WARN (it never fails) when that image is missing or older than the last commit touching `platform/` (docs and `*.md` excluded, as in `platform/.dockerignore`), or when those sources have uncommitted changes: the tag never changes, so a stale image is otherwise silent.
+
 `local/up.sh` re-applies the fake-login overlay: run `local-google/up.sh` again afterwards. `local/smoke.sh` only works in
 fake-login mode (POST /login is 405 under Google). The client secret is read from `.tools/secrets/google-client-secret` and
 loaded with `--from-file` into Secret `platform/platform-google-client-secret`, mounted with `fsGroup` + `defaultMode: 0440`

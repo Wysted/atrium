@@ -20,10 +20,14 @@ Pending work and open questions for the portal platform. Detailed context lives 
   global bucket. Verify the client IP behind the production load balancer.
 - [ ] **Egress filtering.** The `local-google` overlay allows platform-api HTTPS egress to any public address.
   FQDN-level filtering (Google endpoints only) needs an egress proxy or a CNI with L7 policies.
-- [ ] **Local Grafana restarts in a loop.** Seen 2026-10-17: the pod restarted 8 times in 16 h and an `up.sh` Grafana
-  upgrade timed out; deleting the pod fixed it. Likely cause, not yet confirmed in the logs: Grafana downloads
-  plugins from the internet at start-up (automatic plugin preinstall) and the start-up probe kills it when that is
-  slow. Check the logs of a failing start; if confirmed, set `[plugins] preinstall_disabled = true` in the local values.
+- [ ] **Local Grafana restarts in a loop.** Seen 2026-10-17: 8 restarts in 16 h and an `up.sh` Grafana upgrade that timed
+  out; deleting the pod fixed it. Investigated 2026-10-17, the plugin-preinstall hypothesis is REFUTED as the cause: a forced
+  fresh start takes ~25 s and listens before any plugin work (the background installer fails in ~100 ms with `connection
+  refused` to grafana.com and blocks nothing), and the liveness probe waits 60 s + 10 x 10 s. Preinstall is now off anyway
+  (`[plugins] preinstall_disabled`, no more egress attempts). Open: the cause of the old restarts is not proven (the pod was
+  deleted, `lastState` lost). Leads: the k3d node container itself restarted at 16:06Z (Prometheus and the operator exited 255
+  at the same second, so Docker/WSL restarts explain some), and Grafana sits at ~305-317 MiB of its 384 MiB limit (OOMKilled
+  is possible). Next time it loops: capture `describe pod` `Last State` / `Reason` before deleting; if OOMKilled, raise the limit.
 - [x] **Internal TLS for the JWKS.** Closed 2026-10-16: opt-in HTTPS on the JWKS listener (`PLATFORM_JWKS_TLS_CERT_FILE` /
   `_KEY_FILE`, reloaded every 30 s) and a CA file for verifiers (`PORTAL_JWKS_CA_FILE`, SDK `RootCAs`). `base/` stays HTTP;
   the local overlay enables it with a local CA. Production adopters must supply the certificate (cert-manager, Vault or
