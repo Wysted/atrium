@@ -99,7 +99,13 @@ drop_smoke_tokens() {
     -c "UPDATE api_tokens SET revoked_at = now() WHERE name LIKE 'smoke-%' AND revoked_at IS NULL" \
     -c "UPDATE users SET status = 'disabled' WHERE kind = 'robot' AND name = 'smoke-robot'" >/dev/null 2>&1
 }
+# Section 22 disables the portal app for a moment (token denial check); the trap puts it back as the owner.
+restore_portal_app() {
+  $K -n platform-db exec postgres-0 -- psql -q -U platform_owner -d platform \
+    -c "UPDATE apps SET status = 'active' WHERE id = '$PORTAL_APP_ID' AND status <> 'active'" >/dev/null 2>&1
+}
 cleanup() {
+  restore_portal_app
   $K delete pod probe-default --ignore-not-found --wait=false >/dev/null 2>&1
   $K -n hello-a delete pod probe-hello --ignore-not-found --wait=false >/dev/null 2>&1
   $K -n traefik delete pod probe-traefik --ignore-not-found --wait=false >/dev/null 2>&1
@@ -113,6 +119,7 @@ cleanup() {
   rm -rf "$WORK" "$GW"
 }
 trap cleanup EXIT
+restore_portal_app # self-heal: a previous run may have died with the portal app disabled
 
 echo "platform smoke: $(date -u +%FT%TZ)"
 echo "  (creating long-lived probe pods first: kube-router needs a few seconds per new pod)"
@@ -480,6 +487,11 @@ code=$(api "$JDV" "$P/api/v1/initiatives"); check "dave lists initiatives" "$cod
 check "dave sees exactly demo" "$(json_get "$WORK/b" '[i["key"] for i in d["initiatives"]]')" "['demo']"
 DEMO_ID="$(json_get "$WORK/b" 'd["initiatives"][0]["id"]')"
 code=$(api "$JAD" "$P/api/v1/initiatives"); OTHER_ID="$(json_get "$WORK/b" '[i["id"] for i in d["initiatives"] if i["key"] == "other"][0]')"
+PLATFORM_ID="$(json_get "$WORK/b" '[i["id"] for i in d["initiatives"] if i["key"] == "platform"][0]')"
+code=$(api "$JAD" "$P/api/v1/initiatives/$PLATFORM_ID/apps"); check "admin lists the apps of the platform initiative" "$code" 200
+check "  (the portal app carries portal_app true)" "$(json_get "$WORK/b" '[a["portal_app"] for a in d["apps"] if a["id"] == "'"$PORTAL_APP_ID"'"][0]')" True
+code=$(api "$JAD" "$P/api/v1/initiatives/$DEMO_ID/apps"); check "admin lists the apps of demo" "$code" 200
+check "  (hello-a carries portal_app false)" "$(json_get "$WORK/b" '[a["portal_app"] for a in d["apps"] if a["id"] == "'"$HELLO_A_ID"'"][0]')" False
 code=$(api "$JDV" "$P/api/v1/initiatives/$DEMO_ID"); check "dave GET demo" "$code" 200
 code=$(api "$JDV" "$P/api/v1/initiatives/$OTHER_ID"); check "dave GET other initiative (out of scope)" "$code" 404
 code=$(mutate "$JDV" PATCH "$P/api/v1/initiatives/$DEMO_ID" same-origin application/json '{"name":"Demo (manager)"}'); check "dave PATCH demo name" "$code" 403
@@ -1136,6 +1148,25 @@ check_not "no Authorization header at the portal side (robot)" "$(tr 'A-Z' 'a-z'
 if leaks "$WORK/b"; then fail "a Bearer value is in the portal fixture echo (robot)"; else pass "the robot secret is not in the echo"; fi
 code=$(api "$JTA" -H 'Authorization: Bearer garbage' "$P/__smoke_whoami"); check "cookie + garbage Authorization is refused before the fixture" "$code" 401
 
+echo "  -- a token denied by the app rule is recorded in access_denials (user = token owner, no sid)"
+# The portal app is the only app a token reaches, and the portal rule allows any active user, so the denial needs the app
+# disabled for a moment (SQL as the owner: the API guards refuse it; the trap re-enables it). The trigger NOTIFYs the decision
+# caches, so the next request is a cache miss and writes the row (one per miss: assert on existence since the section start).
+if $K -n platform-db exec postgres-0 -- psql -q -U platform_owner -d platform -c "UPDATE apps SET status = 'disabled' WHERE id = '$PORTAL_APP_ID'" >/dev/null 2>&1; then
+  code=000; t0=$(now_ms)
+  while (( $(now_ms) - t0 < REVOKE_DEADLINE_MS )); do code=$(bcall robot "$P/api/v1/me"); [[ "$code" == 403 ]] && break; sleep 0.2; done
+  restore_portal_app
+  check "portal app is active again after the check" "$($K -n platform-db exec postgres-0 -- psql -At -q -U platform_owner -d platform -c "SELECT status FROM apps WHERE id = '$PORTAL_APP_ID'" 2>&1)" active
+  check "robot token with the portal app disabled -> 403" "$code" 403
+  check "access_denials row: user = the robot, sid NULL, portal host, app_disabled" "$($K -n platform-db exec postgres-0 -- psql -At -q -U platform_owner -d platform -c \
+    "SELECT CASE WHEN count(*) > 0 THEN 'denied' ELSE 'none' END FROM access_denials WHERE user_id = '$RID' AND sid IS NULL AND host = '$P_HOST' AND reason = 'app_disabled' AND occurred_at >= '$SINCE_22'")" denied
+  code=000; t0=$(now_ms)
+  while (( $(now_ms) - t0 < REVOKE_DEADLINE_MS )); do code=$(bcall robot "$P/api/v1/me"); [[ "$code" == 200 ]] && break; sleep 0.2; done
+  check "robot token works again once the app is re-enabled" "$code" 200
+else
+  fail "could not disable the portal app by SQL"
+fi
+
 echo "  -- revocation: the very next request fails (no cache on the token row)"
 code=$(bcall alice-del "$P/api/v1/me"); check "before revoke (DELETE /me/tokens/{id})" "$code" 200
 code=$(mutate "$JTA" DELETE "$P/api/v1/me/tokens/$(tid alice-del)" same-origin application/json); check "owner revokes the token" "$code" 204
@@ -1149,7 +1180,16 @@ check "platform admin revokes by secret" "$code" 204
 code=$(bcall alice-sec "$P/api/v1/me"); check "next request -> 401" "$code" 401
 bad=0; for _ in $(seq 1 10); do [[ "$(bcall alice-sec "$P/api/v1/me")" == 401 ]] || bad=$((bad + 1)); done
 if (( bad == 0 )); then pass "10/10 following requests 401"; else fail "$bad of 10 following requests were not 401"; fi
+code=$(api "$JTM" "$P/api/v1/robots?status=active&limit=200"); check "GET /robots?status=active&limit=200" "$code" 200
+check "  (lists smoke-robot while active)" "$(json_get "$WORK/b" '"'"$RID"'" in [r["id"] for r in d["robots"]]')" True
 code=$(mutate "$JTM" PATCH "$P/api/v1/robots/$RID" same-origin application/json '{"status":"disabled"}'); check "admin disables the robot" "$code" 200
+code=$(api "$JTM" "$P/api/v1/robots?status=disabled&limit=200"); check "GET /robots?status=disabled&limit=200" "$code" 200
+check "  (only disabled robots)" "$(json_get "$WORK/b" 'all(r["status"] == "disabled" for r in d["robots"])')" True
+check "  (includes smoke-robot)" "$(json_get "$WORK/b" '"'"$RID"'" in [r["id"] for r in d["robots"]]')" True
+code=$(api "$JTM" "$P/api/v1/robots?status=active&limit=200"); check "GET /robots?status=active after the disable" "$code" 200
+check "  (only active robots)" "$(json_get "$WORK/b" 'all(r["status"] == "active" for r in d["robots"])')" True
+check "  (no longer lists smoke-robot)" "$(json_get "$WORK/b" '"'"$RID"'" in [r["id"] for r in d["robots"]]')" False
+code=$(api "$JTM" "$P/api/v1/robots?status=bogus"); check "GET /robots?status=bogus" "$code" 422
 code=$(bcall robot "$P/api/v1/me"); check "robot token dies with the robot -> 401" "$code" 401
 code=$(bcall alice-read "$P/api/v1/me"); check "the other tokens are untouched" "$code" 200
 

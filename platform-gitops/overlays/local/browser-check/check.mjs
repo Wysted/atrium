@@ -47,9 +47,6 @@ const squash = (t) => t.replace(/\s+/g, ' ').trim()
 const MARKER_APP = 'hello-a (browser check)'
 const RESERVED_COPY = 'This host is reserved for the sign-in service.'
 const TAKEN_COPY = 'This host is already used by another app.'
-const PORTAL_DISABLE_COPY = 'The portal app cannot be disabled.'
-const PORTAL_LAST_HOST_COPY = 'The portal app needs at least one host.'
-const CURRENT_HOST_TITLE = 'Remove the host you are using?'
 const SMOKE_GROUP = 'smoke-group' // created and deleted by the groups scenario
 const DEMO_EDITORS = 'demo-editors' // seeded group: one member (bob) and a grant on demo
 const GROUP_IN_USE_COPY = 'This group still has members or grants. Remove them first.'
@@ -713,42 +710,21 @@ try {
     check(`add ${label}: nothing added to hello-a (API)`, (await appsOf(demoId)).every((a) => a.id !== helloA.id || a.deployments.map((d) => d.host).join() === ALICE.apps[0].host))
   }
 
-  console.log('  -- admin: platform Apps (portal app: disable -> 409, last host -> 409)')
+  console.log('  -- admin: platform Apps (the portal app offers no Disable and no remove-host; a demo app still does)')
   reset()
   await page.goto(`${BASE}/admin/initiatives/${platformId}/apps`)
   await appRow(portalApp).waitFor({ timeout: DATA_TIMEOUT })
   check('platform apps: portal app listed with status Active', (await appRow(portalApp).innerText()).includes('Active'))
+  check('portal app: no Disable button', (await appRow(portalApp).getByRole('button', { name: /^Disable app /, }).count()) === 0)
+  if (portalApp.deployments.length === 1) check('portal app: no remove-host button for its only host', (await appRow(portalApp).getByRole('button', { name: /^Remove host /, }).count()) === 0)
+  else console.log(`  SKIP: portal remove-host case (the portal app has ${portalApp.deployments.length} hosts, not exactly one)`)
   await report('platform apps')
   reset()
-  await appRow(portalApp).getByRole('button', { name: /^Disable app /, }).click()
-  await appsAlert().waitFor({ timeout: DATA_TIMEOUT })
-  await appsAlert().getByRole('button', { name: 'Disable app', exact: true }).click()
-  await appsAlert().getByText(PORTAL_DISABLE_COPY).waitFor({ timeout: DATA_TIMEOUT })
-  const disable409 = `${BASE}/api/v1/apps/${portalApp.id} HTTP 409`
-  check(`portal disable: copy "${PORTAL_DISABLE_COPY}" shown`, true)
-  check('portal disable: the API answered 409', failedRequests.includes(disable409), JSON.stringify(failedRequests))
-  await report('portal disable 409', { tolerated: ['status of 409'], toleratedRequests: [disable409] })
-  await appsAlert().getByRole('button', { name: 'Cancel', exact: true }).click()
-  await appsAlert().waitFor({ state: 'detached', timeout: DATA_TIMEOUT })
-  check('portal disable: status stays Active (list and API)', (await appRow(portalApp).innerText()).includes('Active') && (await appsOf(platformId))[0].status === 'active')
-  if (portalApp.deployments.length === 1) {
-    const portalHost = portalApp.deployments[0]
-    reset()
-    await appRow(portalApp).getByRole('button', { name: `Remove host ${portalHost.host}`, exact: true }).click()
-    await appsAlert().waitFor({ timeout: DATA_TIMEOUT })
-    check('portal last host: the confirm title is "Remove the host you are using?"', (await appsAlert().getByRole('heading', { level: 2 }).innerText()) === CURRENT_HOST_TITLE)
-    await appsAlert().getByRole('button', { name: 'Remove host', exact: true }).click()
-    await appsAlert().getByText(PORTAL_LAST_HOST_COPY).waitFor({ timeout: DATA_TIMEOUT })
-    const remove409 = `${BASE}/api/v1/deployments/${portalHost.id} HTTP 409`
-    check(`portal last host: copy "${PORTAL_LAST_HOST_COPY}" shown`, true)
-    check('portal last host: the API answered 409', failedRequests.includes(remove409), JSON.stringify(failedRequests))
-    await report('portal last host 409', { tolerated: ['status of 409'], toleratedRequests: [remove409] })
-    await appsAlert().getByRole('button', { name: 'Cancel', exact: true }).click()
-    await appsAlert().waitFor({ state: 'detached', timeout: DATA_TIMEOUT })
-    check('portal last host: the host stays (list and API)', (await appRow(portalApp).getByRole('link', { name: portalHost.host }).count()) === 1 && (await appsOf(platformId))[0].deployments.length === 1)
-  } else {
-    console.log(`  SKIP: portal remove-host case (the portal app has ${portalApp.deployments.length} hosts, not exactly one; a real portal host is never removed)`)
-  }
+  await page.goto(`${BASE}/admin/initiatives/${demoId}/apps`)
+  await appRow(helloA).waitFor({ timeout: DATA_TIMEOUT })
+  check('demo apps: hello-a still offers Disable', (await appRow(helloA).getByRole('button', { name: /^Disable app /, }).count()) === 1)
+  check('demo apps: hello-a still offers remove-host', (await appRow(helloA).getByRole('button', { name: `Remove host ${ALICE.apps[0].host}`, exact: true }).count()) === 1)
+  await report('demo apps (actions)')
 
   console.log('  -- dave (manager of demo): Apps tab is read-only')
   await login(DAVE.email)
