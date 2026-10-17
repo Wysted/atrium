@@ -12,7 +12,7 @@ base/hello         reference app (one instance per namespace via overlay)
 base/monitoring    NetworkPolicies of the monitoring namespace (default deny; Prometheus, Grafana)
 monitoring/        adopter artifacts: alert rules (plain + PrometheusRule), PodMonitors, Grafana dashboard, promtool tests
 overlays/local     domain/app-id patches, scripts, seed, traefik values (fake login), monitoring stack values
-overlays/local-google  real Google login on top of overlays/local: image tag, client secret, env, egress policy, grant/revoke
+overlays/local-google  real Google login on top of overlays/local: image tag, client secret and id, env, egress policy, admin bootstrap
 ```
 
 ## Ordering: migrate before platform-api (adopters)
@@ -246,13 +246,14 @@ Layers on `overlays/local` (which must have been deployed once with `local/up.sh
 
 ```
 BUILD=1 platform-gitops/overlays/local-google/up.sh   # build portal-platform-api:dev-google, import, secret, migrate, rollout
-platform-gitops/overlays/local-google/down.sh          # back to the fake login (removes egress policy and client secret)
+platform-gitops/overlays/local-google/down.sh          # back to the fake login (removes egress policy, client secret and client id)
 ```
 
 `local/up.sh` re-applies the fake-login overlay: run `local-google/up.sh` again afterwards. `local/smoke.sh` only works in
 fake-login mode (POST /login is 405 under Google). The client secret is read from `.tools/secrets/google-client-secret` and
 loaded with `--from-file` into Secret `platform/platform-google-client-secret`, mounted with `fsGroup` + `defaultMode: 0440`
-(same policy as the KEK). Env: `PLATFORM_GOOGLE_CLIENT_ID`, `PLATFORM_GOOGLE_CLIENT_SECRET_FILE`, `PLATFORM_ALLOWED_HD=wysted.dev`,
+(same policy as the KEK). The (public) client id is read from `.tools/secrets/google-client-id` into ConfigMap
+`platform/platform-google-client-id`; `up.sh` fails if either file is missing. The env is read at container start: after changing the id, `./tk kubectl -n platform rollout restart deploy/platform-api`. Env: `PLATFORM_GOOGLE_CLIENT_ID`, `PLATFORM_GOOGLE_CLIENT_SECRET_FILE`, `PLATFORM_ALLOWED_HD=wysted.dev`,
 `PLATFORM_FAKE_LOGIN=false`. The image tag is overridden with the kustomize `images` transformer (base keeps `:dev`).
 
 The portal needs nothing from this overlay (it only validates assertions): `local/up.sh` deploys it and it keeps running; any
@@ -274,7 +275,7 @@ with a warning on stderr. It never follows redirects and honors `SSL_CERT_FILE` 
 ```
 export PORTAL_URL=https://portal.apps.wysted.dev
 read -rs PORTAL_API_TOKEN && export PORTAL_API_TOKEN   # paste the token: it stays out of the shell history
-.tools/portalctl/portalctl grant you@example.com demo viewer
+.tools/portalctl/portalctl grant you@<your-workspace-domain> demo viewer
 .tools/portalctl/portalctl revoke robot:ci-deployer demo editor
 ```
 
