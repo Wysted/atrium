@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Wysted/atrium/platform/api/internal/postgres"
 )
 
 func validEnv() map[string]string {
@@ -250,6 +252,55 @@ func TestLoadConfigJWKSTLS(t *testing.T) {
 			_, err := loadConfig(lookup(env))
 			if err == nil || !strings.Contains(err.Error(), "must be set together") {
 				t.Fatalf("err = %v", err)
+			}
+		})
+	}
+}
+
+func TestLoadBootstrap(t *testing.T) {
+	const appID = "app_01HQ3PD7RTA5M2XKWV9N8B4CYE"
+	tests := []struct {
+		name    string
+		env     map[string]string
+		want    postgres.Bootstrap
+		wantErr string
+	}{
+		{name: "nothing set", want: postgres.Bootstrap{}},
+		{
+			name: "portal only",
+			env:  map[string]string{envPortalAppID: appID, envPortalHost: "portal.apps.example.test"},
+			want: postgres.Bootstrap{PortalAppID: appID, PortalHost: "portal.apps.example.test"},
+		},
+		{
+			name: "admin email is trimmed and lowercased",
+			env:  map[string]string{envBootstrapAdminMail: " Root@Example.com "},
+			want: postgres.Bootstrap{AdminEmail: "root@example.com"},
+		},
+		{name: "app id without host", env: map[string]string{envPortalAppID: appID}, wantErr: "must be set together"},
+		{name: "host without app id", env: map[string]string{envPortalHost: "portal.apps.example.test"}, wantErr: "must be set together"},
+		{
+			name:    "bad app id",
+			env:     map[string]string{envPortalAppID: "app_x", envPortalHost: "portal.apps.example.test"},
+			wantErr: envPortalAppID + " must match",
+		},
+		{
+			name:    "host with port",
+			env:     map[string]string{envPortalAppID: appID, envPortalHost: "portal.apps.example.test:8443"},
+			wantErr: envPortalHost + " must be a valid",
+		},
+		{name: "bad email", env: map[string]string{envBootstrapAdminMail: "not-an-email"}, wantErr: envBootstrapAdminMail},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := loadBootstrap(lookup(tt.env))
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("error = %v, want containing %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil || got != tt.want {
+				t.Fatalf("got %+v, %v; want %+v", got, err, tt.want)
 			}
 		})
 	}

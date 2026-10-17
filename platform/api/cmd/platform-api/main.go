@@ -1,6 +1,6 @@
 // Command platform-api: the identity-aware proxy brain (ForwardAuth, sessions, signing keys).
 //
-//	platform-api migrate   apply database migrations
+//	platform-api migrate   apply database migrations, then the optional bootstrap (portal registration, first admin)
 //	platform-api serve     run the internal and public listeners
 package main
 
@@ -32,7 +32,7 @@ func run(ctx context.Context, args []string) error {
 	}
 	switch args[0] {
 	case "migrate":
-		return migrate(ctx)
+		return migrate(ctx, os.Getenv)
 	case "serve":
 		cfg, err := loadConfig(os.Getenv)
 		if err != nil {
@@ -47,7 +47,11 @@ func run(ctx context.Context, args []string) error {
 	}
 }
 
-func migrate(ctx context.Context) error {
+func migrate(ctx context.Context, getenv func(string) string) error {
+	boot, err := loadBootstrap(getenv)
+	if err != nil {
+		return err
+	}
 	pool, err := postgres.NewPool(ctx)
 	if err != nil {
 		return err
@@ -58,5 +62,5 @@ func migrate(ctx context.Context) error {
 		return err
 	}
 	fmt.Printf("applied %d migration(s)\n", len(applied))
-	return nil
+	return postgres.ApplyBootstrap(ctx, pool, boot, slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 }

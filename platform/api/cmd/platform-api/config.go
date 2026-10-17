@@ -9,8 +9,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wysted/atrium/platform/api/internal/hostname"
 	"github.com/Wysted/atrium/platform/api/internal/httpx"
 	"github.com/Wysted/atrium/platform/api/internal/keys"
+	"github.com/Wysted/atrium/platform/api/internal/postgres"
 	"github.com/Wysted/atrium/platform/api/internal/secretfile"
 	"github.com/Wysted/atrium/platform/api/internal/session"
 )
@@ -35,6 +37,9 @@ const (
 	envFakeLogin       = "PLATFORM_FAKE_LOGIN"
 	// envPortalAppID is the optional id of the portal app, the one app any active user may open (docs/reference/api.md).
 	envPortalAppID = "PLATFORM_PORTAL_APP_ID"
+	// Read by "migrate" only (see loadBootstrap).
+	envPortalHost         = "PLATFORM_PORTAL_HOST"
+	envBootstrapAdminMail = "PLATFORM_BOOTSTRAP_ADMIN_EMAIL"
 	// Google login. All three are set together or none is (see loadConfig).
 	envGoogleClientID         = "PLATFORM_GOOGLE_CLIENT_ID"
 	envGoogleClientSecretFile = "PLATFORM_GOOGLE_CLIENT_SECRET_FILE"
@@ -55,6 +60,9 @@ var appIDPattern = regexp.MustCompile(`^app_[0-9A-HJKMNP-TV-Z]{26}$`)
 
 // hostPattern matches the host form stored in deployments.host (lowercase, no port).
 var hostPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`)
+
+// emailPattern is the shape admin.sh accepts for an email: a sanity check, not an address parser.
+var emailPattern = regexp.MustCompile(`^[a-z0-9._%+-]+@[a-z0-9.-]+$`)
 
 // config is the validated runtime configuration of "serve".
 type config struct {
@@ -175,6 +183,33 @@ func loadConfig(getenv func(string) string) (config, error) {
 		return config{}, fmt.Errorf("invalid configuration: %w", err)
 	}
 	return c, nil
+}
+
+// loadBootstrap reads and validates the optional first-install data of "migrate". PLATFORM_PORTAL_APP_ID and
+// PLATFORM_PORTAL_HOST are set together or not at all.
+func loadBootstrap(getenv func(string) string) (postgres.Bootstrap, error) {
+	var errs []error
+	b := postgres.Bootstrap{
+		PortalAppID: strings.TrimSpace(getenv(envPortalAppID)),
+		PortalHost:  strings.TrimSpace(getenv(envPortalHost)),
+		AdminEmail:  strings.ToLower(strings.TrimSpace(getenv(envBootstrapAdminMail))),
+	}
+	if (b.PortalAppID == "") != (b.PortalHost == "") {
+		errs = append(errs, fmt.Errorf("%s and %s must be set together", envPortalAppID, envPortalHost))
+	}
+	if b.PortalAppID != "" && !appIDPattern.MatchString(b.PortalAppID) {
+		errs = append(errs, fmt.Errorf("%s must match %s", envPortalAppID, appIDPattern))
+	}
+	if b.PortalHost != "" && !hostname.Valid(b.PortalHost) {
+		errs = append(errs, fmt.Errorf("%s must be a valid lowercase host name without scheme, port or path", envPortalHost))
+	}
+	if b.AdminEmail != "" && !emailPattern.MatchString(b.AdminEmail) {
+		errs = append(errs, fmt.Errorf("%s must be an email address", envBootstrapAdminMail))
+	}
+	if err := errors.Join(errs...); err != nil {
+		return postgres.Bootstrap{}, fmt.Errorf("invalid configuration: %w", err)
+	}
+	return b, nil
 }
 
 // loadGoogleConfig returns nil, nil when none of the Google variables is set. If any is set, all are required
