@@ -208,6 +208,11 @@ func TestTokenPathSuccess(t *testing.T) {
 func TestTokenPathFailures(t *testing.T) {
 	secret := newSecret(t)
 	other := newSecret(t) // well formed, not stored
+	// Change the last checksum digit; replacing it with a fixed "0" left the token valid whenever it already ended in "0".
+	badSum := secret[:len(secret)-1] + "0"
+	if strings.HasSuffix(secret, "0") {
+		badSum = secret[:len(secret)-1] + "1"
+	}
 	mutate := func(f func(*apitoken.Record)) apitoken.Record {
 		rec := liveRecord(assertion.ScopeAdmin)
 		f(&rec)
@@ -231,7 +236,7 @@ func TestTokenPathFailures(t *testing.T) {
 		{"raw token without scheme", liveRecord("admin"), []string{secret}, "", "", 401, "Bearer", ReasonTokenNoBearer, 0},
 		{"two headers", liveRecord("admin"), []string{"Bearer " + secret, "Bearer " + secret}, "", "", 401, "Bearer", ReasonTokenNoBearer, 0},
 		{"two tokens in one header", liveRecord("admin"), []string{"Bearer " + secret + " " + secret}, "", "", 401, `Bearer error="invalid_token"`, ReasonTokenMalformed, 0},
-		{"bad checksum", liveRecord("admin"), []string{"Bearer " + secret[:len(secret)-1] + "0"}, "", "", 401, `Bearer error="invalid_token"`, ReasonTokenMalformed, 0},
+		{"bad checksum", liveRecord("admin"), []string{"Bearer " + badSum}, "", "", 401, `Bearer error="invalid_token"`, ReasonTokenMalformed, 0},
 		{"unknown token", liveRecord("admin"), []string{"Bearer " + other}, "", "", 401, `Bearer error="invalid_token"`, ReasonTokenUnknown, 1},
 		{"revoked", mutate(func(r *apitoken.Record) { r.Revoked = true }), []string{"Bearer " + secret}, "", "", 401, `Bearer error="invalid_token"`, ReasonTokenRevoked, 1},
 		{"expired", mutate(func(r *apitoken.Record) { r.Expired = true }), []string{"Bearer " + secret}, "", "", 401, `Bearer error="invalid_token"`, ReasonTokenExpired, 1},
