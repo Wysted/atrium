@@ -813,7 +813,7 @@ the `platform_portal` role may select; no extra index is kept: `unknown_host` ro
 ### Non-browser clients
 
 Design for CLI and automation that call the portal API (phase 1 decided 2026-10-16; research notes: Engram
-`architecture/portal-non-browser-clients`). Part 1a (schema, privileges, `kind` filters, token revocation on disable, purge) and part 1b-1 (token secret package, scope middleware, `token_id` in the audit, personal token endpoints and the `PORTAL_TOKEN_MAX_TTL_*` settings below) are implemented (revocation by secret included, through the function of migration 0013); the rest is design only. The product is multi-company: the design
+`architecture/portal-non-browser-clients`). Part 1a (schema, privileges, `kind` filters, token revocation on disable, purge), part 1b-1 (token secret package, scope middleware, `token_id` in the audit, personal token endpoints and the `PORTAL_TOKEN_MAX_TTL_*` settings below; revocation by secret included, through the function of migration 0013) and part 1b-2 (robots API, robot tokens, grants by `robot_id`) are implemented, which completes part 1; the rest is design only. The product is multi-company: the design
 assumes no CI system, secret manager or stack on the adopter's side.
 
 | Phase | Mechanism | Status |
@@ -1083,7 +1083,7 @@ Configuration (portal process; both optional Go durations above zero, an invalid
 | Variable | Meaning |
 |---|---|
 | `PORTAL_TOKEN_MAX_TTL_PERSONAL` | Cap and default lifetime of a personal token. Default `720h` |
-| `PORTAL_TOKEN_MAX_TTL_ROBOT` | Cap and default lifetime of a robot token. Default `2160h`; parsed now, used by the robot endpoints (part 1b-2) |
+| `PORTAL_TOKEN_MAX_TTL_ROBOT` | Cap and default lifetime of a robot token. Default `2160h`; used by the robot token endpoint |
 
 Personal token API as implemented: `POST /api/v1/me/tokens` takes `{name, scope, expires_in}` (`expires_in` in seconds,
 optional) and answers 201 with the token and its `secret`; the limit of 25 live tokens answers 409; an `admin` scope
@@ -1096,6 +1096,23 @@ admin). The audit action names are `token.create` and `token.revoke`; `adminz` u
 answers 422 for an empty or malformed `token` (the format check reveals nothing about existence, and runs after the
 authorization check and before the lookup by hash), 403 for a caller who is not a platform admin, and 204 for every well-formed secret, matched or not;
 only a match writes an audit row (`token.revoke`, the token id and its owner, never the secret).
+
+Robot API as implemented (part 1b-2). `GET /api/v1/robots` lists by id with the keyset `cursor`: platform admins get `id,
+name, status, owner_user_id, created_at, last_used_at` (the newest use of any of its tokens), managers get only `id, name,
+status`, anyone else 403. `POST /api/v1/robots` takes `{name, owner_user_id?}` and answers 201; a duplicate name
+(case-insensitive, among robots) is 409, a bad name or an owner that is not an active human is 422. `PATCH
+/api/v1/robots/{id}` takes any of `name`, `status` (`active`/`disabled`) and `owner_user_id` (`""` clears it; JSON `null`
+reads as absent); an empty patch is 422, a patch that changes nothing writes no audit row, disabling revokes the live tokens
+(ids in the `after` of the `robot.update` row) and a human id is 404. `POST /api/v1/robots/{id}/tokens` takes the body of
+the personal token (`expires_in` capped by `PORTAL_TOKEN_MAX_TTL_ROBOT`) and answers 201 with the secret, only from a browser
+session (403 otherwise) and only for platform admins (403); an unknown or human id is 404, a disabled robot 409, the 25
+live tokens 409, and `admin` scope for a robot without a current `manages_access` grant 422 (`not_allowed`).
+`GET /api/v1/robots/{id}/tokens` lists them (admins). The grant subject takes `robot_id` (exactly one of `email`,
+`group_id`, `robot_id`, otherwise 422 on the three fields); an unknown, human or disabled robot is 422 `unknown` on
+`robot_id`. `adminz` actions: `robot.list`, `robot.create`, `robot.update`, `robot_token.create`, `robot_token.list`.
+Group membership is by email, which a robot does not have, so the members endpoints cannot receive a robot id.
+`DELETE /api/v1/tokens/{id}`, revocation by secret and `DELETE /api/v1/me/tokens/current` (the robot's own token) serve
+robot-owned tokens unchanged.
 
 Decided 2026-10-16: revocation by secret (Issuance and revocation, rule 3); an owner's departure never disables their
 robots automatically.
