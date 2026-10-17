@@ -219,6 +219,7 @@ grafana:
     enabled: false
   testFramework:
     enabled: false
+  # 384Mi was OOMKilled under the smoke (idle ~300Mi): the cause of the local restart loop.
   resources:
-    requests: {cpu: 50m, memory: 192Mi}
-    limits: {cpu: 300m, memory: 384Mi}
+    requests: {cpu: 50m, memory: 320Mi}
+    limits: {cpu: 300m, memory: 768Mi}
