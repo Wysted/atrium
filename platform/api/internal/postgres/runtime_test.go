@@ -154,6 +154,18 @@ func TestCheckRuntimeRoleRefusesDrift(t *testing.T) {
 				'access_denials_' || to_char(current_date + interval '2 months', 'YYYY_MM')); END $$`,
 			"DELETE ON access_denials_"},
 		{"missing select on apps", `REVOKE SELECT ON apps FROM platform_runtime`, "missing privilege SELECT ON apps"},
+		{"table-wide insert on users", `GRANT INSERT ON users TO platform_runtime`, "INSERT ON users"},
+		{"insert of users.kind", `GRANT INSERT (kind) ON users TO platform_runtime`, "INSERT ON users.kind"},
+		{"insert of users.owner_user_id", `GRANT INSERT (owner_user_id) ON users TO platform_runtime`, "INSERT ON users.owner_user_id"},
+		{"insert of users.status", `GRANT INSERT (status) ON users TO platform_runtime`, "INSERT ON users.status"},
+		{"missing insert of users.name", `REVOKE INSERT (name) ON users FROM platform_runtime`, "missing privilege INSERT ON users.name"},
+		{"insert on api_tokens", `GRANT INSERT ON api_tokens TO platform_runtime`, "INSERT ON api_tokens"},
+		{"delete on api_tokens", `GRANT DELETE ON api_tokens TO platform_runtime`, "DELETE ON api_tokens"},
+		{"update of api_tokens.revoked_at", `GRANT UPDATE (revoked_at) ON api_tokens TO platform_runtime`, "UPDATE ON api_tokens.revoked_at"},
+		{"update of api_tokens.expires_at", `GRANT UPDATE (expires_at) ON api_tokens TO platform_runtime`, "UPDATE ON api_tokens.expires_at"},
+		{"missing select on api_tokens", `REVOKE SELECT ON api_tokens FROM platform_runtime`, "missing privilege SELECT ON api_tokens"},
+		{"missing update of api_tokens.last_used_at", `REVOKE UPDATE (last_used_at) ON api_tokens FROM platform_runtime`,
+			"missing privilege UPDATE ON api_tokens.last_used_at"},
 		{"missing update of sessions.last_seen_at", `REVOKE UPDATE (last_seen_at) ON sessions FROM platform_runtime`,
 			"missing privilege UPDATE ON sessions.last_seen_at"},
 	}
@@ -278,6 +290,17 @@ func TestRuntimeRolePrivileges(t *testing.T) {
 		{"update users.google_sub", `UPDATE users SET google_sub = 'forged'`, false},
 		{"update users.email with a where on status", `UPDATE users SET email = 'x@example.test' WHERE status = 'active'`, true},
 		{"delete users", `DELETE FROM users`, false},
+		{"insert a robot", `INSERT INTO users (google_sub, email, name, kind) VALUES ('s-2', '', 'ci', 'robot')`, false},
+		{"insert a user with a status", `INSERT INTO users (google_sub, email, name, status) VALUES ('s-3', 'b@example.test', 'n', 'active')`, false},
+		{"insert a user with an owner", `INSERT INTO users (google_sub, email, name, owner_user_id) VALUES ('s-4', 'c@example.test', 'n', NULL)`, false},
+		{"select api_tokens with the hash", `SELECT token_hash, id, user_id, scope, expires_at, revoked_at FROM api_tokens`, true},
+		{"update api_tokens.last_used_at", `UPDATE api_tokens SET last_used_at = now()`, true},
+		{"update api_tokens.revoked_at", `UPDATE api_tokens SET revoked_at = now()`, false},
+		{"update api_tokens.expires_at", `UPDATE api_tokens SET expires_at = now()`, false},
+		{"insert api_tokens", `INSERT INTO api_tokens (user_id, name, token_hash, scope, expires_at)
+			VALUES (uuidv7(), 't', sha256('x'), 'read', now() + interval '1 day')`, false},
+		{"delete api_tokens", `DELETE FROM api_tokens`, false},
+		{"purge dead api_tokens", `SELECT purge_dead_api_tokens(interval '30 days')`, true},
 
 		{"select groups", `SELECT * FROM groups`, false},
 		{"insert groups", `INSERT INTO groups (key) VALUES ('g')`, false},
@@ -374,12 +397,14 @@ func TestRuntimeRoleDeniedByDefault(t *testing.T) {
 		"group_members": {table: []string{"SELECT"}}, "initiatives": {table: []string{"SELECT"}},
 		"initiative_roles": {table: []string{"SELECT"}}, "apps": {table: []string{"SELECT"}},
 		"initiative_access": {table: []string{"SELECT"}},
-		"users":             {table: []string{"SELECT", "INSERT"}, columns: map[string][]string{"UPDATE": {"email", "name", "updated_at"}}},
-		"sessions":          {table: []string{"SELECT", "INSERT", "DELETE"}, columns: map[string][]string{"UPDATE": {"last_seen_at"}}},
-		"app_sessions":      {table: []string{"SELECT", "INSERT", "DELETE"}},
-		"login_codes":       {table: []string{"SELECT", "INSERT", "DELETE"}, columns: map[string][]string{"UPDATE": {"consumed_at"}}},
-		"oauth_flows":       {table: []string{"SELECT", "INSERT", "DELETE"}, columns: map[string][]string{"UPDATE": {"consumed_at"}}},
-		"deployments":       {table: []string{"SELECT"}, columns: map[string][]string{"UPDATE": {"last_seen_at"}}},
+		"users": {table: []string{"SELECT"}, columns: map[string][]string{
+			"INSERT": {"google_sub", "email", "name"}, "UPDATE": {"email", "name", "updated_at"}}},
+		"api_tokens":   {table: []string{"SELECT"}, columns: map[string][]string{"UPDATE": {"last_used_at"}}},
+		"sessions":     {table: []string{"SELECT", "INSERT", "DELETE"}, columns: map[string][]string{"UPDATE": {"last_seen_at"}}},
+		"app_sessions": {table: []string{"SELECT", "INSERT", "DELETE"}},
+		"login_codes":  {table: []string{"SELECT", "INSERT", "DELETE"}, columns: map[string][]string{"UPDATE": {"consumed_at"}}},
+		"oauth_flows":  {table: []string{"SELECT", "INSERT", "DELETE"}, columns: map[string][]string{"UPDATE": {"consumed_at"}}},
+		"deployments":  {table: []string{"SELECT"}, columns: map[string][]string{"UPDATE": {"last_seen_at"}}},
 		"signing_keys": {table: []string{"SELECT", "INSERT"},
 			columns: map[string][]string{"UPDATE": {"state", "activated_at", "retired_at", "removed_at", "private_enc"}}},
 		"audit_events": {table: []string{"SELECT", "INSERT"}}, "access_denials": {table: []string{"SELECT", "INSERT"}},
@@ -419,7 +444,8 @@ func TestRuntimeRoleDeniedByDefault(t *testing.T) {
 		}
 	}
 	// Only the two partition functions may be executed, and only they exist as callable surface.
-	for _, fn := range []string{"create_access_denials_partition(date)", "drop_expired_access_denials_partitions(integer)"} {
+	for _, fn := range []string{"create_access_denials_partition(date)", "drop_expired_access_denials_partitions(integer)",
+		"purge_dead_api_tokens(interval)"} {
 		if !scalar[bool](t, pool, `SELECT has_function_privilege('platform_runtime', $1, 'EXECUTE')`, fn) {
 			t.Errorf("platform_runtime cannot EXECUTE %s", fn)
 		}

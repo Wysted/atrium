@@ -24,7 +24,7 @@ email="${1,,}" initiative="$2" role="$3"
 
 read -r -d '' SQL <<'SQLEOF' || true
 \set ON_ERROR_STOP on
-SELECT coalesce((SELECT id::text FROM users WHERE lower(email) = :'email' AND google_sub NOT LIKE 'fake:%'), '') AS uid \gset
+SELECT coalesce((SELECT id::text FROM users WHERE lower(email) = :'email' AND kind = 'human' AND google_sub NOT LIKE 'fake:%'), '') AS uid \gset
 SELECT :'uid' = '' AS no_user \gset
 \if :no_user
   \echo 'ERROR: no user with that email: the user must sign in once first'

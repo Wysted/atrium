@@ -20,13 +20,17 @@ const (
 	// AccessDenialsRetentionDays is how long access_denials history is kept (contract block 4): monthly
 	// partitions whose whole month is older than this are dropped.
 	AccessDenialsRetentionDays = 365
+	// APITokenGrace is how long a token is kept after it expired or was revoked (contract block 6), so owners
+	// still see recently dead tokens. The database function refuses anything under 7 days.
+	APITokenGrace = 30 * 24 * time.Hour
 )
 
 // Params are the rules a store applies with the database clock.
 type Params struct {
 	IdleTimeout          time.Duration // sessions idle for longer are purged
 	PartitionMonthsAhead int
-	DenialsRetentionDays int // partitions entirely older than this are dropped
+	DenialsRetentionDays int           // partitions entirely older than this are dropped
+	APITokenGrace        time.Duration // API tokens dead for longer than this are deleted
 }
 
 // Report counts what one run did.
@@ -36,6 +40,7 @@ type Report struct {
 	LoginCodes        int64
 	Sessions          int64
 	AppSessions       int64
+	APITokens         int64 // dead API tokens deleted
 	PartitionsReady   []string
 	PartitionsDropped []string
 }
@@ -68,7 +73,7 @@ func NewJob(cfg Config) (*Job, error) {
 	}
 	j := &Job{store: cfg.Store, interval: cfg.Interval, log: cfg.Logger}
 	j.params = Params{IdleTimeout: cfg.IdleTimeout, PartitionMonthsAhead: PartitionMonthsAhead,
-		DenialsRetentionDays: AccessDenialsRetentionDays}
+		DenialsRetentionDays: AccessDenialsRetentionDays, APITokenGrace: APITokenGrace}
 	if j.params.IdleTimeout <= 0 {
 		j.params.IdleTimeout = session.DefaultIdleTimeout
 	}
@@ -89,7 +94,7 @@ func (j *Job) RunOnce(ctx context.Context) (Report, error) {
 	}
 	if !rep.Skipped {
 		j.log.Info("housekeeping done", "oauth_flows", rep.OAuthFlows, "login_codes", rep.LoginCodes,
-			"sessions", rep.Sessions, "app_sessions", rep.AppSessions, "partitions", rep.PartitionsReady,
+			"sessions", rep.Sessions, "app_sessions", rep.AppSessions, "api_tokens", rep.APITokens, "partitions", rep.PartitionsReady,
 			"partitions_dropped", rep.PartitionsDropped)
 	}
 	return rep, nil

@@ -16,6 +16,7 @@ type grantDoc struct {
 	RoleKey      string     `json:"role_key"`
 	UserID       string     `json:"user_id,omitempty"`
 	UserEmail    string     `json:"user_email,omitempty"`
+	UserName     string     `json:"user_name,omitempty"` // names a robot, which has no email
 	GroupID      string     `json:"group_id,omitempty"`
 	GroupKey     string     `json:"group_key,omitempty"`
 	ExpiresAt    *time.Time `json:"expires_at,omitempty"`
@@ -24,7 +25,7 @@ type grantDoc struct {
 func docOfGrant(g Grant) grantDoc {
 	d := grantDoc{InitiativeID: g.InitiativeID, RoleID: g.Role.ID, RoleKey: g.Role.Key, ExpiresAt: g.ExpiresAt}
 	if g.User != nil {
-		d.UserID, d.UserEmail = g.User.ID, g.User.Email
+		d.UserID, d.UserEmail, d.UserName = g.User.ID, g.User.Email, nameIfNoEmail(g.User.Email, g.User.Name)
 	}
 	if g.Group != nil {
 		d.GroupID, d.GroupKey = g.Group.ID, g.Group.Key

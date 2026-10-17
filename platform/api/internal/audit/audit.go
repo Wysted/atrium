@@ -20,11 +20,13 @@ const (
 const WriteTimeout = 2 * time.Second
 
 // Event is one audit row. ActorID is the user id (empty: unknown); TargetID is the session id for
-// session events. InitiativeID scopes the event to an initiative (empty: NULL, a global target). Before and
+// session events. TokenID is the API token that made the request (empty: a browser session, stored as NULL).
+// InitiativeID scopes the event to an initiative (empty: NULL, a global target). Before and
 // After are marshaled to jsonb (nil: NULL).
 type Event struct {
 	ActorID      string
 	InitiativeID string
+	TokenID      string
 	Action       string
 	TargetType   string
 	TargetID     string

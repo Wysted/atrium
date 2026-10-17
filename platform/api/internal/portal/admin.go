@@ -228,7 +228,8 @@ type AuditEvent struct {
 	ID           string
 	OccurredAt   time.Time
 	ActorID      string
-	ActorEmail   string
+	ActorEmail   string // empty for a robot
+	ActorName    string // the robot's name, or the human's display name
 	InitiativeID string
 	Action       string
 	TargetType   string
@@ -302,7 +303,10 @@ type GroupRepo interface {
 	DeleteMember(ctx context.Context, groupID, userID string) (bool, error)
 }
 
-// UserRepo is the storage of users (the portal reads them and changes only their status).
+// UserRepo is the storage of human users (the portal reads them and changes only their status). The lookups and
+// locks (ListUsersByEmail, FindActiveByEmail, GetUser, LockUser, LockActiveAdmins) see humans only: a robot id is
+// ErrNotFound. SetStatus, DeleteSessions and RevokeTokens operate on an id already locked by the caller and do
+// not filter by kind, so the robot path can reuse them.
 type UserRepo interface {
 	// ListUsersByEmail returns up to limit users whose email matches case-insensitively.
 	ListUsersByEmail(ctx context.Context, scope adminz.Scope, email string, limit int) ([]User, error)
@@ -319,6 +323,10 @@ type UserRepo interface {
 	// DeleteSessions deletes every session of the user (app sessions cascade) and returns how many central
 	// sessions were removed. It runs in the caller's transaction, unlike session.Service.RevokeUser.
 	DeleteSessions(ctx context.Context, userID string) (int64, error)
+	// RevokeTokens revokes every live API token of the user (revoked_at) and returns their ids, sorted. It runs
+	// in the caller's transaction, after the user was locked. The one implementation behind "disabling revokes
+	// the tokens", for humans and robots alike.
+	RevokeTokens(ctx context.Context, userID string) ([]string, error)
 }
 
 // AuditReader lists audit events newest first; PageQuery.After is a position in (occurred_at, id) order.

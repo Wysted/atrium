@@ -370,6 +370,21 @@ func TestPortalRolePrivileges(t *testing.T) {
 		{"update user google_sub", `UPDATE users SET google_sub = 'forged'`, codeInsufficientPrivs},
 		{"update user email", `UPDATE users SET email = 'x@example.com'`, codeInsufficientPrivs},
 		{"insert user", `INSERT INTO users (google_sub, email, name) VALUES ('s', 'e@example.com', 'n')`, codeInsufficientPrivs},
+		{"insert robot", `INSERT INTO users (kind, name, email, owner_user_id, status) VALUES ('robot', 'ci', '', NULL, 'active')`, ""},
+		{"insert human without google_sub", `INSERT INTO users (kind, name, email) VALUES ('human', 'n', 'e@example.com')`, codeCheckViolation},
+		{"insert robot with an email", `INSERT INTO users (kind, name, email) VALUES ('robot', 'ci', 'e@example.com')`, codeCheckViolation},
+		{"rename a user", `UPDATE users SET name = 'x'`, ""},
+		{"change an owner", `UPDATE users SET owner_user_id = NULL`, ""},
+		{"change a kind", `UPDATE users SET kind = 'robot'`, codeInsufficientPrivs},
+		{"insert api token", `INSERT INTO api_tokens (user_id, name, token_hash, scope, expires_at)
+			VALUES (uuidv7(), 't', sha256('x'), 'read', now() + interval '1 day')`, codeForeignKeyViolation},
+		{"select api token columns", `SELECT id, user_id, name, scope, created_by, created_at, expires_at, last_used_at, revoked_at FROM api_tokens`, ""},
+		{"select api token hash", `SELECT token_hash FROM api_tokens`, codeInsufficientPrivs},
+		{"select api tokens star", `SELECT * FROM api_tokens`, codeInsufficientPrivs},
+		{"revoke api tokens", `UPDATE api_tokens SET revoked_at = now() WHERE user_id = uuidv7() AND revoked_at IS NULL RETURNING id`, ""},
+		{"extend an api token", `UPDATE api_tokens SET expires_at = now()`, codeInsufficientPrivs},
+		{"delete api tokens", `DELETE FROM api_tokens`, codeInsufficientPrivs},
+		{"purge api tokens", `SELECT purge_dead_api_tokens(interval '30 days')`, codeInsufficientPrivs},
 		{"delete users", `DELETE FROM users`, codeInsufficientPrivs},
 		{"insert group", `INSERT INTO groups (key) VALUES ('g')`, ""},
 		{"update initiative", `UPDATE initiatives SET status = 'inactive'`, ""},
@@ -452,7 +467,7 @@ func TestPortalRoleDeniedByDefault(t *testing.T) {
 		"initiatives": {"SELECT", "INSERT", "UPDATE", "DELETE"}, "initiative_roles": {"SELECT", "INSERT", "UPDATE", "DELETE"},
 		"apps": {"SELECT", "INSERT", "UPDATE", "DELETE"}, "deployments": {"SELECT", "INSERT", "UPDATE", "DELETE"},
 		"initiative_access": {"SELECT", "INSERT", "UPDATE", "DELETE"},
-		"users":             {"SELECT"}, "platform_admins": {"SELECT"}, "audit_events": {"SELECT", "INSERT"},
+		"users":             {"SELECT"}, "platform_admins": {"SELECT"}, "audit_events": {"SELECT", "INSERT"}, "api_tokens": {"INSERT"},
 		"access_denials": {"SELECT"}, "sessions": {"DELETE"}, "app_sessions": {"DELETE"},
 	}
 	rows, err := pool.Query(ctx, `SELECT tablename FROM pg_tables WHERE schemaname = 'public'`)
@@ -486,7 +501,8 @@ func TestPortalRoleDeniedByDefault(t *testing.T) {
 			}
 		}
 	}
-	for _, fn := range []string{"create_access_denials_partition(date)", "drop_expired_access_denials_partitions(integer)"} {
+	for _, fn := range []string{"create_access_denials_partition(date)", "drop_expired_access_denials_partitions(integer)",
+		"purge_dead_api_tokens(interval)"} {
 		if scalar[bool](t, pool, `SELECT has_function_privilege('platform_portal', $1, 'EXECUTE')`, fn) {
 			t.Errorf("platform_portal can EXECUTE %s", fn)
 		}

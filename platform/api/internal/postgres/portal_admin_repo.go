@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -214,10 +215,12 @@ func (r GrantsRepo) LockInitiative(ctx context.Context, id string) error {
 
 // effectiveGrantExpr is the definition of an effective grant, shared by the last-manager rule (managerGrantsSQL)
 // and the integration health counts: not expired (by the database clock read now, after any lock wait, hence
-// clock_timestamp() and not the transaction's now()) and held by at least one active user, directly or through
-// a group. It needs the alias ia (initiative_access).
+// clock_timestamp() and not the transaction's now()) and held by at least one active human, directly or through
+// a group. A robot never makes a grant effective: an initiative always keeps a human manager. Only the direct
+// branch filters on kind (initiative_access.user_id can hold a robot); group_members cannot, the composite
+// foreign key pins it to humans. It needs the alias ia (initiative_access).
 const effectiveGrantExpr = `(ia.expires_at IS NULL OR ia.expires_at > clock_timestamp())
-       AND (EXISTS (SELECT 1 FROM users u WHERE u.id = ia.user_id AND u.status = 'active')
+       AND (EXISTS (SELECT 1 FROM users u WHERE u.id = ia.user_id AND u.status = 'active' AND u.kind = 'human')
             OR EXISTS (SELECT 1 FROM group_members gm JOIN users u ON u.id = gm.user_id
                        WHERE gm.group_id = ia.group_id AND u.status = 'active'))`
 
@@ -430,7 +433,7 @@ func (r UsersRepo) ListUsersByEmail(ctx context.Context, scope adminz.Scope, ema
 	if !scope.All {
 		return nil, nil
 	}
-	rows, err := r.db.Query(ctx, `SELECT `+userColumns+` FROM users WHERE lower(email) = lower($1) ORDER BY id LIMIT $2`, email, limit)
+	rows, err := r.db.Query(ctx, `SELECT `+userColumns+` FROM users WHERE kind = 'human' AND lower(email) = lower($1) ORDER BY id LIMIT $2`, email, limit)
 	if err != nil {
 		return nil, fmt.Errorf("query users: %w", err)
 	}
@@ -447,7 +450,7 @@ const maxActiveMatches = 2
 // FindActiveByEmail implements portal.UserRepo.
 func (r UsersRepo) FindActiveByEmail(ctx context.Context, email string) ([]portal.User, error) {
 	rows, err := r.db.Query(ctx, `SELECT `+userColumns+` FROM users
-WHERE lower(email) = lower($1) AND status = 'active' ORDER BY id LIMIT $2`, email, maxActiveMatches)
+WHERE kind = 'human' AND lower(email) = lower($1) AND status = 'active' ORDER BY id LIMIT $2`, email, maxActiveMatches)
 	if err != nil {
 		return nil, fmt.Errorf("query active users: %w", err)
 	}
@@ -458,8 +461,9 @@ WHERE lower(email) = lower($1) AND status = 'active' ORDER BY id LIMIT $2`, emai
 	return users, nil
 }
 
+// one loads a human by id; a robot is as absent as an unknown id (/users/* answers 404 for it).
 func (r UsersRepo) one(ctx context.Context, suffix, id string) (portal.User, error) {
-	rows, err := r.db.Query(ctx, `SELECT `+userColumns+` FROM users WHERE id = $1::uuid`+suffix, id)
+	rows, err := r.db.Query(ctx, `SELECT `+userColumns+` FROM users WHERE id = $1::uuid AND kind = 'human'`+suffix, id)
 	if err != nil {
 		return portal.User{}, fmt.Errorf("query user: %w", err)
 	}
@@ -505,6 +509,29 @@ func (r UsersRepo) SetStatus(ctx context.Context, id, status string) error {
 	return nil
 }
 
+// RevokeTokens implements portal.UserRepo.
+func (r UsersRepo) RevokeTokens(ctx context.Context, userID string) ([]string, error) {
+	return revokeUserTokens(ctx, r.db, userID)
+}
+
+// revokeUserTokens revokes every live token (not revoked, not expired) of a user, human or robot, and returns
+// their ids. It is the one implementation of "disabling revokes the tokens"; it runs in the caller's
+// transaction, which has taken the lock of the user. Dead tokens keep their original revoked_at/expires_at, which
+// is what the purge grace counts from.
+func revokeUserTokens(ctx context.Context, db dbtx, userID string) ([]string, error) {
+	rows, err := db.Query(ctx, `UPDATE api_tokens SET revoked_at = now()
+WHERE user_id = $1::uuid AND revoked_at IS NULL AND expires_at > now() RETURNING id::text`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("revoke user tokens: %w", err)
+	}
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return nil, fmt.Errorf("read revoked tokens: %w", err)
+	}
+	slices.Sort(ids) // RETURNING has no order
+	return ids, nil
+}
+
 // DeleteSessions implements portal.UserRepo: app sessions and login codes go with the central sessions through
 // the foreign keys' cascade.
 func (r UsersRepo) DeleteSessions(ctx context.Context, userID string) (int64, error) {
@@ -530,7 +557,7 @@ func (r AuditLogRepo) ListAudit(ctx context.Context, scope adminz.Scope, q porta
 	}
 	all, ids := scopeArgs(scope)
 	rows, err := r.db.Query(ctx, `
-SELECT a.id::text, a.occurred_at, COALESCE(a.actor_id::text, ''), COALESCE(u.email, ''),
+SELECT a.id::text, a.occurred_at, COALESCE(a.actor_id::text, ''), COALESCE(u.email, ''), COALESCE(u.name, ''),
        COALESCE(a.initiative_id::text, ''), a.action, a.target_type, a.target_id, a.before, a.after
 FROM audit_events a
 LEFT JOIN users u ON u.id = a.actor_id
@@ -546,7 +573,7 @@ LIMIT $5`, all, ids, afterTime(q.After), afterID(q.After), q.Limit)
 			e             portal.AuditEvent
 			before, after []byte
 		)
-		err := row.Scan(&e.ID, &e.OccurredAt, &e.ActorID, &e.ActorEmail, &e.InitiativeID, &e.Action, &e.TargetType,
+		err := row.Scan(&e.ID, &e.OccurredAt, &e.ActorID, &e.ActorEmail, &e.ActorName, &e.InitiativeID, &e.Action, &e.TargetType,
 			&e.TargetID, &before, &after)
 		e.Before, e.After = json.RawMessage(before), json.RawMessage(after)
 		return e, err

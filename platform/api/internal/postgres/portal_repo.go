@@ -36,7 +36,8 @@ var _ portal.PermissionsReader = (*PermissionsRepo)(nil)
 
 // permissionsSQL loads the profile, the platform-admin flag and the managed initiatives in one round trip.
 // $1 = user id. A managed initiative is one where a non-expired grant of a role with manages_access exists,
-// directly or through a group (the same grant rules as access.Decide). No row means the user does not exist.
+// directly or through a group (the same grant rules as access.Decide). A robot is never a platform admin: the
+// composite foreign key of platform_admins pins it to humans. No row means the user does not exist.
 const permissionsSQL = `
 SELECT u.email, u.name, u.status,
        EXISTS (SELECT 1 FROM platform_admins pa WHERE pa.user_id = u.id),

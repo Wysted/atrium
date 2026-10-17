@@ -191,7 +191,8 @@ type auditEventJSON struct {
 	ID           string          `json:"id"`
 	OccurredAt   time.Time       `json:"occurred_at"`
 	ActorID      *string         `json:"actor_id"`
-	ActorEmail   *string         `json:"actor_email"`
+	ActorEmail   *string         `json:"actor_email"` // null for a robot
+	ActorName    *string         `json:"actor_name"`  // the robot's name, or the human's name; the web shows actor_email today
 	InitiativeID *string         `json:"initiative_id"`
 	Action       string          `json:"action"`
 	TargetType   string          `json:"target_type"`
@@ -471,6 +472,7 @@ func (a *api) revokeSessions(w http.ResponseWriter, r *http.Request) {
 func eventToJSON(e portal.AuditEvent) auditEventJSON {
 	return auditEventJSON{
 		ID: e.ID, OccurredAt: e.OccurredAt, ActorID: nilIfEmpty(e.ActorID), ActorEmail: nilIfEmpty(e.ActorEmail),
+		ActorName:    nilIfEmpty(e.ActorName),
 		InitiativeID: nilIfEmpty(e.InitiativeID), Action: e.Action, TargetType: e.TargetType, TargetID: e.TargetID,
 		Before: rawOrNull(e.Before), After: rawOrNull(e.After),
 	}

@@ -11,10 +11,11 @@ import (
 const PortalRole = "platform_portal"
 
 // portalGrants is the complete privilege set of PortalRole on the relations of schema public, as granted by
-// migration 0009. A relation that is not listed must carry no privilege at all.
+// migrations 0009 and 0012. A relation that is not listed must carry no privilege at all.
 //
-// users: only status and updated_at are writable, and rows are never inserted or deleted (they are created
-// just-in-time by platform-api). sessions and app_sessions: the token hashes are never readable and rows can
+// users: humans are created just-in-time by platform-api, so the portal inserts only without google_sub (robots,
+// 0012) and updates status, updated_at, name and owner_user_id; rows are never deleted. api_tokens: inserted and
+// revoked here, never read with the hash and never deleted. sessions and app_sessions: the token hashes are never readable and rows can
 // only be deleted (revocation). audit_events is append-only; platform_admins and access_denials are read-only.
 var portalGrants = map[string]tableGrant{
 	"groups":            {Table: []string{"SELECT", "INSERT", "UPDATE", "DELETE"}},
@@ -24,10 +25,15 @@ var portalGrants = map[string]tableGrant{
 	"apps":              {Table: []string{"SELECT", "INSERT", "UPDATE", "DELETE"}},
 	"deployments":       {Table: []string{"SELECT", "INSERT", "UPDATE", "DELETE"}},
 	"initiative_access": {Table: []string{"SELECT", "INSERT", "UPDATE", "DELETE"}},
-	"users":             {Table: []string{"SELECT"}, Columns: map[string][]string{"UPDATE": {"status", "updated_at"}}},
-	"platform_admins":   {Table: []string{"SELECT"}},
-	"audit_events":      {Table: []string{"SELECT", "INSERT"}},
-	"access_denials":    {Table: []string{"SELECT"}},
+	"users": {Table: []string{"SELECT"}, Columns: map[string][]string{
+		"INSERT": {"kind", "name", "email", "owner_user_id", "status"},
+		"UPDATE": {"status", "updated_at", "name", "owner_user_id"}}},
+	"api_tokens": {Table: []string{"INSERT"}, Columns: map[string][]string{
+		"SELECT": {"id", "user_id", "name", "scope", "created_by", "created_at", "expires_at", "last_used_at", "revoked_at"},
+		"UPDATE": {"revoked_at"}}},
+	"platform_admins": {Table: []string{"SELECT"}},
+	"audit_events":    {Table: []string{"SELECT", "INSERT"}},
+	"access_denials":  {Table: []string{"SELECT"}},
 	"sessions": {Table: []string{"DELETE"}, Columns: map[string][]string{
 		"SELECT": {"id", "user_id", "created_at", "last_seen_at", "expires_at", "ip", "user_agent"}}},
 	"app_sessions": {Table: []string{"DELETE"}, Columns: map[string][]string{
@@ -62,7 +68,7 @@ func OpenPortalPool(ctx context.Context, cfg *pgxpool.Config) (*pgxpool.Pool, Ru
 	return openRolePool(ctx, cfg, PortalRole, CheckPortalRole)
 }
 
-// CheckPortalRole verifies that db runs as PortalRole and with exactly the grants of migration 0009: the base
+// CheckPortalRole verifies that db runs as PortalRole and with exactly the grants of migrations 0009 and 0012: the base
 // checks of CheckRuntimeRole (effective role, superuser, row security bypass, table ownership, CREATE on
 // public, append-only audit_events, no predefined pg_* roles) plus the same two-way comparison of table, column
 // and sequence privileges against portalGrants. The check runs once per pool, at start-up.

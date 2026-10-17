@@ -11,14 +11,26 @@ import (
 const MaxUserMatches = 50
 
 type userStatusDoc struct {
-	Email           string `json:"email"`
-	Status          string `json:"status"`
-	SessionsRevoked *int64 `json:"sessions_revoked,omitempty"`
+	Email           string   `json:"email"`
+	Name            string   `json:"name,omitempty"` // names a robot, which has no email
+	Status          string   `json:"status"`
+	SessionsRevoked *int64   `json:"sessions_revoked,omitempty"`
+	TokensRevoked   []string `json:"tokens_revoked,omitempty"` // ids, so each one can be traced
 }
 
 type sessionsDoc struct {
 	Email   string `json:"email"`
+	Name    string `json:"name,omitempty"` // names a robot, which has no email
 	Revoked int64  `json:"revoked"`
+}
+
+// nameIfNoEmail is the name a document carries for a subject without an email (a robot); humans are identified
+// by their email, as before.
+func nameIfNoEmail(email, name string) string {
+	if email != "" {
+		return ""
+	}
+	return name
 }
 
 // FindUsers returns the users with that email, compared case-insensitively (platform admins only). The email
@@ -48,7 +60,7 @@ func (s *Service) FindUsers(ctx context.Context, callerID, email string) ([]User
 }
 
 // SetUserStatus disables or enables a user (platform admins only). Disabling also deletes the user's sessions
-// in the same transaction, so the cutoff does not wait for the sessions to expire. An administrator cannot
+// and revokes their API tokens in the same transaction, so the cutoff does not wait for the sessions to expire. An administrator cannot
 // disable themselves (ErrSelfDisable): it would lock them out of the portal. Setting the status a user already
 // has changes nothing, writes no audit row and returns the user as is.
 func (s *Service) SetUserStatus(ctx context.Context, callerID, userID, status string) (User, error) {
@@ -104,17 +116,20 @@ func (s *Service) SetUserStatus(ctx context.Context, callerID, userID, status st
 		if err := tx.Users().SetStatus(ctx, u.ID, status); err != nil {
 			return fmt.Errorf("set user status: %w", err)
 		}
-		after := userStatusDoc{Email: u.Email, Status: status}
+		after := userStatusDoc{Email: u.Email, Name: nameIfNoEmail(u.Email, u.Name), Status: status}
 		if status == UserStatusDisabled {
 			n, err := tx.Users().DeleteSessions(ctx, u.ID)
 			if err != nil {
 				return fmt.Errorf("delete user sessions: %w", err)
 			}
 			after.SessionsRevoked = &n
+			if after.TokensRevoked, err = tx.Users().RevokeTokens(ctx, u.ID); err != nil {
+				return fmt.Errorf("revoke user tokens: %w", err)
+			}
 		}
 		if err := record(ctx, tx, event{
 			actor: callerID, action: action, targetType: TargetUser, targetID: u.ID,
-			before: userStatusDoc{Email: u.Email, Status: u.Status}, after: after,
+			before: userStatusDoc{Email: u.Email, Name: nameIfNoEmail(u.Email, u.Name), Status: u.Status}, after: after,
 		}); err != nil {
 			return err
 		}
@@ -148,7 +163,7 @@ func (s *Service) RevokeUserSessions(ctx context.Context, callerID, userID strin
 		}
 		if err := record(ctx, tx, event{
 			actor: callerID, action: adminz.UserSessionsRevoke, targetType: TargetUserSessions, targetID: u.ID,
-			after: sessionsDoc{Email: u.Email, Revoked: n},
+			after: sessionsDoc{Email: u.Email, Name: nameIfNoEmail(u.Email, u.Name), Revoked: n},
 		}); err != nil {
 			return err
 		}

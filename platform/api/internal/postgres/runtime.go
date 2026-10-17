@@ -118,7 +118,7 @@ type tableGrant struct {
 }
 
 // runtimeGrants is the complete privilege set of RuntimeRole on the tables of schema public, as granted by
-// migrations 0003, 0005, 0008 and 0010 and used by the repositories of this package. A table that is not
+// migrations 0003, 0005, 0008, 0010 and 0012 and used by the repositories of this package. A table that is not
 // listed must carry no privilege at all. Administration of the authorization tables belongs to PortalRole.
 var runtimeGrants = map[string]tableGrant{
 	// Read-only ForwardAuth facts.
@@ -127,8 +127,12 @@ var runtimeGrants = map[string]tableGrant{
 	"initiative_roles":  {Table: []string{"SELECT"}},
 	"apps":              {Table: []string{"SELECT"}},
 	"initiative_access": {Table: []string{"SELECT"}},
-	// Login upsert: informational fields only, never status or google_sub.
-	"users": {Table: []string{"SELECT", "INSERT"}, Columns: map[string][]string{"UPDATE": {"email", "name", "updated_at"}}},
+	// Login upsert: INSERT narrowed to its columns (so this role cannot create a robot or set a status, 0012) and
+	// UPDATE of the informational fields only, never status or google_sub.
+	"users": {Table: []string{"SELECT"}, Columns: map[string][]string{
+		"INSERT": {"google_sub", "email", "name"}, "UPDATE": {"email", "name", "updated_at"}}},
+	// API tokens (0012): ForwardAuth reads them and records last use; it cannot insert, revoke or delete them.
+	"api_tokens": {Table: []string{"SELECT"}, Columns: map[string][]string{"UPDATE": {"last_used_at"}}},
 	// Sessions are touched, never rewritten.
 	"sessions":     {Table: []string{"SELECT", "INSERT", "DELETE"}, Columns: map[string][]string{"UPDATE": {"last_seen_at"}}},
 	"app_sessions": {Table: []string{"SELECT", "INSERT", "DELETE"}},

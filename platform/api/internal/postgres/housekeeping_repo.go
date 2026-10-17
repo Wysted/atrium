@@ -27,7 +27,8 @@ var _ housekeeping.Store = (*HousekeepingRepo)(nil)
 // Housekeep purges expired rows and ensures the access_denials partitions, in one transaction guarded by a
 // try-advisory lock. Expiry always uses the database clock. Sessions are purged when past their absolute
 // expiry or idle for longer than p.IdleTimeout; their app sessions and login codes go by cascade, and
-// expired app sessions and codes of live sessions are purged on their own.
+// expired app sessions and codes of live sessions are purged on their own. API tokens dead for longer than
+// p.APITokenGrace are deleted by purge_dead_api_tokens.
 func (r *HousekeepingRepo) Housekeep(ctx context.Context, p housekeeping.Params) (housekeeping.Report, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -61,6 +62,12 @@ func (r *HousekeepingRepo) Housekeep(ctx context.Context, p housekeeping.Params)
 			return housekeeping.Report{}, fmt.Errorf("purge: %w", err)
 		}
 		*d.dst = tag.RowsAffected()
+	}
+
+	// Dead API tokens go through a SECURITY DEFINER function (the runtime role has no DELETE on the table).
+	if err := tx.QueryRow(ctx, `SELECT purge_dead_api_tokens(make_interval(secs => $1))`,
+		p.APITokenGrace.Seconds()).Scan(&rep.APITokens); err != nil {
+		return housekeeping.Report{}, fmt.Errorf("purge api tokens: %w", err)
 	}
 
 	rows, err := tx.Query(ctx, `
