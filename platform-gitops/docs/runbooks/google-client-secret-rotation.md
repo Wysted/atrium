@@ -103,11 +103,18 @@ Metrics (Grafana Explore, Prometheus datasource; the metrics port is only open t
 sum by (outcome) (increase(platform_logins_total[15m]))
 ```
 
-There is NO alert for failed logins today (`monitoring/rules/portal-platform.rules.yaml` only covers ForwardAuth, signing
-keys, the probe and pool saturation). `ForwardAuthDown` or `ForwardAuthErrorsHigh` will NOT fire for a wrong secret:
-sessions that already exist keep working and only new logins fail. During rotation the operator is the alert: check the
-dashboard panel "Logins by outcome" and the log query above. A persistent `failed` rate with
-`invalid_client` after a rotation means the deployed secret is disabled, deleted or wrong.
+Alerts (`monitoring/rules/portal-platform.rules.yaml`, group `portal-platform.login`, severity warning):
+
+- `LoginsFailing`: at least 5 `outcome="failed"` in 15 minutes and no `success` in the same window, for 5 minutes. This is
+  what a wrong, disabled or deleted client secret looks like: sessions that already exist keep working (so `ForwardAuthDown`
+  and `ForwardAuthErrorsHigh` stay silent) and only new logins fail. It fires after roughly 10-15 minutes of failed logins,
+  so during a rotation keep checking by hand (dashboard panel "Logins by outcome", the queries above); the alert is the net
+  for a rotation nobody was watching. A single user's failures, or failures while other users log in, do not fire it.
+- `LoginProviderUnavailable`: same shape for `outcome="provider_unavailable"`, for 10 minutes. Google or the egress to it, not
+  the secret.
+
+A persistent `failed` rate with `invalid_client` in the logs after a rotation means the deployed secret is disabled, deleted or
+wrong: go to [Rollback](#rollback).
 
 ## Rollback
 

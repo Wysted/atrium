@@ -623,3 +623,127 @@ tests:
       - eval_time: 25m
         alertname: DBPoolSaturated
         exp_alerts: []
+
+  # ---- LoginsFailing / LoginProviderUnavailable --------------------------------------------------------------------
+  - name: LoginsFailing fires on a burst of failed logins with no success
+    interval: 1m
+    input_series:
+      - series: 'platform_logins_total{outcome="failed", pod="platform-api-a", job="platform-api"}'
+        values: '0x4 1+1x40'
+      - series: 'platform_logins_total{outcome="success", pod="platform-api-a", job="platform-api"}'
+        values: '0x45'
+    alert_rule_test:
+      - eval_time: 12m # the threshold is crossed at about minute 9, `for: 5m` still running
+        alertname: LoginsFailing
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: LoginsFailing
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: "Google logins are failing and none succeeded in 15 minutes"
+              description: "15 logins ended in outcome=\"failed\" over 15 minutes with no success. Existing sessions keep working; new logins do not. After a Google client secret rotation, or if it was disabled or deleted, look for `invalid_client` in the platform-api logs: `kubectl -n platform logs -l app.kubernetes.io/name=platform-api --since=30m --tail=-1 | rg 'google login failed'`. Runbook: platform-gitops/docs/runbooks/google-client-secret-rotation.md (Detecting failures, Rollback)."
+
+  - name: LoginsFailing stays quiet when logins also succeed
+    interval: 1m
+    input_series:
+      - series: 'platform_logins_total{outcome="failed", pod="platform-api-a", job="platform-api"}'
+        values: '0x4 1+1x40'
+      - series: 'platform_logins_total{outcome="success", pod="platform-api-a", job="platform-api"}'
+        values: '0x4 1+1x40'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: LoginsFailing
+        exp_alerts: []
+
+  - name: LoginsFailing stays quiet on a single failed login
+    interval: 1m
+    input_series:
+      - series: 'platform_logins_total{outcome="failed", pod="platform-api-a", job="platform-api"}'
+        values: '0x4 1x40'
+      - series: 'platform_logins_total{outcome="success", pod="platform-api-a", job="platform-api"}'
+        values: '3x45'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: LoginsFailing
+        exp_alerts: []
+
+  - name: LoginsFailing stays quiet on a failed login and a retry (no success series at all)
+    interval: 1m
+    input_series:
+      - series: 'platform_logins_total{outcome="failed", pod="platform-api-a", job="platform-api"}'
+        values: '0x4 1 2x40'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: LoginsFailing
+        exp_alerts: []
+
+  - name: LoginsFailing respects for (a burst that ends before 5 minutes of condition)
+    interval: 1m
+    input_series:
+      - series: 'platform_logins_total{outcome="failed", pod="platform-api-a", job="platform-api"}'
+        values: '0x4 1+1x6 7x60'
+      - series: 'platform_logins_total{outcome="success", pod="platform-api-a", job="platform-api"}'
+        values: '0x4 0x2 1+1x58'
+    alert_rule_test:
+      - eval_time: 12m # 6 failures, the first success arrives at minute 6: the condition never holds 5 minutes
+        alertname: LoginsFailing
+        exp_alerts: []
+
+  - name: LoginsFailing counts a missing success series as zero and fires
+    interval: 1m
+    input_series:
+      - series: 'platform_logins_total{outcome="failed", pod="platform-api-a", job="platform-api"}'
+        values: '0x4 1+1x40'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: LoginsFailing
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: "Google logins are failing and none succeeded in 15 minutes"
+              description: "15 logins ended in outcome=\"failed\" over 15 minutes with no success. Existing sessions keep working; new logins do not. After a Google client secret rotation, or if it was disabled or deleted, look for `invalid_client` in the platform-api logs: `kubectl -n platform logs -l app.kubernetes.io/name=platform-api --since=30m --tail=-1 | rg 'google login failed'`. Runbook: platform-gitops/docs/runbooks/google-client-secret-rotation.md (Detecting failures, Rollback)."
+
+  - name: LoginsFailing is silent when the metric is absent
+    interval: 1m
+    input_series:
+      - series: 'up{job="platform-api", pod="platform-api-a"}'
+        values: '1x30'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: LoginsFailing
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: LoginProviderUnavailable
+        exp_alerts: []
+
+  - name: LoginProviderUnavailable fires on a Google outage with no successful login
+    interval: 1m
+    input_series:
+      - series: 'platform_logins_total{outcome="provider_unavailable", pod="platform-api-a", job="platform-api"}'
+        values: '0x4 1+1x40'
+      - series: 'platform_logins_total{outcome="success", pod="platform-api-a", job="platform-api"}'
+        values: '0x45'
+    alert_rule_test:
+      - eval_time: 12m # inside `for: 10m`
+        alertname: LoginProviderUnavailable
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: LoginProviderUnavailable
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: "Logins cannot reach Google and none succeeded in 15 minutes"
+              description: "15 logins ended in outcome=\"provider_unavailable\" over 15 minutes with no success. Check the Google status, the egress from the platform namespace to Google and the platform-api logs (`rg 'google login: provider unavailable'`). If Google is fine, see platform-gitops/docs/runbooks/google-client-secret-rotation.md (Detecting failures)."
+
+  - name: LoginProviderUnavailable stays quiet when another replica still logs users in
+    interval: 1m
+    input_series:
+      - series: 'platform_logins_total{outcome="provider_unavailable", pod="platform-api-a", job="platform-api"}'
+        values: '0x4 1+1x40'
+      - series: 'platform_logins_total{outcome="success", pod="platform-api-b", job="platform-api"}'
+        values: '0x4 1+1x40'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: LoginProviderUnavailable
+        exp_alerts: []

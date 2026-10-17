@@ -152,6 +152,52 @@ spec:
               The KEK mounted on this replica does not open the active or next signing key. Restore the KEK the keys
               were sealed with.
 
+    - name: portal-platform.login
+      rules:
+        # Existing sessions keep working when the Google client secret is wrong, disabled or deleted, so ForwardAuth*
+        # stay green while every NEW login fails. outcome="failed" is a rejected code exchange (any 4xx of the token
+        # endpoint, invalid_client included), a missing code or an invalid ID token. Single users cause a few of these
+        # (expired tab, replayed code), so the rule needs both: at least 5 failures in 15 minutes (a person retrying
+        # twice does not reach it) AND not one success in the same window (a systematic failure lets nobody in). The
+        # success guard is also what keeps a busy installation quiet: any successful login clears it. On a very quiet
+        # installation (no logins at all) the rule stays silent, which is right: there is nothing to detect. The
+        # `or vector(0)` makes a missing success series count as zero successes; a missing failed series is silent.
+        # `for: 5m` makes the condition hold across two or more evaluations of the window instead of one burst.
+        - alert: LoginsFailing
+          expr: |
+            sum(increase(platform_logins_total{outcome="failed"}[15m])) >= 5
+            and on() (sum(increase(platform_logins_total{outcome="success"}[15m])) or vector(0)) == 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Google logins are failing and none succeeded in 15 minutes"
+            description: >-
+              {{ $value | humanize }} logins ended in outcome="failed" over 15 minutes with no success. Existing sessions
+              keep working; new logins do not. After a Google client secret rotation, or if it was disabled or deleted,
+              look for `invalid_client` in the platform-api logs:
+              `kubectl -n platform logs -l app.kubernetes.io/name=platform-api --since=30m --tail=-1 | rg 'google login failed'`.
+              Runbook: platform-gitops/docs/runbooks/google-client-secret-rotation.md (Detecting failures, Rollback).
+
+        # Google (or the egress path to it) is unavailable: discovery not done, unreachable, 5xx or 429 from the token
+        # endpoint. A separate alert because the action is different (wait for Google, check egress and the
+        # NetworkPolicy; the secret is not the problem), but the same shape and thresholds. `for: 10m` is longer: Google
+        # blips are common and self-heal, a secret problem is not.
+        - alert: LoginProviderUnavailable
+          expr: |
+            sum(increase(platform_logins_total{outcome="provider_unavailable"}[15m])) >= 5
+            and on() (sum(increase(platform_logins_total{outcome="success"}[15m])) or vector(0)) == 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Logins cannot reach Google and none succeeded in 15 minutes"
+            description: >-
+              {{ $value | humanize }} logins ended in outcome="provider_unavailable" over 15 minutes with no success.
+              Check the Google status, the egress from the platform namespace to Google and the platform-api logs
+              (`rg 'google login: provider unavailable'`). If Google is fine, see
+              platform-gitops/docs/runbooks/google-client-secret-rotation.md (Detecting failures).
+
     - name: portal-platform.saturation
       rules:
         # acquired / max of the pgx pool of each process. 90% for 10 minutes means requests are about to queue for a
