@@ -100,6 +100,12 @@ drop_smoke_areas() {
     -c "DELETE FROM area_supervisors WHERE area_id IN (SELECT id FROM areas WHERE key LIKE 'smoke-area%')" \
     -c "DELETE FROM areas WHERE key LIKE 'smoke-area%'" >/dev/null 2>&1
 }
+# Section 24 reassigns smoke-robot (ROBOT_OWNER0 = its owner before, "" for none); the trap puts it back as the owner.
+restore_robot_owner() {
+  [[ -v ROBOT_OWNER0 ]] || return 0
+  $K -n platform-db exec postgres-0 -- psql -q -U platform_owner -d platform \
+    -c "UPDATE users SET owner_user_id = NULLIF('$ROBOT_OWNER0', '')::uuid WHERE kind = 'robot' AND name = 'smoke-robot'" >/dev/null 2>&1
+}
 # Token cleanup as the owner (the trap must not depend on a session): revokes every live smoke token and disables the robot.
 drop_smoke_tokens() {
   $K -n platform-db exec postgres-0 -- psql -q -U platform_owner -d platform \
@@ -120,6 +126,7 @@ cleanup() {
   $K delete -f "$REL/smoke-whoami.yaml" -f "$REL/smoke-whoami-portal.yaml" --ignore-not-found --wait=false >/dev/null 2>&1
   drop_smoke_groups
   drop_smoke_areas
+  restore_robot_owner
   drop_smoke_tokens
   drop_smoke_grants
   $K -n monitoring delete pod probe-prom probe-grafana probe-other --ignore-not-found --wait=false >/dev/null 2>&1
@@ -1365,7 +1372,7 @@ code=$(mutate "$JAR_AD" POST "$AR/$AID/members" same-origin application/json '{"
 check "  (code no_unique_active_user)" "$(cat "$WORK/b")" no_unique_active_user
 code=$(api "$JAR_AD" "$AR/$AID/members"); check "list members" "$code" 200
 check "  (alice listed)" "$(json_get "$WORK/b" '[m["email"] for m in d["members"]]')" "['alice@example.com']"
-code=$(api "$JAR_AL" "$AR/$AID/members"); check "alice (not admin) cannot list members" "$code" 403
+code=$(api "$JAR_AL" "$AR/$AID/members"); check "alice (not admin, not a supervisor) gets 404 on the members" "$code" 404
 
 echo "  -- supervisors: several areas per person, supervised_areas in /me"
 code=$(mutate "$JAR_AD" POST "$AR/$AID/supervisors" same-origin application/json '{"email":"carol@example.com"}'); check "add carol as supervisor" "$code" 201
@@ -1381,6 +1388,56 @@ code=$(bcall carol-area "$P/api/v1/me"); check "carol GET /me under her personal
 check "  (supervised_areas is [] under a token)" "$(json_get "$WORK/b" 'd["permissions"]["supervised_areas"]')" "[]"
 code=$(bcall carol-area "$AR"); check "carol's token cannot list areas" "$code" 403
 code=$(mutate "$JAR_CA" DELETE "$P/api/v1/me/tokens/$(tid carol-area)" same-origin application/json); check "carol-area token revoked" "$code" 204
+
+echo "  -- supervisor capacity (part 1b): carol administers the credentials of alice, from a browser session only"
+UT="$P/api/v1/users"
+code=$(api "$JAR_CA" "$AR/$AID/members"); check "carol (supervisor) lists the members" "$code" 200
+check "  (supervisable members only)" "$(json_get "$WORK/b" '[m["email"] for m in d["members"]]')" "['alice@example.com']"
+mk_token "$JAR_AL" "$P/api/v1/me/tokens" sup-alice read
+mk_token "$JAR_AL" "$P/api/v1/me/tokens" sup-alice2 read
+code=$(api "$JAR_CA" "$UT/$ALICE_UID/tokens"); check "carol lists alice's tokens" "$code" 200
+check "  (sup-alice listed)" "$(json_get "$WORK/b" '"smoke-sup-alice" in [t["name"] for t in d["tokens"]]')" True
+check "  (no secret or hash field)" "$(json_get "$WORK/b" 'any(("secret" in k or "hash" in k) for t in d["tokens"] for k in t)')" False
+code=$(api "$JAR_CA" "$UT/$CAROL_UID/tokens"); check "carol's own tokens: not supervisable -> 404" "$code" 404
+code=$(api "$JAR_CA" "$UT/$ALICE_UID/robots"); check "carol lists alice's robots (none yet)" "$code" 200
+mk_token "$JAR_CA" "$P/api/v1/me/tokens" carol-sup read
+code=$(bcall carol-sup "$UT/$ALICE_UID/tokens"); check "carol's read token: alice's tokens -> 404 (no supervisor capacity under a token)" "$code" 404
+code=$(bcall carol-sup -X DELETE "$P/api/v1/tokens/$(tid sup-alice2)"); check "carol's read token: DELETE alice's token -> 403 (scope, before authorization)" "$code" 403
+check "  (insufficient_scope challenge)" "$(header www-authenticate)" 'Bearer error="insufficient_scope"'
+printf '{"token":"%s"}' "$(cut -d' ' -f3 "$(tokfile sup-alice2)")" > "$WORK/revoke.json"
+code=$(mutate "$JAR_CA" POST "$P/api/v1/tokens/revoke" same-origin application/json "$(cat "$WORK/revoke.json")"); check "carol cannot revoke by secret" "$code" 403
+code=$(mutate "$JAR_CA" DELETE "$P/api/v1/tokens/$(tid sup-alice)" same-origin application/json); check "carol revokes alice's token" "$code" 204
+code=$(api "$JAR_CA" "$UT/$ALICE_UID/tokens")
+check "  (revoked, the other one is live)" "$(json_get "$WORK/b" 'sorted((t["name"], t["revoked_at"] is not None) for t in d["tokens"] if t["id"] in ("'"$(tid sup-alice)"'", "'"$(tid sup-alice2)"'"))')" "[('smoke-sup-alice', True), ('smoke-sup-alice2', False)]"
+code=$(api "$JAR_AD" "$P/api/v1/audit"); check "admin reads the audit" "$code" 200
+check "  (token.revoke carries the area of the supervisor)" "$(json_get "$WORK/b" '[e["area_id"] for e in d["events"] if e["action"] == "token.revoke" and e["target_id"] == "'"$(tid sup-alice)"'"]')" "['$AID']"
+code=$(mutate "$JAR_AL" DELETE "$P/api/v1/me/tokens/$(tid sup-alice2)" same-origin application/json); check "alice revokes sup-alice2" "$code" 204
+code=$(mutate "$JAR_CA" DELETE "$P/api/v1/me/tokens/$(tid carol-sup)" same-origin application/json); check "carol revokes carol-sup" "$code" 204
+
+echo "  -- robots of alice: list, reassign (owner_user_id only)"
+api "$JAR_AD" "$P/api/v1/robots" >/dev/null; ROBOT_OWNER0="$(json_get "$WORK/b" '[r["owner_user_id"] or "" for r in d["robots"] if r["id"] == "'"$RID"'"][0]')"
+code=$(api "$JAR_AD" "$P/api/v1/me"); ADMIN_UID="$(json_get "$WORK/b" 'd["user"]["id"]')"
+code=$(mutate "$JAR_AD" PATCH "$P/api/v1/robots/$RID" same-origin application/json '{"owner_user_id":"'"$ALICE_UID"'"}'); check "admin makes alice the owner of smoke-robot" "$code" 200
+code=$(api "$JAR_CA" "$UT/$ALICE_UID/robots"); check "carol lists alice's robots" "$code" 200
+check "  (smoke-robot listed)" "$(json_get "$WORK/b" '"smoke-robot" in [r["name"] for r in d["robots"]]')" True
+code=$(api "$JAR_CA" "$P/api/v1/robots/$RID/tokens"); check "carol lists the tokens of alice's robot" "$code" 200
+code=$(api "$JAR_AL" "$P/api/v1/robots/$RID/tokens"); check "alice (not a supervisor) GET robot tokens -> 404" "$code" 404
+code=$(mutate "$JAR_AL" PATCH "$P/api/v1/robots/$RID" same-origin application/json '{"owner_user_id":"'"$ALICE_UID"'"}'); check "alice (not a supervisor) PATCH owner -> 404" "$code" 404
+code=$(mutate "$JAR_CA" PATCH "$P/api/v1/robots/$RID" same-origin application/json '{"owner_user_id":""}'); check "carol clears the owner" "$code" 422
+check "  (field and code)" "$(cat "$WORK/b")" owner_user_id; check "  (not_allowed)" "$(cat "$WORK/b")" not_allowed
+code=$(mutate "$JAR_CA" PATCH "$P/api/v1/robots/$RID" same-origin application/json '{"owner_user_id":"'"$ADMIN_UID"'"}'); check "carol gives the robot to an out-of-scope user (admin)" "$code" 422
+check "  (code unknown)" "$(cat "$WORK/b")" unknown
+code=$(mutate "$JAR_CA" PATCH "$P/api/v1/robots/$RID" same-origin application/json '{"status":"disabled"}'); check "carol cannot change anything but the owner" "$code" 403
+code=$(mutate "$JAR_AD" POST "$AR/$AID/members" same-origin application/json '{"email":"bob@example.com"}'); check "add bob as a second member" "$code" 201
+BOB_UID="$(json_get "$WORK/b" 'd["user_id"]')"
+code=$(mutate "$JAR_CA" PATCH "$P/api/v1/robots/$RID" same-origin application/json '{"owner_user_id":"'"$BOB_UID"'"}'); check "carol reassigns the robot to bob" "$code" 200
+check "  (owner is bob)" "$(json_get "$WORK/b" 'd["owner_user_id"]')" "$BOB_UID"
+code=$(api "$JAR_CA" "$UT/$BOB_UID/robots"); check "bob's robots" "$code" 200
+check "  (smoke-robot listed)" "$(json_get "$WORK/b" '"smoke-robot" in [r["name"] for r in d["robots"]]')" True
+code=$(api "$JAR_AD" "$P/api/v1/audit"); check "admin reads the audit" "$code" 200
+check "  (robot.update carries the area)" "$(json_get "$WORK/b" '[e["area_id"] for e in d["events"] if e["action"] == "robot.update" and e["target_id"] == "'"$RID"'"][:1]')" "['$AID']"
+code=$(mutate "$JAR_AD" PATCH "$P/api/v1/robots/$RID" same-origin application/json '{"owner_user_id":"'"$ROBOT_OWNER0"'"}'); check "admin restores the owner of smoke-robot" "$code" 200
+code=$(mutate "$JAR_AD" DELETE "$AR/$AID/members/$BOB_UID" same-origin application/json); check "remove bob from the area" "$code" 204
 
 echo "  -- delete: only an empty area"
 code=$(mutate "$JAR_AD" DELETE "$AR/$AID" same-origin application/json); check "DELETE non-empty area" "$code" 409

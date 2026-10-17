@@ -51,6 +51,9 @@ const SMOKE_GROUP = 'smoke-group' // created and deleted by the groups scenario
 const DEMO_EDITORS = 'demo-editors' // seeded group: one member (bob) and a grant on demo
 const GROUP_IN_USE_COPY = 'This group still has members or grants. Remove them first.'
 const ALREADY_MEMBER_COPY = 'This user is already a member of the group.'
+const SMOKE_AREA = 'smoke-ui-area' // created and deleted by the areas scenario
+const AREA_IN_USE_COPY = 'This area still has members or supervisors. Remove them first, then delete the area.'
+const ALREADY_IN_AREA_COPY = 'This user already belongs to an area. A person is in one area at most.'
 const NOT_FOUND_TEXT ='Page not found' // app/error.vue for a client route without a page
 
 // Console errors tolerated, by substring, ONLY in the unknown-route scenario. NUXT_E1005 ("Error caught during app
@@ -752,7 +755,291 @@ try {
   await page.getByRole('table').getByRole('row').nth(1).waitFor({ timeout: DATA_TIMEOUT })
   const adminNav = () => page.getByRole('navigation', { name: 'Administration', exact: true }) // a function: the page changes with each login
   const navLinks = async () => (await adminNav().getByRole('link').allInnerTexts()).map((t) => t.trim())
-  check('admin Nav: Initiatives, Groups, Users, Robots, Health, Audit', JSON.stringify(await navLinks()) === '["Initiatives","Groups","Users","Robots","Health","Audit"]', JSON.stringify(await navLinks()))
+  check('admin Nav: Initiatives, Groups, Areas, Users, Robots, Health, Audit', JSON.stringify(await navLinks()) === '["Initiatives","Groups","Areas","Users","Robots","Health","Audit"]', JSON.stringify(await navLinks()))
+
+  // ---- 5d-3b: areas and their members/supervisors. Placed BEFORE auditSince on purpose: the audit section below asserts the
+  // exact set of events since then, and the area events must not be part of it. Idempotent: leftovers of smoke-ui-area are removed first.
+  console.log('  -- admin: Areas (create smoke-ui-area, add member/supervisor, 409 copies, remove, delete)')
+  const areasApi = () => apiAll('/areas', 'areas')
+  const areaPeopleApi = (id, kind) => apiAll(`/areas/${id}/${kind}`, kind)
+  for (const a of (await areasApi()).filter((a) => a.key === SMOKE_AREA)) {
+    for (const kind of ['members', 'supervisors']) for (const p of await areaPeopleApi(a.id, kind)) await apiCall('DELETE', `/areas/${a.id}/${kind}/${p.user_id}`)
+    await apiCall('DELETE', `/areas/${a.id}`)
+  }
+  reset()
+  await adminNav().getByRole('link', { name: 'Areas', exact: true }).click()
+  await page.waitForURL(`${BASE}/admin/areas`, { timeout: DATA_TIMEOUT })
+  await page.getByRole('heading', { level: 1, name: 'Areas', exact: true }).waitFor({ timeout: DATA_TIMEOUT })
+  const areaRow = (key) => page.getByRole('table', { name: 'Areas', exact: true }).getByRole('row').filter({ has: page.locator('code', { hasText: new RegExp(`^${key}$`) }) })
+  const areaNotice = (text) => page.getByRole('status').filter({ hasText: text }).first()
+  const areaDlg = page.getByRole('dialog')
+  const areaAlert = page.getByRole('alertdialog')
+  check('areas: Nav current is Areas', JSON.stringify(await adminNav().locator('[aria-current=page]').allInnerTexts()) === '["Areas"]')
+  check('areas: "New area" button present', (await page.getByRole('button', { name: 'New area', exact: true }).count()) === 1)
+  await report('areas (admin)')
+
+  reset()
+  await page.getByRole('button', { name: 'New area', exact: true }).click()
+  await areaDlg.waitFor({ timeout: DATA_TIMEOUT })
+  await areaDlg.getByRole('textbox', { name: /^Key/ }).fill(SMOKE_AREA)
+  await areaDlg.getByRole('textbox', { name: /^Name/ }).fill('Smoke UI area')
+  await areaDlg.getByRole('button', { name: 'Create area', exact: true }).click()
+  await areaDlg.waitFor({ state: 'detached', timeout: DATA_TIMEOUT })
+  await areaRow(SMOKE_AREA).waitFor({ timeout: DATA_TIMEOUT })
+  await areaNotice('Area created.').waitFor({ timeout: DATA_TIMEOUT })
+  const smokeArea = (await areasApi()).find((a) => a.key === SMOKE_AREA)
+  check('areas: smoke-ui-area listed with its name and present in the API', !!smokeArea && (await areaRow(SMOKE_AREA).innerText()).includes('Smoke UI area'))
+  await report('create area')
+
+  reset()
+  await areaRow(SMOKE_AREA).getByRole('link', { name: SMOKE_AREA, exact: true }).click()
+  await page.waitForURL(`${BASE}/admin/areas/${smokeArea.id}`, { timeout: DATA_TIMEOUT })
+  await page.getByRole('heading', { level: 1, name: 'Smoke UI area', exact: true }).waitFor({ timeout: DATA_TIMEOUT })
+  await page.getByRole('heading', { level: 2, name: 'Members', exact: true }).waitFor({ timeout: DATA_TIMEOUT })
+  await page.getByRole('heading', { level: 2, name: 'Supervisors', exact: true }).waitFor({ timeout: DATA_TIMEOUT })
+  await page.getByText('This area has no members yet.').waitFor({ timeout: DATA_TIMEOUT })
+  await page.getByText('This area has no supervisors yet.').waitFor({ timeout: DATA_TIMEOUT })
+  check('area detail: shows "Key: smoke-ui-area", Nav current stays Areas', (await bodyText()).includes(`Key: ${SMOKE_AREA}`) && JSON.stringify(await adminNav().locator('[aria-current=page]').allInnerTexts()) === '["Areas"]')
+  await report('area detail (empty)')
+
+  const areaPerson = (kind, email) => page.getByRole('table', { name: kind === 'members' ? 'Members' : 'Supervisors', exact: true }).getByRole('row').filter({ hasText: email })
+  const addAreaPerson = async (kind, email) => {
+    const label = kind === 'members' ? 'Add member' : 'Add supervisor'
+    await page.getByRole('button', { name: label, exact: true }).click()
+    await areaDlg.waitFor({ timeout: DATA_TIMEOUT })
+    await areaDlg.getByRole('textbox', { name: /^Email/ }).fill(email)
+    await areaDlg.getByRole('button', { name: label, exact: true }).click()
+  }
+  reset()
+  await addAreaPerson('members', ALICE.email)
+  await areaDlg.waitFor({ state: 'detached', timeout: DATA_TIMEOUT })
+  await areaPerson('members', ALICE.email).waitFor({ timeout: DATA_TIMEOUT })
+  await areaNotice('Member added.').waitFor({ timeout: DATA_TIMEOUT })
+  check('area members: alice is the only member (API)', JSON.stringify((await areaPeopleApi(smokeArea.id, 'members')).map((m) => m.email)) === JSON.stringify([ALICE.email]))
+  await report('area add member')
+
+  reset()
+  await addAreaPerson('members', ALICE.email)
+  await areaDlg.getByText(ALREADY_IN_AREA_COPY).first().waitFor({ timeout: DATA_TIMEOUT })
+  const dupAreaMember = `${BASE}/api/v1/areas/${smokeArea.id}/members HTTP 409`
+  check(`area add member again: copy "${ALREADY_IN_AREA_COPY}" shown and the dialog stays open`, await areaDlg.isVisible())
+  check('area add member again: the API answered 409', failedRequests.includes(dupAreaMember), JSON.stringify(failedRequests))
+  await report('area add member again 409', { tolerated: ['status of 409'], toleratedRequests: [dupAreaMember] })
+  await areaDlg.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await areaDlg.waitFor({ state: 'detached', timeout: DATA_TIMEOUT })
+  check('area add member again: still one member (API)', (await areaPeopleApi(smokeArea.id, 'members')).length === 1)
+
+  reset()
+  await addAreaPerson('supervisors', CAROL.email)
+  await areaDlg.waitFor({ state: 'detached', timeout: DATA_TIMEOUT })
+  await areaPerson('supervisors', CAROL.email).waitFor({ timeout: DATA_TIMEOUT })
+  await areaNotice('Supervisor added.').waitFor({ timeout: DATA_TIMEOUT })
+  check('area supervisors: carol is the only supervisor (API)', JSON.stringify((await areaPeopleApi(smokeArea.id, 'supervisors')).map((m) => m.email)) === JSON.stringify([CAROL.email]))
+  await report('area add supervisor')
+
+  console.log('  -- admin: delete smoke-ui-area with people -> 409 copy; remove both; delete; gone')
+  reset()
+  await page.getByRole('link', { name: 'All areas', exact: true }).or(page.getByRole('button', { name: 'All areas', exact: true })).click()
+  await page.waitForURL(`${BASE}/admin/areas`, { timeout: DATA_TIMEOUT })
+  await areaRow(SMOKE_AREA).waitFor({ timeout: DATA_TIMEOUT })
+  await page.getByRole('button', { name: `Delete area ${SMOKE_AREA}`, exact: true }).click()
+  await areaAlert.waitFor({ timeout: DATA_TIMEOUT })
+  check('delete area: confirm title uses the area name', (await areaAlert.getByRole('heading', { level: 2 }).innerText()) === 'Delete area Smoke UI area?')
+  await areaAlert.getByRole('button', { name: 'Delete area', exact: true }).click()
+  await areaAlert.getByText(AREA_IN_USE_COPY).waitFor({ timeout: DATA_TIMEOUT })
+  const areaInUse409 = `${BASE}/api/v1/areas/${smokeArea.id} HTTP 409`
+  check('delete area with people: the API answered 409', failedRequests.includes(areaInUse409), JSON.stringify(failedRequests))
+  await report('delete area 409', { tolerated: ['status of 409'], toleratedRequests: [areaInUse409] })
+  await areaAlert.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await areaAlert.waitFor({ state: 'detached', timeout: DATA_TIMEOUT })
+  check('delete area with people: still listed after Cancel (list and API)', (await areaRow(SMOKE_AREA).count()) === 1 && (await areasApi()).some((a) => a.id === smokeArea.id))
+
+  reset()
+  await areaRow(SMOKE_AREA).getByRole('link', { name: SMOKE_AREA, exact: true }).click()
+  await page.waitForURL(`${BASE}/admin/areas/${smokeArea.id}`, { timeout: DATA_TIMEOUT })
+  for (const [kind, email, done] of [['members', ALICE.email, 'Member removed.'], ['supervisors', CAROL.email, 'Supervisor removed.']]) {
+    await areaPerson(kind, email).waitFor({ timeout: DATA_TIMEOUT })
+    await page.getByRole('button', { name: `Remove ${email}`, exact: true }).click()
+    await areaAlert.waitFor({ timeout: DATA_TIMEOUT })
+    check(`area remove ${kind}: confirm title names ${email}`, (await areaAlert.getByRole('heading', { level: 2 }).innerText()) === `Remove ${email}?`)
+    await areaAlert.getByRole('button', { name: 'Remove', exact: true }).click()
+    await areaAlert.waitFor({ state: 'detached', timeout: DATA_TIMEOUT })
+    await areaPerson(kind, email).waitFor({ state: 'detached', timeout: DATA_TIMEOUT })
+    await areaNotice(done).waitFor({ timeout: DATA_TIMEOUT })
+    check(`area remove ${kind}: gone (API)`, (await areaPeopleApi(smokeArea.id, kind)).length === 0)
+  }
+  await report('area remove people')
+
+  reset()
+  await page.getByRole('link', { name: 'All areas', exact: true }).or(page.getByRole('button', { name: 'All areas', exact: true })).click()
+  await page.waitForURL(`${BASE}/admin/areas`, { timeout: DATA_TIMEOUT })
+  await areaRow(SMOKE_AREA).waitFor({ timeout: DATA_TIMEOUT })
+  await page.getByRole('button', { name: `Delete area ${SMOKE_AREA}`, exact: true }).click()
+  await areaAlert.waitFor({ timeout: DATA_TIMEOUT })
+  await areaAlert.getByRole('button', { name: 'Delete area', exact: true }).click()
+  await areaAlert.waitFor({ state: 'detached', timeout: DATA_TIMEOUT })
+  await areaRow(SMOKE_AREA).waitFor({ state: 'detached', timeout: DATA_TIMEOUT })
+  await areaNotice('Area deleted.').waitFor({ timeout: DATA_TIMEOUT })
+  check('delete area: gone (list and API)', !(await areasApi()).some((a) => a.key === SMOKE_AREA))
+  await report('delete area')
+
+  // ---- 5d-3c: area supervisor. carol supervises smoke-ui-sup (alice and bob are members); alice owns a robot and has a personal
+  // token. Placed BEFORE auditSince for the same reason as 5d-3b (its events must not enter the audit count). Idempotent: leftovers
+  // (area, active smoke-sup robots, live smoke-sup tokens of alice) are removed first and last, as admin. Robots cannot be deleted:
+  // the per-run robot is created, reassigned by the supervisor and disabled at the end (that also revokes its tokens).
+  console.log('  -- supervisor: carol (smoke-ui-sup) manages alice tokens and robots; alice (not a supervisor) sees no areas')
+  const SUP_AREA = 'smoke-ui-sup'
+  const SUP_AREA_NAME = 'Smoke UI sup'
+  const SUP_RUN = Math.random().toString(16).slice(2, 8)
+  const SUP_TOKEN = `smoke-sup-token-${SUP_RUN}`
+  const SUP_ROBOT = `smoke-sup-robot-${SUP_RUN}`
+  const BOB = { email: 'bob@example.com', name: 'bob' }
+  const supApi = (method, path, body) => page.evaluate(async ([m, p, b]) => {
+    const r = await fetch(`/api/v1${p}`, { method: m, headers: { Accept: 'application/json', ...(m === 'GET' ? {} : { 'Content-Type': 'application/json' }) }, body: b === undefined ? undefined : JSON.stringify(b) })
+    return { status: r.status, body: r.headers.get('content-type')?.includes('json') ? await r.json() : null }
+  }, [method, path, body])
+  const supUser = async (email) => (await supApi('GET', `/users?email=${encodeURIComponent(email)}`)).body.users[0]
+  const supCleanup = async () => {
+    await login(ADMIN.email)
+    for (const a of (await areasApi()).filter((a) => a.key === SUP_AREA)) {
+      for (const kind of ['members', 'supervisors']) for (const p of await areaPeopleApi(a.id, kind)) await supApi('DELETE', `/areas/${a.id}/${kind}/${p.user_id}`)
+      await supApi('DELETE', `/areas/${a.id}`)
+    }
+    for (const r of (await apiAll('/robots', 'robots')).filter((r) => r.name.startsWith('smoke-sup-robot') && r.status === 'active')) await supApi('PATCH', `/robots/${r.id}`, { status: 'disabled' })
+    const alice = await supUser(ALICE.email)
+    for (const t of (await apiAll(`/users/${alice.id}/tokens`, 'tokens')).filter((t) => t.name.startsWith('smoke-sup-token') && !t.revoked_at)) await supApi('DELETE', `/tokens/${t.id}`)
+  }
+  const supLink = (name) => page.getByRole('link', { name, exact: true }).or(page.getByRole('button', { name, exact: true }))
+  let supError
+  try {
+    await supCleanup()
+    const [aliceU, bobU, adminU] = [await supUser(ALICE.email), await supUser(BOB.email), await supUser(ADMIN.email)]
+    check('supervisor setup: alice, bob and admin resolved; alice and bob are humans, not admins', !!aliceU && !!bobU && !!adminU, JSON.stringify([aliceU?.id, bobU?.id, adminU?.id]))
+    const mkArea = await supApi('POST', '/areas', { key: SUP_AREA, name: SUP_AREA_NAME })
+    const supArea = (await areasApi()).find((a) => a.key === SUP_AREA)
+    check('supervisor setup: area smoke-ui-sup created', mkArea.status === 201 && !!supArea, String(mkArea.status))
+    const setup = [
+      ['members', ALICE.email], ['members', BOB.email], ['supervisors', CAROL.email],
+    ]
+    for (const [kind, email] of setup) {
+      const r = await supApi('POST', `/areas/${supArea.id}/${kind}`, { email })
+      check(`supervisor setup: ${email} added to ${kind}`, r.status === 201 || r.status === 200, String(r.status))
+    }
+    const mkRobot = await supApi('POST', '/robots', { name: SUP_ROBOT, owner_user_id: aliceU.id })
+    const supRobot = (await apiAll('/robots', 'robots')).find((r) => r.name === SUP_ROBOT)
+    check('supervisor setup: robot owned by alice', mkRobot.status === 201 && supRobot?.owner_user_id === aliceU.id, `${mkRobot.status} ${supRobot?.owner_user_id}`)
+    await login(ALICE.email)
+    const mkToken = await supApi('POST', '/me/tokens', { name: SUP_TOKEN, scope: 'read', expires_in: 3600 })
+    check('supervisor setup: alice personal token created', mkToken.status === 201, String(mkToken.status))
+
+    console.log('  -- carol: home -> My areas -> area -> alice (no email in the URL)')
+    await login(CAROL.email)
+    await openHome(CAROL, '/ (carol supervisor)')
+    await supLink('My areas').waitFor({ timeout: DATA_TIMEOUT })
+    check('/ (carol supervisor): "My areas" shown (supervises an area)', true)
+    await report('/ (carol supervisor)')
+    reset()
+    await supLink('My areas').click()
+    await page.waitForURL(`${BASE}/areas`, { timeout: DATA_TIMEOUT })
+    await page.getByRole('heading', { level: 1, name: 'My areas', exact: true }).waitFor({ timeout: DATA_TIMEOUT })
+    const supAreasRow = page.getByRole('table', { name: 'My areas', exact: true }).getByRole('row').filter({ hasText: SUP_AREA_NAME })
+    await supAreasRow.waitFor({ timeout: DATA_TIMEOUT })
+    check('/areas (carol): lists smoke-ui-sup once', (await supAreasRow.count()) === 1)
+    await checkStyled('/areas (carol)')
+    await report('/areas (carol)')
+    reset()
+    await supLink(`People of area ${SUP_AREA_NAME}`).click()
+    await page.waitForURL(`${BASE}/areas/${supArea.id}`, { timeout: DATA_TIMEOUT })
+    await page.getByRole('heading', { level: 1, name: SUP_AREA_NAME, exact: true }).waitFor({ timeout: DATA_TIMEOUT })
+    await page.getByText('People in this area you can manage: their tokens and robots.').waitFor({ timeout: DATA_TIMEOUT })
+    const supPeople = page.getByRole('table', { name: 'People', exact: true })
+    await supPeople.getByRole('row').filter({ hasText: ALICE.email }).waitFor({ timeout: DATA_TIMEOUT })
+    check('/areas/<id> (carol): alice and bob listed', (await supPeople.getByRole('row').filter({ hasText: BOB.email }).count()) === 1)
+    await report('/areas/<id> (carol)')
+    reset()
+    await supLink(`Tokens and robots of ${ALICE.email}`).click()
+    const personUrl = `${BASE}/areas/${supArea.id}/people/${aliceU.id}`
+    await page.waitForURL(personUrl, { timeout: DATA_TIMEOUT })
+    check('person URL: only ids, no query string and no email', !page.url().includes('?') && !page.url().includes('@'), stripQuery(page.url()))
+    await page.getByRole('heading', { level: 1, name: 'Tokens and robots', exact: true }).waitFor({ timeout: DATA_TIMEOUT })
+    await page.getByText(`Offboarding tools for ${ALICE.email}.`).waitFor({ timeout: DATA_TIMEOUT })
+    await page.getByRole('heading', { level: 2, name: `Personal tokens of ${ALICE.email}`, exact: true }).waitFor({ timeout: DATA_TIMEOUT })
+    await page.getByRole('heading', { level: 2, name: `Robots of ${ALICE.email}`, exact: true }).waitFor({ timeout: DATA_TIMEOUT })
+    check('person page: no "New token" (a supervisor cannot create tokens)', (await page.getByRole('button', { name: 'New token', exact: true }).count()) === 0)
+    await page.screenshot({ path: `${OUT}/supervisor-person.png`, fullPage: true })
+    await report('person page (carol)')
+
+    console.log('  -- carol: revoke alice token behind a confirmation')
+    reset()
+    const supTokenRow = page.getByRole('table', { name: `Personal tokens of ${ALICE.email}`, exact: true }).getByRole('row').filter({ hasText: SUP_TOKEN })
+    await supTokenRow.getByRole('button', { name: `Revoke token ${SUP_TOKEN}`, exact: true }).click()
+    const supAlert = page.getByRole('alertdialog')
+    await supAlert.waitFor({ timeout: DATA_TIMEOUT })
+    await supAlert.getByRole('button', { name: 'Revoke token', exact: true }).click()
+    await supAlert.waitFor({ state: 'detached', timeout: DATA_TIMEOUT })
+    await page.getByText('Token revoked.').first().waitFor({ timeout: DATA_TIMEOUT })
+    check('supervisor revoke: status "Token revoked." and the row offers no Revoke', (await supTokenRow.getByRole('button', { name: `Revoke token ${SUP_TOKEN}`, exact: true }).count()) === 0)
+    await report('revoke alice token (carol)')
+
+    console.log('  -- carol: robot tokens dialog, change the owner to bob')
+    reset()
+    const supRobotRow = page.getByRole('table', { name: 'Robots', exact: true }).getByRole('row').filter({ hasText: SUP_ROBOT })
+    await supRobotRow.waitFor({ timeout: DATA_TIMEOUT })
+    await supRobotRow.getByRole('button', { name: `Tokens of robot ${SUP_ROBOT}`, exact: true }).click()
+    await page.getByRole('heading', { name: `Tokens of robot ${SUP_ROBOT}`, exact: true }).waitFor({ timeout: DATA_TIMEOUT })
+    check('robot tokens: the "Tokens of robot" heading is shown', true)
+    // the robot tokens panel is inline (not a dialog): there is nothing to close
+    await supRobotRow.getByRole('button', { name: `Change owner of robot ${SUP_ROBOT}`, exact: true }).click()
+    const ownerDlg = page.getByRole('dialog', { name: `Change owner of ${SUP_ROBOT}`, exact: true })
+    await ownerDlg.waitFor({ timeout: DATA_TIMEOUT })
+    const ownerSelect = ownerDlg.getByLabel(/^New owner/)
+    const bobLabel = `${BOB.name} (${BOB.email})`
+    await ownerSelect.locator('option', { hasText: bobLabel }).waitFor({ state: 'attached', timeout: DATA_TIMEOUT })
+    check('owner dialog: alice (the current owner) is not offered', (await ownerSelect.locator('option', { hasText: ALICE.email }).count()) === 0)
+    await ownerSelect.selectOption({ label: bobLabel })
+    await ownerDlg.getByRole('button', { name: 'Change owner', exact: true }).click()
+    await ownerDlg.waitFor({ state: 'detached', timeout: DATA_TIMEOUT })
+    await page.getByText(`Robot ${SUP_ROBOT} now belongs to`).first().waitFor({ timeout: DATA_TIMEOUT })
+    check('change owner: success status "Robot <name> now belongs to <owner>."', true)
+    await report('change robot owner (carol)')
+
+    console.log('  -- carol: a person outside her areas')
+    reset()
+    await page.goto(`${BASE}/areas/${supArea.id}/people/${adminU.id}`)
+    await page.getByText('This person is not in your areas').first().waitFor({ timeout: DATA_TIMEOUT })
+    check('out-of-scope person: "This person is not in your areas"', true)
+    check('out-of-scope person: "Back to the area" offered', (await supLink('Back to the area').count()) >= 1)
+    const notFound404 = [`${BASE}/api/v1/users/${adminU.id}/robots HTTP 404`, `${BASE}/api/v1/users/${adminU.id}/tokens HTTP 404`]
+    await report('out-of-scope person (carol)', { tolerated: ['status of 404'], toleratedRequests: notFound404 })
+
+    console.log('  -- alice (not a supervisor): no "My areas", /areas says so')
+    await login(ALICE.email)
+    await openHome(ALICE, '/ (alice, no supervision)')
+    check('/ (alice): no "My areas"', (await supLink('My areas').count()) === 0)
+    reset()
+    await page.goto(`${BASE}/areas`)
+    await page.getByText('You do not supervise any area').first().waitFor({ timeout: DATA_TIMEOUT })
+    check('/areas (alice): "You do not supervise any area"', true)
+    await report('/areas (alice)')
+
+    console.log('  -- admin: the supervisor changes are visible in the API')
+    await login(ADMIN.email)
+    const after = await supApi('GET', `/robots/${supRobot.id}`)
+    check('API: the robot now belongs to bob', after.body?.owner_user_id === bobU.id, JSON.stringify(after.body?.owner_email))
+    const aliceTokens = await apiAll(`/users/${aliceU.id}/tokens`, 'tokens')
+    check('API: the personal token of alice is revoked', !!aliceTokens.find((t) => t.name === SUP_TOKEN)?.revoked_at)
+  } catch (e) {
+    supError = e
+    console.log(`  supervisor scenario error at ${page.url().split('?')[0]}: ${e.message.split('\n')[0]}`)
+    await page.screenshot({ path: `${OUT}/supervisor-failed.png`, fullPage: true }).catch(() => {})
+    throw e
+  } finally {
+    // a cleanup failure must not mask the scenario error
+    try { await supCleanup() } catch (e) { if (!supError) throw e; console.log(`  supervisor cleanup also failed: ${e.message}`) }
+  }
+  check('supervisor cleanup: smoke-ui-sup is gone', !(await areasApi()).some((a) => a.key === SUP_AREA))
+  await page.goto(`${BASE}/admin/initiatives`) // the cleanup login leaves the admin on /, where there is no admin Nav
+  await adminNav().waitFor({ timeout: DATA_TIMEOUT })
 
   const groupsApi = () => apiAll('/groups', 'groups')
   const membersApi = (id) => apiAll(`/groups/${id}/members`, 'members')
@@ -1052,7 +1339,7 @@ try {
   await page.getByRole('table').getByRole('row').nth(1).waitFor({ timeout: DATA_TIMEOUT })
   check('dave Nav: Initiatives and Audit only', JSON.stringify(await navLinks()) === '["Initiatives","Audit"]', JSON.stringify(await navLinks()))
   await report('nav (dave)')
-  for (const [path, label] of [['/admin/users', 'Users'], ['/admin/groups', 'Groups']]) {
+  for (const [path, label] of [['/admin/users', 'Users'], ['/admin/groups', 'Groups'], ['/admin/areas', 'Areas']]) {
     reset()
     await page.goto(`${BASE}${path}`)
     await page.getByText('Platform administrators only').first().waitFor({ timeout: DATA_TIMEOUT })
