@@ -34,13 +34,13 @@ Pending work and open questions for the portal platform. Detailed context lives 
   PostgreSQL serializes the commit of every notifying transaction on one cluster-wide lock (waits of up to ~3 s were
   seen under disk load in tests). Admin changes are rare today; measure under the production write rate before
   adding notifying triggers to hot tables.
-- [ ] **Git remote.** Decided 2026-10-17: public GitHub repository, probably under a new organization (name not chosen).
-  Ready to push: Apache-2.0 `LICENSE`, `SECURITY.md`, root `README.md`, history scanned with gitleaks, personal
-  identifiers removed from the tree and the history. Left: create the repository, enable private vulnerability
-  reporting, add the remote and push.
-- [ ] **Public identity.** Tied to the organization/repository name, cheaper before the first adopter:
+- [x] **Git remote.** Closed 2026-10-17: public repository https://github.com/Wysted/atrium (personal account, no
+  organization), pushed over SSH. Before the push: Apache-2.0 `LICENSE`, `SECURITY.md`, root `README.md`, history scanned
+  with gitleaks, personal identifiers removed from the tree and the history. Private vulnerability reporting must be
+  enabled in the repository settings (`SECURITY.md` points to it).
+- [ ] **Public identity.** The name is now `atrium` (github.com/Wysted/atrium); cheaper before the first adopter:
   Go module paths (`platform/api`, `platform/sdk/go`, ... are not go-gettable; the SDK must be importable as
-  `github.com/<org>/<repo>/platform/sdk/go`), the namespace label key `portal.wysted.dev/app-namespace`, and the local
+  `github.com/Wysted/atrium/platform/sdk/go`), the namespace label key `portal.wysted.dev/app-namespace`, and the local
   domain `*.apps.wysted.dev` (its wildcard certificate needs the maintainer's Cloudflare token, so a contributor cannot
   reproduce the local TLS setup).
 
