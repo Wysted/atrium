@@ -974,7 +974,7 @@ code=$(api "$WORK/web-anon" "$P$asset"); check "asset fetch without session (non
 code=$(api "$WORK/web-anon" "$P/api/unknown"); check "unknown API route without session" "$code" 401
 
 section "21. Real browser (Chromium/Playwright in Docker): fake login, / renders, error page for an unknown route, zero CSP violations"
-# Last section and part of the smoke (not a separate command): it shares the smoke's contract (PASS/FAIL lines, one exit
+# Part of the smoke (not a separate command): it shares the smoke's contract (PASS/FAIL lines, one exit
 # code, cluster as found) and the browser is the only check of what the CSP does to the SPA (inline styles/scripts). Cost:
 # needs the host docker and the pinned Playwright image (pulled once). SKIP_BROWSER_CHECK=1 skips it explicitly.
 if [[ "${SKIP_BROWSER_CHECK:-}" == 1 ]]; then
