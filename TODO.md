@@ -48,6 +48,11 @@ Pending work and open questions for the portal platform. Detailed context lives 
   grants by robot, last-manager rule); (2) ForwardAuth token path + assertion claims + SDK fields; (3) Traefik
   (`Authorization` in `authRequestHeaders`, strip on the portal route) + smoke checks; (4) web: tokens page and robots
   admin page; (5) CLI replacing `grant.sh`/`revoke.sh`. Phases 2 (workload identity) and 3 (device flow) stay open.
+  Part 1a (schema, privileges, kind filters, purge) done 2026-10-16; 1b (tokens and robots API, grants by robot,
+  revocation by secret) next.
+- [ ] **Area supervisor (design).** Someone who administers the robots and tokens of the people of their area (list,
+  revoke, reassign owner on offboarding) without acting as them or touching their access. Needs a person hierarchy;
+  see the open point at the end of contract block 6, "Non-browser clients".
 - [x] **Flaky test database cleanup.** Closed 2026-10-16. Root cause: every `DROP DATABASE` makes PostgreSQL run an
   immediate checkpoint and wait for it, and the checkpoint's fsync phase covers the files of every live test database
   (hundreds each) across all parallel test binaries. On Docker/WSL storage that phase takes seconds, and a slow one

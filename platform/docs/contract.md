@@ -592,6 +592,7 @@ human user: zero or several matches fail (`users.email` is not unique, `google_s
 | `GET, POST /api/v1/me/tokens`; `DELETE /api/v1/me/tokens/{id}` | Own personal tokens (block 6 "Non-browser clients"). `POST` returns the secret once and only from a browser session; lists never return `token_hash` |
 | `GET, POST /api/v1/robots`; `PATCH /api/v1/robots/{id}` | Robots (`PATCH`: `name`, `status`, `owner_user_id`). Platform admins; managers may list id, name and status |
 | `GET, POST /api/v1/robots/{id}/tokens`; `DELETE /api/v1/tokens/{id}` | Robot tokens (platform admins; `POST` from a browser session only); `DELETE` revokes any token |
+| `POST /api/v1/tokens/revoke`; `DELETE /api/v1/me/tokens/current` | Revocation by secret: a platform admin posts `{token}` (a leaked secret from any scanner report); the request that carries a token revokes that same token. Both answer 204 |
 | `GET /api/v1/audit?initiative_id=&cursor=` | Audit log, newest first, keyset pagination |
 | `GET /api/v1/apps/{id}/health` | Integration health of an app (admins and managers of its initiative) |
 | `GET /api/v1/health/orphan-hosts` | Hosts refused as `unknown_host` that have no deployment (platform admins only) |
@@ -914,12 +915,22 @@ Rules:
    admins, from a session (`POST /api/v1/robots/{id}/tokens`).
 3. The owner revokes their own tokens; a platform admin revokes any token. A token may revoke tokens (own ones, or any if
    its owner is a platform admin and the scope is `admin`): containment must not require a browser.
+   Revocation by secret, so a leak can be contained without knowing the token id:
+   - `POST /api/v1/tokens/revoke` with `{token}`, platform admins only (session or `admin` token): the portal checks the
+     format, hashes the secret and revokes the matching live token. It answers 204 whether or not a token matched,
+     so the endpoint never confirms that a secret exists; a revocation is visible in the audit and the token list.
+     It works with any secret scanner (GitHub, GitLab or an internal one): an admin pastes what the report contains.
+   - `DELETE /api/v1/me/tokens/current` revokes the token that authenticates the request (RFC 7009 spirit: whoever
+     holds the secret can kill it). A request without a token (browser session) answers 404.
+   - No public endpoint for scanner partner programs: they are provider-specific and would need a route outside
+     ForwardAuth. An adopter that needs one adds it later.
 4. Creation runs in one transaction that takes `LockUser(owner)` (`FOR NO KEY UPDATE`, the lock `SetUserStatus` takes)
    as its first lock, reads the owner's `status` again under it, counts the unexpired unrevoked tokens against the
    limit of 25 and then inserts. The lock is needed because the foreign key of the insert takes only `KEY SHARE` on
    the user, which does not conflict with a concurrent disable: without it, a token could be inserted after the
    disable revoked the others, and two parallel creations could pass the count together. It is a leaf lock (no other
-   user lock is held with it), so it cannot join the lock orders of block 6.
+   user lock is held with it), so it cannot join the lock orders of block 6. `LockUser` sees humans only, so robot
+   tokens take the same lock (`FOR NO KEY UPDATE`) through the robot repository, which sees robots only.
 5. Every creation and revocation is audited (below). Creation has no natural key, so a retry after an ambiguous failure
    can leave a second token; the client lists and revokes the extra one.
 
@@ -1060,8 +1071,14 @@ email today).
 4. Web: tokens page for humans, robots admin page.
 5. CLI replacing `grant.sh`/`revoke.sh` (Go, uses a token, talks only to the portal host).
 
-Open points: a revoke-by-secret endpoint for secret-scanner reports (the platform hashes the secret and revokes by
-hash); whether an owner's departure should disable their robots automatically (today it does not, by design).
+Decided 2026-10-16: revocation by secret (Issuance and revocation, rule 3); an owner's departure never disables their
+robots automatically.
+
+Open point, separate design: an **area supervisor** who administers the robots and tokens of the people of their area
+(list them, revoke them, reassign `owner_user_id` when someone leaves), so offboarding does not depend on a platform
+admin. The supervisor never acts as those people and never sees or changes their initiative or app access. It needs a
+person hierarchy (who supervises whom), which the data model does not have and which is not the initiative manager
+relationship (managers administer access, not people).
 
 ### Open items
 
