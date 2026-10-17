@@ -464,6 +464,7 @@ func TestPortalRoleDeniedByDefault(t *testing.T) {
 	// Tables with any grant to the portal, and the privileges it may hold on each table-wide.
 	allowed := map[string][]string{
 		"groups": {"SELECT", "INSERT", "UPDATE", "DELETE"}, "group_members": {"SELECT", "INSERT", "UPDATE", "DELETE"},
+		"areas": {"SELECT", "INSERT", "DELETE"}, "area_members": {"SELECT", "INSERT", "DELETE"}, "area_supervisors": {"SELECT", "INSERT", "DELETE"},
 		"initiatives": {"SELECT", "INSERT", "UPDATE", "DELETE"}, "initiative_roles": {"SELECT", "INSERT", "UPDATE", "DELETE"},
 		"apps": {"SELECT", "INSERT", "UPDATE", "DELETE"}, "deployments": {"SELECT", "INSERT", "UPDATE", "DELETE"},
 		"initiative_access": {"SELECT", "INSERT", "UPDATE", "DELETE"},

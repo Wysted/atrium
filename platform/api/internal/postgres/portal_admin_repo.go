@@ -21,6 +21,8 @@ import (
 const (
 	sqlStateUniqueViolation     = "23505"
 	sqlStateForeignKeyViolation = "23503"
+	// sqlStateRestrictViolation is what ON DELETE RESTRICT raises (NO ACTION raises 23503 instead).
+	sqlStateRestrictViolation = "23001"
 )
 
 // writeError maps the constraint violations a write can hit to the errors of package portal; anything else is
@@ -49,6 +51,10 @@ var referenceFields = map[string]string{
 	"initiative_roles_initiative_id_fkey":          "initiative_id",
 	"apps_initiative_id_fkey":                      "initiative_id",
 	"deployments_app_id_fkey":                      "app_id",
+	"area_members_area_id_fkey":                    "area_id",
+	"area_members_user_id_fkey":                    "user_id",
+	"area_supervisors_area_id_fkey":                "area_id",
+	"area_supervisors_user_id_fkey":                "user_id",
 }
 
 // referenceField names the request field behind a violated foreign key ("reference" for an unknown one).

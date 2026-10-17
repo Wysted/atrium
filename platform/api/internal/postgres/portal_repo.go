@@ -34,7 +34,8 @@ func NewPermissionsRepo(pool *pgxpool.Pool) *PermissionsRepo { return &Permissio
 
 var _ portal.PermissionsReader = (*PermissionsRepo)(nil)
 
-// permissionsSQL loads the profile, the platform-admin flag and the managed initiatives in one round trip.
+// permissionsSQL loads the profile, the platform-admin flag, the managed initiatives and the supervised areas in one
+// round trip. The areas are read from the rows whatever the user's status (fail closed, like the platform-admin flag).
 // $1 = user id. A managed initiative is one where a non-expired grant of a role with manages_access exists,
 // directly or through a group (the same grant rules as access.Decide). A robot is never a platform admin: the
 // composite foreign key of platform_admins pins it to humans. No row means the user does not exist.
@@ -52,12 +53,17 @@ SELECT u.email, u.name, u.status,
                  AND (ia.expires_at IS NULL OR ia.expires_at > now())
                  AND (ia.user_id = u.id
                       OR ia.group_id IN (SELECT gm.group_id FROM group_members gm WHERE gm.user_id = u.id)))
+       ), '[]'::jsonb),
+       COALESCE((
+           SELECT jsonb_agg(jsonb_build_object('id', a.id, 'key', a.key, 'name', a.name) ORDER BY a.key)
+           FROM area_supervisors s JOIN areas a ON a.id = s.area_id
+           WHERE s.user_id = u.id
        ), '[]'::jsonb)
 FROM users u
 WHERE u.id = $1::uuid`
 
-// initiativeJSON is one element of the jsonb array built by permissionsSQL.
-type initiativeJSON struct {
+// refJSON is one element of the jsonb arrays built by permissionsSQL (initiatives and areas).
+type refJSON struct {
 	ID   string `json:"id"`
 	Key  string `json:"key"`
 	Name string `json:"name"`
@@ -66,8 +72,8 @@ type initiativeJSON struct {
 // LoadPermissions implements portal.PermissionsReader.
 func (r *PermissionsRepo) LoadPermissions(ctx context.Context, userID string) (portal.Permissions, error) {
 	p := portal.Permissions{UserID: userID}
-	var managed []initiativeJSON
-	err := r.db.QueryRow(ctx, permissionsSQL, userID).Scan(&p.Email, &p.Name, &p.Status, &p.PlatformAdmin, &managed)
+	var managed, supervised []refJSON
+	err := r.db.QueryRow(ctx, permissionsSQL, userID).Scan(&p.Email, &p.Name, &p.Status, &p.PlatformAdmin, &managed, &supervised)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return portal.Permissions{}, portal.ErrNotFound
 	}
@@ -77,6 +83,10 @@ func (r *PermissionsRepo) LoadPermissions(ctx context.Context, userID string) (p
 	p.Managed = make([]portal.InitiativeRef, 0, len(managed))
 	for _, m := range managed {
 		p.Managed = append(p.Managed, portal.InitiativeRef(m))
+	}
+	p.Supervised = make([]portal.AreaRef, 0, len(supervised))
+	for _, a := range supervised {
+		p.Supervised = append(p.Supervised, portal.AreaRef(a))
 	}
 	return p, nil
 }

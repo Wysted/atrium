@@ -234,6 +234,7 @@ type userJSON struct {
 type permissionsJSON struct {
 	PlatformAdmin      bool             `json:"platform_admin"`
 	ManagedInitiatives []initiativeJSON `json:"managed_initiatives"`
+	SupervisedAreas    []areaRefJSON    `json:"supervised_areas"`
 }
 
 type homeAppJSON struct {
@@ -263,8 +264,11 @@ func (a *api) me(w http.ResponseWriter, r *http.Request) {
 		managed = append(managed, initiativeJSON(m))
 	}
 	WriteJSON(w, http.StatusOK, meResponse{
-		User:        userJSON{ID: p.UserID, Email: p.Email, Name: p.Name},
-		Permissions: permissionsJSON{PlatformAdmin: p.PlatformAdmin, ManagedInitiatives: managed},
+		User: userJSON{ID: p.UserID, Email: p.Email, Name: p.Name},
+		Permissions: permissionsJSON{
+			PlatformAdmin: p.PlatformAdmin, ManagedInitiatives: managed,
+			SupervisedAreas: mapSlice(p.Supervised, func(a portal.AreaRef) areaRefJSON { return areaRefJSON(a) }),
+		},
 	})
 }
 

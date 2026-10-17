@@ -79,6 +79,17 @@ func TestDecideWhoAdministersWhat(t *testing.T) {
 		{"remove group member", adminz.GroupMemberRemove, adminz.Resource{Type: "group", ID: "g1"}, a, f, f, f},
 		{"list group members", adminz.GroupMemberList, adminz.Resource{Type: "group", ID: "g1"}, a, f, f, f},
 
+		// Areas, their members and supervisors: admin only (part 1a).
+		{"create area", adminz.AreaCreate, adminz.Resource{Type: "area"}, a, f, f, f},
+		{"delete area", adminz.AreaDelete, adminz.Resource{Type: "area", ID: "a1"}, a, f, f, f},
+		{"list areas", adminz.AreaList, adminz.Resource{Type: "area"}, a, f, f, f},
+		{"add area member", adminz.AreaMemberAdd, adminz.Resource{Type: "area", ID: "a1"}, a, f, f, f},
+		{"remove area member", adminz.AreaMemberRemove, adminz.Resource{Type: "area", ID: "a1"}, a, f, f, f},
+		{"list area members", adminz.AreaMemberList, adminz.Resource{Type: "area", ID: "a1"}, a, f, f, f},
+		{"add area supervisor", adminz.AreaSupervisorAdd, adminz.Resource{Type: "area", ID: "a1"}, a, f, f, f},
+		{"remove area supervisor", adminz.AreaSupervisorRemove, adminz.Resource{Type: "area", ID: "a1"}, a, f, f, f},
+		{"list area supervisors", adminz.AreaSupervisorList, adminz.Resource{Type: "area", ID: "a1"}, a, f, f, f},
+
 		// Users and their sessions are global: admin only.
 		{"disable user", adminz.UserDisable, adminz.Resource{Type: "user", ID: "u1"}, a, f, f, f},
 		{"enable user", adminz.UserEnable, adminz.Resource{Type: "user", ID: "u1"}, a, f, f, f},
@@ -175,7 +186,9 @@ func TestInactiveSubjectIsNeverAllowed(t *testing.T) {
 		adminz.DeploymentCreate, adminz.UserDisable, adminz.UserSessionsRevoke,
 		adminz.UserList, adminz.OrphanHostList, adminz.AuditList, adminz.TokenRevokeAny,
 		adminz.TokenCreateOwn, adminz.TokenListOwn, adminz.TokenRevokeOwn, adminz.RobotCreate, adminz.RobotUpdate,
-		adminz.RobotList, adminz.RobotTokenCreate, adminz.RobotTokenList, "unknown.action",
+		adminz.RobotList, adminz.RobotTokenCreate, adminz.RobotTokenList, adminz.AreaCreate, adminz.AreaDelete, adminz.AreaList,
+		adminz.AreaMemberAdd, adminz.AreaMemberRemove, adminz.AreaMemberList, adminz.AreaSupervisorAdd,
+		adminz.AreaSupervisorRemove, adminz.AreaSupervisorList, "unknown.action",
 	}
 	for name, who := range map[string]adminz.Subject{"disabled platform admin": disabledAdmin, "zero value": zero} {
 		for _, action := range actions {
@@ -228,6 +241,10 @@ func TestDecideListingScope(t *testing.T) {
 		{"manager lists no users", managerA, adminz.UserList, adminz.Resource{Type: "user"}, adminz.Forbidden, false, nil},
 		{"admin lists orphan hosts", admin, adminz.OrphanHostList, adminz.Resource{Type: "orphan_host"}, adminz.Allow, true, nil},
 		{"manager lists no orphan hosts", managerA, adminz.OrphanHostList, adminz.Resource{Type: "orphan_host"}, adminz.Forbidden, false, nil},
+		{"admin lists areas", admin, adminz.AreaList, adminz.Resource{Type: "area"}, adminz.Allow, true, nil},
+		{"admin lists area members", admin, adminz.AreaMemberList, adminz.Resource{Type: "area", ID: "a1"}, adminz.Allow, true, nil},
+		{"admin lists area supervisors", admin, adminz.AreaSupervisorList, adminz.Resource{Type: "area", ID: "a1"}, adminz.Allow, true, nil},
+		{"manager lists no areas", managerA, adminz.AreaList, adminz.Resource{Type: "area"}, adminz.Forbidden, false, nil},
 		{"plain user sees no groups", plain, adminz.GroupList, adminz.Resource{}, adminz.Forbidden, false, nil},
 		{"plain user lists no initiatives", plain, adminz.InitiativeList, adminz.Resource{}, adminz.Forbidden, false, nil},
 	}

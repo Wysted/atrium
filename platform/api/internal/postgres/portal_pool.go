@@ -11,15 +11,19 @@ import (
 const PortalRole = "platform_portal"
 
 // portalGrants is the complete privilege set of PortalRole on the relations of schema public, as granted by
-// migrations 0009 and 0012. A relation that is not listed must carry no privilege at all.
+// migrations 0009, 0012 and 0014. A relation that is not listed must carry no privilege at all.
 //
 // users: humans are created just-in-time by platform-api, so the portal inserts only without google_sub (robots,
 // 0012) and updates status, updated_at, name and owner_user_id; rows are never deleted. api_tokens: inserted and
 // revoked here, never read with the hash and never deleted. sessions and app_sessions: the token hashes are never readable and rows can
-// only be deleted (revocation). audit_events is append-only; platform_admins and access_denials are read-only.
+// only be deleted (revocation). areas, area_members and area_supervisors (0014): no UPDATE, keys are immutable.
+// audit_events is append-only; platform_admins and access_denials are read-only.
 var portalGrants = map[string]tableGrant{
 	"groups":            {Table: []string{"SELECT", "INSERT", "UPDATE", "DELETE"}},
 	"group_members":     {Table: []string{"SELECT", "INSERT", "UPDATE", "DELETE"}},
+	"areas":             {Table: []string{"SELECT", "INSERT", "DELETE"}},
+	"area_members":      {Table: []string{"SELECT", "INSERT", "DELETE"}},
+	"area_supervisors":  {Table: []string{"SELECT", "INSERT", "DELETE"}},
 	"initiatives":       {Table: []string{"SELECT", "INSERT", "UPDATE", "DELETE"}},
 	"initiative_roles":  {Table: []string{"SELECT", "INSERT", "UPDATE", "DELETE"}},
 	"apps":              {Table: []string{"SELECT", "INSERT", "UPDATE", "DELETE"}},
@@ -68,7 +72,7 @@ func OpenPortalPool(ctx context.Context, cfg *pgxpool.Config) (*pgxpool.Pool, Ru
 	return openRolePool(ctx, cfg, PortalRole, CheckPortalRole)
 }
 
-// CheckPortalRole verifies that db runs as PortalRole and with exactly the grants of migrations 0009 and 0012: the base
+// CheckPortalRole verifies that db runs as PortalRole and with exactly the grants of migrations 0009, 0012 and 0014: the base
 // checks of CheckRuntimeRole (effective role, superuser, row security bypass, table ownership, CREATE on
 // public, append-only audit_events, no predefined pg_* roles) plus the same two-way comparison of table, column
 // and sequence privileges against portalGrants. The check runs once per pool, at start-up.

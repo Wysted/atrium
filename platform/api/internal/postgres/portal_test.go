@@ -133,6 +133,11 @@ func TestCheckPortalRoleRefusesExtraPrivileges(t *testing.T) {
 			DO $$ BEGIN EXECUTE format('GRANT DELETE ON %I TO platform_portal',
 				'access_denials_' || to_char(current_date + interval '2 months', 'YYYY_MM')); END $$`, "DELETE ON access_denials_"},
 		{"missing select on apps", `REVOKE SELECT ON apps FROM platform_portal`, "missing privilege SELECT ON apps"},
+		{"update on areas", `GRANT UPDATE ON areas TO platform_portal`, "UPDATE ON areas"},
+		{"update on area_members", `GRANT UPDATE ON area_members TO platform_portal`, "UPDATE ON area_members"},
+		{"update of area_supervisors.user_id", `GRANT UPDATE (user_id) ON area_supervisors TO platform_portal`, "UPDATE ON area_supervisors.user_id"},
+		{"missing delete on area_members", `REVOKE DELETE ON area_members FROM platform_portal`, "missing privilege DELETE ON area_members"},
+		{"missing insert on areas", `REVOKE INSERT ON areas FROM platform_portal`, "missing privilege INSERT ON areas"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			owner := newTestDB(t)

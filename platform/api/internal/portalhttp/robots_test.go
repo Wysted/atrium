@@ -17,7 +17,6 @@ type robotCalls struct {
 	newRobot   portal.NewRobot
 	robotPatch portal.RobotPatch
 	robots     portal.Page[portal.Robot]
-	status     string
 }
 
 func (f *fakeAdmin) ListRobots(_ context.Context, caller string, req portal.PageRequest, status string) (portal.Page[portal.Robot], error) {

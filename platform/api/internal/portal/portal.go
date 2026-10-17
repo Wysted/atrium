@@ -53,6 +53,9 @@ type Permissions struct {
 	// Managed are the initiatives where a non-expired grant with manages_access exists (direct or through a
 	// group), sorted by key.
 	Managed []InitiativeRef
+	// Supervised are the areas the user supervises (area_supervisors rows), sorted by key. Empty under an API
+	// token: the supervisor capacity is browser-session only (see Service.Me).
+	Supervised []AreaRef
 }
 
 // ManagedIDs returns the ids of the managed initiatives (the input of Subject).
@@ -104,6 +107,7 @@ type Tx interface {
 	Grants() GrantRepo
 	Catalog() CatalogRepo
 	Groups() GroupRepo
+	Areas() AreaRepo
 	Users() UserRepo
 	Tokens() TokenRepo
 	Robots() RobotRepo
@@ -195,6 +199,10 @@ func (s *Service) Me(ctx context.Context, userID string) (Permissions, error) {
 	}
 	if p.Status != UserStatusActive {
 		return Permissions{}, ErrUserInactive
+	}
+	if TokenFrom(ctx) != "" {
+		// Rule 8 of "Area supervisors": a token never carries the supervisor capacity. subject() gains the same gate in 1b; Me keeps this one.
+		p.Supervised = []AreaRef{}
 	}
 	return p, nil
 }

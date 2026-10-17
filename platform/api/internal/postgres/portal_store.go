@@ -127,6 +127,7 @@ func (t portalTx) Permissions() portal.PermissionsReader { return &PermissionsRe
 func (t portalTx) Grants() portal.GrantRepo              { return GrantsRepo{db: t.tx} }
 func (t portalTx) Catalog() portal.CatalogRepo           { return CatalogRepo{db: t.tx} }
 func (t portalTx) Groups() portal.GroupRepo              { return GroupsRepo{db: t.tx} }
+func (t portalTx) Areas() portal.AreaRepo                { return AreasRepo{db: t.tx} }
 func (t portalTx) Users() portal.UserRepo                { return UsersRepo{db: t.tx} }
 func (t portalTx) Tokens() portal.TokenRepo              { return TokensRepo{db: t.tx} }
 func (t portalTx) Robots() portal.RobotRepo              { return RobotsRepo{db: t.tx} }

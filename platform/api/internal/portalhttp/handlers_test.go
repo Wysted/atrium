@@ -94,21 +94,23 @@ func TestMeResponse(t *testing.T) {
 	t.Parallel()
 	svc := fakeService{me: portal.Permissions{
 		UserID: callerID, Email: "ada@example.com", Name: "Ada", Status: "active", PlatformAdmin: true,
-		Managed: []portal.InitiativeRef{{ID: "i-1", Key: "alpha", Name: "Alpha"}},
+		Managed:    []portal.InitiativeRef{{ID: "i-1", Key: "alpha", Name: "Alpha"}},
+		Supervised: []portal.AreaRef{{ID: "a-1", Key: "ops", Name: "Ops"}},
 	}}
 	w := get(testHandler(t, svc, nil), PathMe, nil)
 	if w.Code != http.StatusOK || w.Header().Get("Content-Type") != "application/json" {
 		t.Fatalf("status %d, content type %q", w.Code, w.Header().Get("Content-Type"))
 	}
 	const want = `{"user":{"id":"` + callerID + `","email":"ada@example.com","name":"Ada"},` +
-		`"permissions":{"platform_admin":true,"managed_initiatives":[{"id":"i-1","key":"alpha","name":"Alpha"}]}}`
+		`"permissions":{"platform_admin":true,"managed_initiatives":[{"id":"i-1","key":"alpha","name":"Alpha"}],` +
+		`"supervised_areas":[{"id":"a-1","key":"ops","name":"Ops"}]}}`
 	if got := strings.TrimSpace(w.Body.String()); got != want {
 		t.Fatalf("body = %s\nwant   %s", got, want)
 	}
 
 	// Lists are never null.
 	w = get(testHandler(t, fakeService{me: portal.Permissions{UserID: callerID}}, nil), PathMe, nil)
-	if !strings.Contains(w.Body.String(), `"managed_initiatives":[]`) {
+	if !strings.Contains(w.Body.String(), `"managed_initiatives":[],"supervised_areas":[]`) {
 		t.Fatalf("empty list body = %s", w.Body.String())
 	}
 }

@@ -43,6 +43,14 @@ const (
 	GroupMemberAdd    Action = "group_member.add"
 	GroupMemberRemove Action = "group_member.remove"
 
+	// Areas (block 6, "Area supervisors"): only platform admins create, delete and populate them.
+	AreaCreate           Action = "area.create"
+	AreaDelete           Action = "area.delete"
+	AreaMemberAdd        Action = "area_member.add"
+	AreaMemberRemove     Action = "area_member.remove"
+	AreaSupervisorAdd    Action = "area_supervisor.add"
+	AreaSupervisorRemove Action = "area_supervisor.remove"
+
 	UserDisable        Action = "user.disable"
 	UserEnable         Action = "user.enable"
 	UserSessionsRevoke Action = "user_sessions.revoke"
@@ -84,6 +92,10 @@ const (
 	GroupMemberList Action = "group_member.list" // admin only: who is in a group
 	RobotList       Action = "robot.list"        // admins see everything; managers get id, name and status (the use case trims)
 	UserList        Action = "user.list"
+	// Admin only until the supervisors read their areas' members (block 6, "Area supervisors", part 1b).
+	AreaList           Action = "area.list"
+	AreaMemberList     Action = "area_member.list"
+	AreaSupervisorList Action = "area_supervisor.list"
 	// OrphanHostList lists the hosts routed to the platform that have no deployment (admin only: an orphan host
 	// belongs to no app and no initiative).
 	OrphanHostList Action = "orphan_host.list"
@@ -234,6 +246,16 @@ var rules = map[Action]rule{
 	GroupMemberRemove: {scope: scopeGlobal},
 	GroupMemberList:   {scope: scopeGlobal},
 
+	AreaCreate:           {scope: scopeGlobal},
+	AreaDelete:           {scope: scopeGlobal},
+	AreaList:             {scope: scopeGlobal},
+	AreaMemberAdd:        {scope: scopeGlobal},
+	AreaMemberRemove:     {scope: scopeGlobal},
+	AreaMemberList:       {scope: scopeGlobal},
+	AreaSupervisorAdd:    {scope: scopeGlobal},
+	AreaSupervisorRemove: {scope: scopeGlobal},
+	AreaSupervisorList:   {scope: scopeGlobal},
+
 	UserDisable:        {scope: scopeGlobal},
 	UserEnable:         {scope: scopeGlobal},
 	UserSessionsRevoke: {scope: scopeGlobal},
@@ -262,7 +284,7 @@ var rules = map[Action]rule{
 //     RobotList is the same shape (robots are global; the use case shows managers only id, name and status).
 //     GrantList, RoleList and AppList list the rows of one initiative (the apps carry their deployments): allowed
 //     to admins and to its managers with that initiative as scope.
-//     The admin-only listings of global data (GroupMemberList, UserList, OrphanHostList) answer Scope All to admins.
+//     The admin-only listings of global data (GroupMemberList, UserList, OrphanHostList, the area listings) answer Scope All to admins.
 //  3. An action on an initiative-scoped resource needs Resource.InitiativeID (otherwise forbidden, even for
 //     admins: the caller forgot to resolve the owner). A caller who is neither platform admin nor manager of
 //     that initiative gets not_found, whatever the action, so the resource's existence is not confirmed.
@@ -322,7 +344,9 @@ func Decide(subject Subject, action Action, resource Resource) Decision {
 var initiativeListings = map[Action]bool{GrantList: true, RoleList: true, AppList: true}
 
 // globalListings are the admin-only listings of global data: allowed, they answer with Scope All.
-var globalListings = map[Action]bool{GroupMemberList: true, UserList: true, OrphanHostList: true}
+var globalListings = map[Action]bool{
+	GroupMemberList: true, UserList: true, OrphanHostList: true, AreaList: true, AreaMemberList: true, AreaSupervisorList: true,
+}
 
 // decideListing answers a listing. globalForManagers: managers see everything (the listed data is global and
 // harmless, like group names); otherwise they see only their initiatives.

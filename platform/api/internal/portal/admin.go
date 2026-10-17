@@ -19,6 +19,8 @@ var (
 	ErrForbidden = errors.New("portal: forbidden")
 	// ErrDuplicate is returned by repositories when a unique key already exists.
 	ErrDuplicate = errors.New("portal: duplicate")
+	// ErrInUse is returned by repositories when ON DELETE RESTRICT refuses to delete a row that is still referenced.
+	ErrInUse = errors.New("portal: still referenced")
 	// ErrInvalidCursor means the pagination cursor is malformed or was not issued by this listing (400).
 	ErrInvalidCursor = errors.New("portal: invalid cursor")
 )

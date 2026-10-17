@@ -41,6 +41,17 @@ type AdminService interface {
 	AddGroupMember(ctx context.Context, callerID, groupID, email string) (portal.GroupMember, error)
 	RemoveGroupMember(ctx context.Context, callerID, groupID, userID string) error
 
+	ListAreas(ctx context.Context, callerID string, req portal.PageRequest) (portal.Page[portal.Area], error)
+	GetArea(ctx context.Context, callerID, areaID string) (portal.Area, error)
+	CreateArea(ctx context.Context, callerID string, in portal.NewArea) (portal.Area, error)
+	DeleteArea(ctx context.Context, callerID, areaID string) error
+	ListAreaMembers(ctx context.Context, callerID, areaID string, req portal.PageRequest) (portal.Page[portal.AreaPerson], error)
+	AddAreaMember(ctx context.Context, callerID, areaID, email string) (portal.AreaPerson, error)
+	RemoveAreaMember(ctx context.Context, callerID, areaID, userID string) error
+	ListAreaSupervisors(ctx context.Context, callerID, areaID string, req portal.PageRequest) (portal.Page[portal.AreaPerson], error)
+	AddAreaSupervisor(ctx context.Context, callerID, areaID, email string) (portal.AreaPerson, error)
+	RemoveAreaSupervisor(ctx context.Context, callerID, areaID, userID string) error
+
 	FindUsers(ctx context.Context, callerID, email string) ([]portal.User, error)
 	SetUserStatus(ctx context.Context, callerID, userID, status string) (portal.User, error)
 	RevokeUserSessions(ctx context.Context, callerID, userID string) (int64, error)
@@ -120,6 +131,7 @@ func (a *api) adminRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH "+PathUser, a.patchUser)
 	mux.HandleFunc("DELETE "+PathUserSessions, a.revokeSessions)
 
+	a.areaRoutes(mux)
 	a.tokenRoutes(mux)
 	a.robotRoutes(mux)
 

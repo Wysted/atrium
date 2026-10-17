@@ -45,6 +45,7 @@ type fakeAdmin struct {
 	health  portal.AppHealth
 	orphans []portal.OrphanHost
 
+	areaCalls
 	catalogCalls
 	tokenCalls
 	robotCalls
