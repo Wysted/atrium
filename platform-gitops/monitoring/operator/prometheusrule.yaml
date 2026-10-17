@@ -177,7 +177,7 @@ spec:
               keep working; new logins do not. After a Google client secret rotation, or if it was disabled or deleted,
               look for `invalid_client` in the platform-api logs:
               `kubectl -n platform logs -l app.kubernetes.io/name=platform-api --since=30m --tail=-1 | rg 'google login failed'`.
-              Runbook: platform-gitops/docs/runbooks/google-client-secret-rotation.md (Detecting failures, Rollback).
+              Runbook: docs/runbooks/google-client-secret-rotation.md (Detecting failures, Rollback).
 
         # Google (or the egress path to it) is unavailable: discovery not done, unreachable, 5xx or 429 from the token
         # endpoint. A separate alert because the action is different (wait for Google, check egress and the
@@ -196,7 +196,7 @@ spec:
               {{ $value | humanize }} logins ended in outcome="provider_unavailable" over 15 minutes with no success.
               Check the Google status, the egress from the platform namespace to Google and the platform-api logs
               (`rg 'google login: provider unavailable'`). If Google is fine, see
-              platform-gitops/docs/runbooks/google-client-secret-rotation.md (Detecting failures).
+              docs/runbooks/google-client-secret-rotation.md (Detecting failures).
 
     - name: portal-platform.saturation
       rules:
