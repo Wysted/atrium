@@ -161,6 +161,10 @@ type Config struct {
 	Denials   Denials
 	Issuer    Issuer
 	Audit     audit.Recorder
+	// Tokens looks up API tokens for the token path of portal hosts (token.go).
+	Tokens Tokens
+	// TokenUse receives the id of every token that authorized a request, for last_used_at. Nil disables it.
+	TokenUse TokenUseRecorder
 	// Seen receives the host of every authorized decision (a 200 with assertion), for last_seen_at. Nil
 	// disables it.
 	Seen     SeenRecorder
@@ -203,7 +207,7 @@ type Handler struct {
 // New validates cfg and applies defaults.
 func New(cfg Config) (*Handler, error) {
 	if cfg.AuthHost == "" || cfg.Apps == nil || cfg.Sessions == nil || cfg.Evaluator == nil ||
-		cfg.Profiles == nil || cfg.Denials == nil || cfg.Issuer == nil || cfg.Audit == nil {
+		cfg.Profiles == nil || cfg.Denials == nil || cfg.Issuer == nil || cfg.Audit == nil || cfg.Tokens == nil {
 		return nil, errors.New("forwardauth: auth host and every dependency are required")
 	}
 	if cfg.CacheTTL <= 0 {
@@ -244,6 +248,7 @@ type outcome struct {
 	sid      string
 	userID   string
 	jti      string
+	tid      string // API token id, empty for sessions
 	err      error
 }
 
@@ -263,11 +268,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) logOutcome(host string, o outcome) {
-	attrs := []any{"decision", o.decision, "reason", o.reason, "host", host, "app_id", o.appID, "sid", o.sid, "user_id", o.userID, "jti", o.jti}
+	attrs := []any{"decision", o.decision, "reason", o.reason, "host", host, "app_id", o.appID, "sid", o.sid, "user_id", o.userID, "jti", o.jti, "tid", o.tid}
 	switch {
 	case o.err != nil:
 		h.log.Error("forwardauth decision", append(attrs, "error", o.err.Error())...)
-	case o.decision == DecisionDeny || o.decision == DecisionError:
+	case o.decision == DecisionDeny || o.decision == DecisionError || o.decision == DecisionUnauthenticated && o.tid != "":
 		h.log.Warn("forwardauth decision", attrs...)
 	default:
 		h.log.Info("forwardauth decision", attrs...)
@@ -310,6 +315,18 @@ func (h *Handler) decide(w http.ResponseWriter, r *http.Request, host string) ou
 	if method == http.MethodOptions && r.Header.Get(httpx.HeaderOrigin) != "" && r.Header.Get(headerACRM) != "" {
 		w.WriteHeader(http.StatusOK)
 		return outcome{decision: DecisionBypass, reason: ReasonPreflight, appID: appID}
+	}
+
+	// 3b. An Authorization header on a portal host takes the token path alone (no cookie fallback); on any other
+	// host it is ignored and never read again. The preflight above wins, as the decision table says.
+	if len(r.Header.Values(headerAuthorization)) > 0 {
+		portal, err := h.portalHost(ctx, host)
+		if err != nil {
+			return h.unavailable(w, nav, ReasonBackend, err)
+		}
+		if portal {
+			return h.tokenPath(w, r, appID, host)
+		}
 	}
 
 	uri := r.Header.Get(headerForwardedURI)

@@ -76,7 +76,7 @@ func newFloodHandler(t *testing.T, denials Denials, clk *fixedClock) *Handler {
 	t.Helper()
 	h, err := New(Config{
 		AuthHost: "auth.apps.example.test", Apps: noApps{}, Sessions: stubSess{}, Evaluator: stubEval{}, Profiles: stubProf{},
-		Denials: denials, Issuer: stubIssuer{}, Audit: stubAudit{}, Now: clk.now,
+		Denials: denials, Issuer: stubIssuer{}, Audit: stubAudit{}, Tokens: noopTokens{}, Now: clk.now,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -302,7 +302,7 @@ func newAppsHandler(t *testing.T, apps AppDirectory, clk *fixedClock) *Handler {
 	t.Helper()
 	h, err := New(Config{
 		AuthHost: "auth.apps.example.test", Apps: apps, Sessions: stubSess{}, Evaluator: stubEval{}, Profiles: stubProf{},
-		Denials: &recordingDenials{}, Issuer: stubIssuer{}, Audit: stubAudit{}, Now: clk.now,
+		Denials: &recordingDenials{}, Issuer: stubIssuer{}, Audit: stubAudit{}, Tokens: noopTokens{}, Now: clk.now,
 	})
 	if err != nil {
 		t.Fatal(err)

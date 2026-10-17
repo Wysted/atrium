@@ -32,6 +32,8 @@ var (
 		forwardauth.ReasonAuthHost, forwardauth.ReasonPreflight, forwardauth.ReasonCallbackOK, forwardauth.ReasonCallbackInvalid,
 		forwardauth.ReasonLogoutOK, forwardauth.ReasonLogoutMethod, forwardauth.ReasonLogoutCSRF, forwardauth.ReasonNoCookie,
 		forwardauth.ReasonInvalidSession, forwardauth.ReasonBackend, forwardauth.ReasonNoSigner, forwardauth.ReasonAssertion,
+		forwardauth.ReasonTokenNoBearer, forwardauth.ReasonTokenMalformed, forwardauth.ReasonTokenUnknown, forwardauth.ReasonTokenRevoked,
+		forwardauth.ReasonTokenExpired, forwardauth.ReasonTokenOwnerInactive, forwardauth.ReasonTokenScope,
 	)
 	caches = newSet(forwardauth.CacheDecision, forwardauth.CacheHost, forwardauth.CacheNegativeHost)
 	logins = []string{
@@ -164,6 +166,8 @@ type PlatformSources struct {
 	Keys         KeyState
 	Pending      func() int                          // hosts waiting for the next last_seen_at flush
 	UnknownDrops func() forwardauth.UnknownHostDrops // unknown_host denials that were not recorded
+	TokenPending func() int                          // tokens waiting for the next last_used_at flush
+	TokenDrops   func() uint64                       // token observations discarded because the queue was full
 	Now          func() time.Time                    // default time.Now
 }
 
@@ -183,12 +187,16 @@ func RegisterPlatformState(reg prometheus.Registerer, src PlatformSources) error
 			"1 when this replica's KEK does not match the active or next keys (it neither signs nor rotates), 0 otherwise.", nil, nil)
 		pending = prometheus.NewDesc("platform_lastseen_pending_hosts",
 			"Hosts waiting in memory for the next last_seen_at flush.", nil, nil)
+		tokenPending = prometheus.NewDesc("platform_token_use_pending_tokens",
+			"API tokens waiting in memory for the next last_used_at flush.", nil, nil)
+		tokenDrops = prometheus.NewDesc("platform_token_use_dropped_total",
+			"last_used_at observations discarded because the in-memory queue was full.", nil, nil)
 		drops = prometheus.NewDesc("platform_unknown_host_drops_total",
 			"unknown_host denials that were not recorded, by reason (invalid, budget, marker, queue).", []string{"reason"}, nil)
 	)
 	errPool := poolMetrics(reg, "platform", src.Pool)
 	errState := register(reg, collector{
-		descs: []*prometheus.Desc{loaded, age, mismatch, pending, drops},
+		descs: []*prometheus.Desc{loaded, age, mismatch, pending, tokenPending, tokenDrops, drops},
 		collect: func(emit func(*prometheus.Desc, prometheus.ValueType, float64, ...string)) {
 			since, ok := src.Keys.ActiveSince()
 			emit(loaded, prometheus.GaugeValue, boolValue(ok))
@@ -198,6 +206,12 @@ func RegisterPlatformState(reg prometheus.Registerer, src PlatformSources) error
 			emit(mismatch, prometheus.GaugeValue, boolValue(src.Keys.KEKMismatch()))
 			if src.Pending != nil {
 				emit(pending, prometheus.GaugeValue, float64(src.Pending()))
+			}
+			if src.TokenPending != nil {
+				emit(tokenPending, prometheus.GaugeValue, float64(src.TokenPending()))
+			}
+			if src.TokenDrops != nil {
+				emit(tokenDrops, prometheus.CounterValue, float64(src.TokenDrops()))
 			}
 			if src.UnknownDrops != nil {
 				d := src.UnknownDrops()

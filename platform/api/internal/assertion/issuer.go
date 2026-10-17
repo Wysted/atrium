@@ -43,14 +43,50 @@ type SignerSource interface {
 	Signer() (keys.Signer, error)
 }
 
-// Request is the data of one assertion.
+// Values of the token claims (contract block 6, "Non-browser clients").
+const (
+	SubjectHuman = "human"
+	SubjectRobot = "robot"
+	ScopeRead    = "read"
+	ScopeAdmin   = "admin"
+)
+
+// Request is the data of one assertion. It is either a session assertion (SessionID) or a token assertion
+// (APITokenID, SubjectType and Scope, no SessionID); never both, never neither.
 type Request struct {
 	Audience  string // opaque app id (app_<ulid>)
 	Subject   string // internal user UUID
-	Email     string
+	Email     string // "" for robots
 	Name      string
-	SessionID string   // public sid
+	SessionID string   // public sid; empty exactly when APITokenID is set
 	Roles     []string // role keys of the initiative owning Audience
+	// Token fields: tid, sub_type and scope claims.
+	APITokenID  string
+	SubjectType string // SubjectHuman or SubjectRobot
+	Scope       string // ScopeRead or ScopeAdmin
+}
+
+// validate checks the shape of the request; it reports a programming error, never user input.
+func (r Request) validate() error {
+	if r.Audience == "" || r.Subject == "" {
+		return errors.New("assertion: audience and subject are required")
+	}
+	if (r.SessionID == "") == (r.APITokenID == "") {
+		return errors.New("assertion: exactly one of session id and api token id is required")
+	}
+	if r.APITokenID == "" {
+		if r.SubjectType != "" || r.Scope != "" {
+			return errors.New("assertion: subject type and scope are only for api token assertions")
+		}
+		return nil
+	}
+	if len(r.Roles) > 0 {
+		return errors.New("assertion: api token assertions carry no roles")
+	}
+	if r.SubjectType != SubjectHuman && r.SubjectType != SubjectRobot || r.Scope != ScopeRead && r.Scope != ScopeAdmin {
+		return errors.New("assertion: api token assertion needs a valid subject type and scope")
+	}
+	return nil
 }
 
 // Issued is a signed assertion plus the metadata callers log.
@@ -93,8 +129,8 @@ func NewIssuer(cfg Config) (*Issuer, error) {
 
 // Issue signs an assertion for req.
 func (i *Issuer) Issue(req Request) (Issued, error) {
-	if req.Audience == "" || req.Subject == "" || req.SessionID == "" {
-		return Issued{}, errors.New("assertion: audience, subject and session id are required")
+	if err := req.validate(); err != nil {
+		return Issued{}, err
 	}
 	if len(req.Roles) > MaxRoles {
 		return Issued{}, ErrTooManyRoles
@@ -124,8 +160,12 @@ func (i *Issuer) Issue(req Request) (Issued, error) {
 		"nbf":   iat.Unix(),
 		"exp":   exp.Unix(),
 		"jti":   jti,
-		"sid":   req.SessionID,
 		"roles": roles,
+	}
+	if req.APITokenID != "" {
+		claims["tid"], claims["sub_type"], claims["scope"] = req.APITokenID, req.SubjectType, req.Scope
+	} else {
+		claims["sid"] = req.SessionID
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodES256, claims)
 	token.Header["kid"] = signer.KID

@@ -69,6 +69,7 @@ type envOptions struct {
 	noReload    bool      // never load the keyring
 
 	requestTimeout time.Duration // per-request deadline; zero is the default
+	portalAppID    string        // PLATFORM_PORTAL_APP_ID
 
 	// google enables Google login against this fake provider. FakeLogin stays on unless noFakeLogin is set, to
 	// prove that the fake is switched off by the presence of Google. The env does not wait for discovery when
@@ -129,7 +130,7 @@ func newEnv(t *testing.T, opts envOptions) *env {
 
 	cfg := app.Config{
 		AuthHost: authHost, Issuer: issuerURL, FakeLogin: !opts.noFakeLogin, Pool: rt, Keyring: ring, Logger: log,
-		RequestTimeout: opts.requestTimeout,
+		RequestTimeout: opts.requestTimeout, PortalAppID: opts.portalAppID,
 	}
 	if opts.google != nil {
 		cfg.Google = opts.google.config()

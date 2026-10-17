@@ -112,6 +112,7 @@ func serve(ctx context.Context, cfg config, log *slog.Logger) error {
 	spawn(func(c context.Context) { rotator.Run(c, 0) })
 	spawn(job.Run)
 	spawn(a.LastSeen.Run)
+	spawn(a.TokenUse.Run)
 	spawn(a.RunUnknownHosts)
 	if a.Login != nil {
 		// Discovery retries in the background: Google being unreachable never blocks start-up or /readyz.

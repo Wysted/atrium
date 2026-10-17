@@ -23,6 +23,7 @@ import (
 	"platform/api/internal/postgres"
 	"platform/api/internal/ratelimit"
 	"platform/api/internal/session"
+	"platform/api/internal/tokenuse"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
@@ -66,6 +67,9 @@ type App struct {
 	// LastSeen aggregates the authorized requests per deployment host. The caller must run LastSeen.Run in the
 	// background: it flushes last_seen_at once per minute and once more when its context ends.
 	LastSeen *lastseen.Recorder
+	// TokenUse aggregates the tokens that authorized a request. The caller must run TokenUse.Run in the background:
+	// it flushes last_used_at once per minute and once more when its context ends.
+	TokenUse *tokenuse.Recorder
 	// MetricsHandler serves /metrics on its own listener (PLATFORM_METRICS_ADDR): the NetworkPolicy filters by port,
 	// not by path, so the metrics cannot share a listener that Traefik or the app namespaces reach.
 	MetricsHandler http.Handler
@@ -113,9 +117,16 @@ func New(cfg Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+	tokens := postgres.NewTokenRepo(cfg.Pool)
+	tokenUse, err := tokenuse.New(tokenuse.Config{Store: tokens, Logger: log})
+	if err != nil {
+		return nil, err
+	}
 	fa, err := forwardauth.New(forwardauth.Config{
 		AuthHost:       cfg.AuthHost,
 		Seen:           seen,
+		Tokens:         tokens,
+		TokenUse:       tokenUse,
 		Observer:       pm,
 		Apps:           deployments,
 		Sessions:       sessions,
@@ -159,6 +170,7 @@ func New(cfg Config) (*App, error) {
 
 	err = metrics.RegisterPlatformState(reg, metrics.PlatformSources{
 		Pool: cfg.Pool, Keys: cfg.Keyring, Pending: seen.Pending, UnknownDrops: fa.UnknownHostDrops,
+		TokenPending: tokenUse.Pending, TokenDrops: tokenUse.Dropped,
 	})
 	if err != nil {
 		return nil, err
@@ -185,6 +197,7 @@ func New(cfg Config) (*App, error) {
 		Login:            login,
 		InvalidateAccess: fa.Invalidate,
 		LastSeen:         seen,
+		TokenUse:         tokenUse,
 		MetricsHandler:   httpx.Recover(log, mux),
 		Metrics:          reg,
 		RunUnknownHosts:  fa.Run,

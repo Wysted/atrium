@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"platform/api/internal/access"
+	"platform/api/internal/apitoken"
 	"platform/api/internal/assertion"
 	"platform/api/internal/audit"
 )
@@ -24,7 +25,12 @@ type (
 	noopDenials   struct{}
 	noopIssuer    struct{}
 	noopAudit     struct{ audit.Recorder }
+	noopTokens    struct{}
 )
+
+func (noopTokens) TokenByHash(context.Context, []byte) (apitoken.Record, bool, error) {
+	return apitoken.Record{}, false, nil
+}
 
 func (noopEvaluator) Evaluate(context.Context, access.Request) (access.Decision, error) {
 	return access.Decision{}, nil
@@ -51,7 +57,7 @@ func TestPanicInTheDecisionIsCountedAsABackendError(t *testing.T) {
 	obs := &decisionObserver{}
 	h, err := New(Config{
 		AuthHost: "auth.example.test", Apps: panickingApps{}, Sessions: noopSessions{}, Evaluator: noopEvaluator{},
-		Profiles: noopProfiles{}, Denials: noopDenials{}, Issuer: noopIssuer{}, Audit: noopAudit{}, Observer: obs,
+		Profiles: noopProfiles{}, Denials: noopDenials{}, Issuer: noopIssuer{}, Audit: noopAudit{}, Tokens: noopTokens{}, Observer: obs,
 	})
 	if err != nil {
 		t.Fatal(err)

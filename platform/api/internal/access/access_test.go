@@ -90,8 +90,8 @@ func TestEvaluatorPortalApp(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			got, err := access.NewEvaluator(tt.facts, tt.opts...).Evaluate(context.Background(), req)
-			if err != nil || got.Allow != tt.allow {
-				t.Fatalf("allow=%v err=%v, want allow=%v", got.Allow, err, tt.allow)
+			if err != nil || got.Allow != tt.allow || got.PortalApp != tt.allow {
+				t.Fatalf("allow=%v portal=%v err=%v, want %v", got.Allow, got.PortalApp, err, tt.allow)
 			}
 		})
 	}

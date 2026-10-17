@@ -68,6 +68,9 @@ type Decision struct {
 	AppID        string
 	InitiativeID string
 	Roles        []string
+	// PortalApp is the portal fact of the resolved app (Facts.PortalApp), set whenever the host is known, allow or
+	// deny: ForwardAuth uses it to decide whether an Authorization header is read at all.
+	PortalApp bool
 }
 
 // Facts are the stored data needed to decide, loaded in a single repository call.
@@ -109,7 +112,7 @@ func Decide(req Request, f Facts) Decision {
 	if !f.HostKnown {
 		return Decision{Reason: ReasonUnknownHost}
 	}
-	d := Decision{AppID: f.AppID, InitiativeID: f.InitiativeID}
+	d := Decision{AppID: f.AppID, InitiativeID: f.InitiativeID, PortalApp: f.PortalApp}
 	switch {
 	case !f.UserFound:
 		d.Reason = ReasonUnknownUser

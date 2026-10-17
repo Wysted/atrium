@@ -77,3 +77,20 @@ func Hash(secret string) []byte {
 	h := sha256.Sum256([]byte(secret))
 	return h[:]
 }
+
+// Record is the token row found by hash together with its owner, as ForwardAuth needs it. The flags are computed
+// by the database at the time of the query (now() is the database clock), so a skewed replica cannot extend a token.
+type Record struct {
+	ID          string // tid claim
+	Scope       string
+	OwnerID     string
+	OwnerKind   string // users.kind: human or robot
+	OwnerEmail  string // "" for robots
+	OwnerName   string
+	Revoked     bool
+	Expired     bool
+	OwnerActive bool
+}
+
+// Usable reports whether the token authenticates a request: not revoked, not expired, owner active.
+func (r Record) Usable() bool { return !r.Revoked && !r.Expired && r.OwnerActive }

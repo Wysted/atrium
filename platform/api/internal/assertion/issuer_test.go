@@ -226,6 +226,12 @@ func TestIssueErrors(t *testing.T) {
 		{"missing audience", staticSigner{}, func(r *assertion.Request) { r.Audience = "" }, nil},
 		{"missing subject", staticSigner{}, func(r *assertion.Request) { r.Subject = "" }, nil},
 		{"missing session id", staticSigner{}, func(r *assertion.Request) { r.SessionID = "" }, nil},
+		{"session id and token id", staticSigner{}, func(r *assertion.Request) { *r = tokenRequest(); r.SessionID = "sid" }, nil},
+		{"token fields on a session assertion", staticSigner{}, func(r *assertion.Request) { r.Scope = assertion.ScopeRead }, nil},
+		{"token with roles", staticSigner{}, func(r *assertion.Request) { *r = tokenRequest(); r.Roles = []string{"editor"} }, nil},
+		{"token without scope", staticSigner{}, func(r *assertion.Request) { *r = tokenRequest(); r.Scope = "" }, nil},
+		{"token with unknown scope", staticSigner{}, func(r *assertion.Request) { *r = tokenRequest(); r.Scope = "write" }, nil},
+		{"token without subject type", staticSigner{}, func(r *assertion.Request) { *r = tokenRequest(); r.SubjectType = "" }, nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -245,5 +251,40 @@ func TestNewIssuerValidatesConfig(t *testing.T) {
 	}
 	if _, err := assertion.NewIssuer(assertion.Config{Issuer: testIssuer}); err == nil {
 		t.Error("missing signers accepted")
+	}
+}
+
+func tokenRequest() assertion.Request {
+	return assertion.Request{ //nolint:gosec // G101: fixture id, not a credential
+		Audience: "app_01J0000000000000000000000", Subject: "0198a1e2-0000-7000-8000-000000000002", Name: "deploy-bot",
+		APITokenID: "0198a1e2-0000-7000-8000-0000000000bb", SubjectType: assertion.SubjectRobot, Scope: assertion.ScopeRead,
+	}
+}
+
+// A token assertion carries tid, sub_type and scope, no sid, an empty email for the robot and an empty roles array.
+func TestIssueTokenAssertion(t *testing.T) {
+	signer := newSigner(t)
+	issued, err := newIssuer(t, staticSigner{signer: signer}).Issue(tokenRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var claims jwt.MapClaims
+	_, err = jwt.NewParser(jwt.WithValidMethods([]string{"ES256"}), jwt.WithTimeFunc(func() time.Time { return now })).
+		ParseWithClaims(issued.Token, &claims, func(*jwt.Token) (any, error) { return &signer.Key.PublicKey, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	for k, v := range map[string]any{
+		"tid": "0198a1e2-0000-7000-8000-0000000000bb", "sub_type": "robot", "scope": "read", "email": "", "name": "deploy-bot",
+	} {
+		if claims[k] != v {
+			t.Errorf("claim %s = %v, want %v", k, claims[k], v)
+		}
+	}
+	if _, ok := claims["sid"]; ok {
+		t.Error("token assertion carries sid")
+	}
+	if roles, ok := claims["roles"].([]any); !ok || len(roles) != 0 {
+		t.Errorf("roles = %#v, want empty array", claims["roles"])
 	}
 }
