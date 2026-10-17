@@ -6,10 +6,12 @@ Start with [architecture.md](architecture.md) to see how the pieces fit; use the
 
 | Document | What it covers |
 |---|---|
+| [install.md](install.md) | Install atrium on your own Kubernetes cluster |
 | [architecture.md](architecture.md) | Components, request flow, trust model, offboarding, glossary |
 | [platform-gitops/README.md](../platform-gitops/README.md) | Kubernetes manifests, overlays, the smoke test and runbooks |
 | [Google client secret rotation](../platform-gitops/docs/runbooks/google-client-secret-rotation.md) | Runbook for rotating the OAuth client secret |
-| [reference/login.md](reference/login.md) | Google login, sessions, configuration variables |
+| [reference/configuration.md](reference/configuration.md) | Every environment variable and secret file of each binary |
+| [reference/login.md](reference/login.md) | Google login, sessions, cookies |
 | [reference/metrics.md](reference/metrics.md) | Metrics catalog, probe, integration health |
 | [reference/keys.md](reference/keys.md) | Signing keys, rotation, JWKS |
 | [reference/api.md](reference/api.md) | Portal API: who administers what, tokens, robots, areas |

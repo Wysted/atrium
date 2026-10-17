@@ -30,8 +30,9 @@ manage initiatives (groups of apps), roles, grants, API tokens and areas.
 | Document | What it covers |
 |---|---|
 | `docs/README.md` | index of the documentation by audience |
+| `docs/install.md` | install atrium on your cluster |
 | `docs/architecture.md` | components, request flow, trust model and glossary |
-| `docs/reference/` | assertion, ForwardAuth, keys, login, data model, portal API and metrics |
+| `docs/reference/` | assertion, ForwardAuth, keys, login, configuration, data model, portal API and metrics |
 | `platform-gitops/README.md` | Kubernetes manifests, overlays, the smoke test and runbooks |
 | `platform/examples/hello/README.md` | the minimal app behind the platform |
 | `platform/web/COMPONENTS.md` | the portal web UI components |

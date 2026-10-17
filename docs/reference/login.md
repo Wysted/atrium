@@ -18,14 +18,9 @@ How users sign in with Google and how sessions, cookies and one-time codes work.
 
 ## Configuration and availability
 
-| Variable | Meaning |
-|---|---|
-| `PLATFORM_GOOGLE_CLIENT_ID` | OAuth client id (not secret) |
-| `PLATFORM_GOOGLE_CLIENT_SECRET_FILE` | File with the client secret; same permission policy as the KEK (regular file, at most 0640) |
-| `PLATFORM_ALLOWED_HD` | Comma-separated allowlist of `hd` values, lowercase, no empty entries |
-| `PLATFORM_FAKE_LOGIN` | Development only. Ignored (with a warning) when Google is configured: the two never coexist |
+Variables, formats and files: [configuration.md](configuration.md#platform-api).
 
-- The three Google variables go together; without Google, `PLATFORM_FAKE_LOGIN=true` is required.
+- The three Google variables go together; without Google, `PLATFORM_FAKE_LOGIN=true` (development only, ignored with a warning when Google is configured) is required.
 - The Google issuer is fixed to `https://accounts.google.com`; it is never configurable through the environment.
 - Google discovery runs in the background with backoff and never blocks startup. Until it is ready, `/login`
   without a session and `/oauth2/callback` answer 503 with `Retry-After`. `/readyz` and `/forwardauth` do not

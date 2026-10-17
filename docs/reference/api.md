@@ -281,12 +281,7 @@ Personal access tokens (humans) and robot tokens are one mechanism, for CLI and 
 
 ### Configuration
 
-Configuration (portal process; both optional Go durations above zero, an invalid value fails start-up):
-
-| Variable | Meaning |
-|---|---|
-| `PORTAL_TOKEN_MAX_TTL_PERSONAL` | Cap and default lifetime of a personal token. Default `720h` |
-| `PORTAL_TOKEN_MAX_TTL_ROBOT` | Cap and default lifetime of a robot token. Default `2160h`; used by the robot token endpoint |
+The lifetime caps of personal and robot tokens (`PORTAL_TOKEN_MAX_TTL_PERSONAL`, default `720h`, and `PORTAL_TOKEN_MAX_TTL_ROBOT`, default `2160h`; the robot one applies to the robot token endpoint) are in [configuration.md](configuration.md#portal).
 
 ### Personal token API
 

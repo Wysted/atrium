@@ -127,15 +127,7 @@ plus `unprotected` points to a missing or wrong route (no authorized traffic eve
 that was seen means a route without the ForwardAuth middleware.
 
 - Every `unprotected` and `unexpected` result logs a WARN with host, app id and HTTP status.
-- Configuration (portal process):
-
-| Variable | Meaning |
-|---|---|
-| `PORTAL_PROBE_INTERVAL` | Time between rounds. Default `5m`; `0` disables the probe; otherwise between `1m` and `24h`. Each wait is the interval plus or minus 10 percent |
-| `PORTAL_PROBE_ADDR` | `host:port` the probe connects to, whatever the deployment host is (the Traefik service inside the cluster). TLS server name and `Host` stay the deployment host. **Required when the probe is enabled**: start-up fails with a config error otherwise (set `PORTAL_PROBE_INTERVAL=0` to run without a probe) |
-| `PORTAL_PROBE_CA_FILE` | Optional PEM bundle added to the system roots to verify the entrypoint certificate |
-| `PORTAL_PROBE_INSECURE_TLS` | Development only, default `false`: skips the certificate verification. Logged at Error level on every start, like `PORTAL_ALLOW_PRIVILEGED_DB_LOGIN` |
-
+- Configuration (`PORTAL_PROBE_INTERVAL`, `PORTAL_PROBE_ADDR`, `PORTAL_PROBE_CA_FILE`, `PORTAL_PROBE_INSECURE_TLS`): [configuration.md](configuration.md#portal).
 - Single runner: every replica runs the loop, but a round takes a session-level PostgreSQL advisory lock (try, never
   waits) on a dedicated connection and probes only the deployments never probed or last probed more than half an
   interval ago (database clock). A replica that wakes up while another one holds the lock, or just after it

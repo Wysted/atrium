@@ -31,6 +31,26 @@ Pending work and open questions for atrium. Detailed context lives in
   certificate through the maintainer's Cloudflare token, so a contributor cannot reproduce the local TLS setup. Option:
   a self-signed local CA when no token is present.
 
+## Adopter bootstrap gaps in `base/`
+
+Found while writing `docs/install.md`. Adopters work around each one by hand today.
+
+- [ ] **Fake login is the default in `base/`.** `base/platform-api` sets `PLATFORM_FAKE_LOGIN=true` (the comment
+  "Google login arrives in a later part" is stale): the fake login accepts any email, so an adopter who forgets the
+  Google patch gets an open login with no error. Default to `false` in `base/` and set `true` in `overlays/local`.
+- [ ] **No migration creates the `platform` initiative, the portal app and its deployment.** Without the deployment
+  row the portal host does not resolve, so the API cannot create it (chicken and egg). Only `overlays/local/seed.sql`
+  (development data) does it; adopters INSERT by hand.
+- [ ] **`platform_portal` and `portal_app` exist only in `overlays/local/roles.sql`.** `initdb.sh` creates three
+  roles; migration 0009 needs `platform_portal` and `platform_owner` has no `CREATEROLE`.
+- [ ] **NetworkPolicy selectors are fixed** to `kube-system`/`k8s-app=kube-dns`, `traefik`/`app.kubernetes.io/name=traefik`,
+  the Traefik pod port 8443, `platform-db` and `monitoring`/`prometheus`.
+- [ ] **Egress to Google exists only in `overlays/local-google`**, and its `except` list is k3d-specific.
+- [ ] **Hardcoded in `base/`:** `PGHOST`, `PGSSLMODE=disable`, `PORTAL_PROBE_ADDR`, `PORTAL_JWKS_URL`, and
+  `storageClassName: local-path` with 2Gi.
+- [ ] **Migrate-before-platform-api ordering is not enforced in `base/`** (README "Ordering"): needs a PreSync hook or
+  `dependsOn` in the adopter's GitOps.
+
 ## Next features
 
 - [ ] **`npm audit` in the web build tooling.** High advisories in Nuxt's build tooling (`braces`, `node-forge` via
