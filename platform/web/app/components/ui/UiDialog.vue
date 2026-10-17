@@ -18,6 +18,8 @@ const props = defineProps<{
   title: string
   description: string
   busy?: boolean
+  /** Escape and outside clicks do not close it (e.g. while a one-time secret is shown); the X and in-dialog buttons still do. */
+  persistent?: boolean
   initialFocus?: { focus: () => void } | null
 }>()
 
@@ -35,7 +37,7 @@ function onOpenAutoFocus(event: Event) {
 }
 
 function onDismiss(event: Event) {
-  if (props.busy) event.preventDefault()
+  if (props.busy || props.persistent) event.preventDefault()
 }
 </script>
 

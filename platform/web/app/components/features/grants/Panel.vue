@@ -72,10 +72,10 @@ function onCreated() {
   void list.reload()
 }
 
-const subjectLabel = computed(() => {
+const revokeSubject = computed(() => {
   const grant = revoking.value
   if (!grant) return ''
-  if (grant.user) return grant.user.email
+  if (grant.user) return grant.user.email ? grant.user.email : `robot ${subjectLabel(grant.user)}`
   return grant.group ? `group ${grant.group.key}` : ''
 })
 </script>
@@ -142,7 +142,7 @@ const subjectLabel = computed(() => {
       <FeaturesGrantsCreateDialog v-model:open="createOpen" :initiative-id="initiativeId" @created="onCreated" />
       <UiConfirmDialog
         v-model:open="revokeOpen"
-        :title="`Revoke ${revoking?.role.key ?? 'role'} from ${subjectLabel}?`"
+        :title="`Revoke ${revoking?.role.key ?? 'role'} from ${revokeSubject}?`"
         description="They lose the access this grant gives. Other grants they hold, directly or through a group, stay."
         confirm-label="Revoke"
         :busy="revokeBusy"

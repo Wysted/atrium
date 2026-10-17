@@ -139,7 +139,10 @@ export interface GrantGroup {
   name: string
 }
 
-/** One grant. Exactly one of `user` and `group` is set, the other is null. */
+/**
+ * One grant. Exactly one of `user` and `group` is set, the other is null. A robot is a `user` with an empty
+ * `email` (the robot's name is in `name`).
+ */
 export interface Grant {
   id: string
   initiative_id: string
@@ -159,10 +162,11 @@ export interface GrantList {
   next_cursor?: string
 }
 
-/** POST /api/v1/initiatives/{id}/grants. Exactly one of `email` and `group_id`; `expires_at` must be in the future. */
+/** POST /api/v1/initiatives/{id}/grants. Exactly one of `email`, `group_id` and `robot_id`; `expires_at` must be in the future. */
 export interface CreateGrantBody {
   email?: string
   group_id?: string
+  robot_id?: string
   role_id: string
   expires_at?: string
 }
@@ -294,14 +298,18 @@ export interface RevokeSessionsResult {
 }
 
 /**
- * One audit row (`auditEventJSON`). `actor_*` and `initiative_id` are null when unknown or global. `before` and
- * `after` are arbitrary JSON documents (or null): data, never markup.
+ * One audit row (`auditEventJSON`). `actor_*` and `initiative_id` are null when unknown or global; a robot has
+ * `actor_email` null and its name in `actor_name`. `before` and `after` are arbitrary JSON documents (or null):
+ * data, never markup.
  */
 export interface AuditEvent {
   id: string
   occurred_at: string
   actor_id: string | null
   actor_email: string | null
+  actor_name: string | null
+  /** The API token that made the request; null (or absent) for a browser session. */
+  token_id?: string | null
   initiative_id: string | null
   action: string
   target_type: string
@@ -363,4 +371,78 @@ export interface OrphanHost {
 /** GET /api/v1/health/orphan-hosts (platform admins only; most recent first, at most 100, no cursor). */
 export interface OrphanHostList {
   hosts: OrphanHost[]
+}
+
+/** `api_tokens.scope`: a ceiling on the owner's permissions (`read` = GET/HEAD only). */
+export type TokenScope = 'read' | 'admin'
+
+/** A token as listed (`tokenJSON`): never the secret or the hash. `revoked_at` null while not revoked. */
+export interface ApiToken {
+  id: string
+  name: string
+  scope: TokenScope
+  created_at: string
+  expires_at: string
+  last_used_at: string | null
+  revoked_at: string | null
+}
+
+/** GET /api/v1/me/tokens and /robots/{id}/tokens (newest first; expired and revoked ones stay listed for 30 days). */
+export interface TokenList {
+  tokens: ApiToken[]
+  next_cursor?: string
+}
+
+/** The 201 of a token creation: the only response that carries the secret, once. */
+export interface CreatedToken extends ApiToken {
+  secret: string
+}
+
+/** POST /api/v1/me/tokens and /robots/{id}/tokens. `expires_in` is in seconds; omitted = the server's cap for the owner kind. */
+export interface CreateTokenBody {
+  name: string
+  scope: TokenScope
+  expires_in?: number
+}
+
+/** What a manager sees of a robot (`robotRefJSON`): enough to grant. */
+export interface RobotRef {
+  id: string
+  name: string
+  status: UserStatus
+}
+
+/** A robot as platform admins see it (`robotJSON`). The owner is informational, not authority. */
+export interface Robot extends RobotRef {
+  owner_user_id: string | null
+  /** Resolved by the API; null with no owner. The name may be empty. */
+  owner_email: string | null
+  owner_name: string | null
+  created_at: string
+  last_used_at: string | null
+}
+
+/** GET /api/v1/robots for platform admins. */
+export interface RobotList {
+  robots: Robot[]
+  next_cursor?: string
+}
+
+/** GET /api/v1/robots for managers (also the shape of the grant picker's source). */
+export interface RobotRefList {
+  robots: RobotRef[]
+  next_cursor?: string
+}
+
+/** POST /api/v1/robots. */
+export interface CreateRobotBody {
+  name: string
+  owner_user_id?: string
+}
+
+/** PATCH /api/v1/robots/{id}. At least one field; `owner_user_id: ''` clears the owner. */
+export interface PatchRobotBody {
+  name?: string
+  status?: UserStatus
+  owner_user_id?: string
 }

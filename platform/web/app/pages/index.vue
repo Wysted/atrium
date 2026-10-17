@@ -31,9 +31,14 @@ async function retry() {
 <template>
   <BaseStack :gap="6">
     <BasePageHeader ref="header" :title="title" description="The apps you can open.">
-      <BaseButton v-if="showAdmin" to="/admin" variant="secondary">
-        Administration
-      </BaseButton>
+      <BaseCluster :gap="2">
+        <BaseButton to="/tokens" variant="secondary">
+          API tokens
+        </BaseButton>
+        <BaseButton v-if="showAdmin" to="/admin" variant="secondary">
+          Administration
+        </BaseButton>
+      </BaseCluster>
     </BasePageHeader>
 
     <BaseCluster v-if="meFailed && apps.data.value" :gap="2">

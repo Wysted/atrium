@@ -3,7 +3,7 @@ import type { Grant } from '~/types/api'
 import type { TableColumn } from '~/types/ui'
 
 /**
- * Grants of an initiative: subject (user or group), role, expiry and creation date. An expired grant is shown
+ * Grants of an initiative: subject (user, robot or group), role, expiry and creation date. An expired grant is shown
  * with an "Expired" badge (the API lists them). With `canRevoke` an actions column offers "Revoke"; the panel owns
  * the confirmation and the request.
  */
@@ -47,8 +47,11 @@ watch(() => props.grants, () => {
           <BaseText as="span" size="sm" weight="medium">
             {{ row.user.name || row.user.email }}
           </BaseText>
-          <BaseText v-if="row.user.name" as="span" size="xs" tone="muted">
+          <BaseText v-if="row.user.name && row.user.email" as="span" size="xs" tone="muted">
             {{ row.user.email }}
+          </BaseText>
+          <BaseText v-else-if="!row.user.email" as="span" size="xs" tone="muted">
+            Robot
           </BaseText>
         </BaseStack>
         <BaseStack v-else-if="row.group" :gap="0">
@@ -88,7 +91,7 @@ watch(() => props.grants, () => {
         <BaseButton
           size="sm"
           variant="danger"
-          :aria-label="`Revoke ${row.role.key} from ${row.user ? row.user.email : row.group?.key}`"
+          :aria-label="`Revoke ${row.role.key} from ${row.user ? subjectLabel(row.user) : row.group?.key}`"
           @click="emit('revoke', row)"
         >
           Revoke

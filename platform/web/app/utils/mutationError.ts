@@ -34,6 +34,8 @@ const CODE_COPY: Readonly<Record<string, string>> = {
   exactly_one_required: 'Provide exactly one of the options.',
   reserved: 'This value is reserved.',
   at_least_one_required: 'Provide at least one value.',
+  not_allowed: 'This value is not allowed.',
+  too_large: 'This value is too large.',
 }
 
 const GENERIC_INVALID = 'Check the values and try again.'
