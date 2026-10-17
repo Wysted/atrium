@@ -9,25 +9,33 @@
 #   platform_runtime  NOLOGIN group role. Created here because platform_owner has no CREATEROLE: migration 0003
 #                     creates it only IF NOT EXISTS, and platform_api needs to be a member beforehand.
 #   platform_api      LOGIN used by `platform-api serve`; member only of platform_runtime.
+#   platform_portal   NOLOGIN group role of the portal process; created here for the same reason as platform_runtime
+#                     (migration 0009 only creates it IF NOT EXISTS).
+#   portal_app        LOGIN used by `portal serve`; member only of platform_portal.
 set -euo pipefail
 
 secrets=/run/secrets/db
 owner_pw="$(<"$secrets/owner-password")"
 api_pw="$(<"$secrets/api-password")"
+portal_pw="$(<"$secrets/portal-password")"
 
 {
   printf "\\set owner_password '%s'\n" "$owner_pw"
   printf "\\set api_password '%s'\n" "$api_pw"
+  printf "\\set portal_password '%s'\n" "$portal_pw"
   cat <<'SQL'
 CREATE ROLE platform_owner LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS PASSWORD :'owner_password';
 CREATE ROLE platform_runtime NOLOGIN;
 CREATE ROLE platform_api LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS PASSWORD :'api_password';
 GRANT platform_runtime TO platform_api;
+CREATE ROLE platform_portal NOLOGIN;
+CREATE ROLE portal_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS PASSWORD :'portal_password';
+GRANT platform_portal TO portal_app;
 -- The database must belong to platform_owner: since PostgreSQL 15 schema public is owned by pg_database_owner,
 -- and migration 0003 runs GRANT USAGE ON SCHEMA public as the owner.
 CREATE DATABASE platform OWNER platform_owner;
 REVOKE ALL ON DATABASE platform FROM PUBLIC;
-GRANT CONNECT ON DATABASE platform TO platform_owner, platform_api;
+GRANT CONNECT ON DATABASE platform TO platform_owner, platform_api, portal_app;
 SQL
 } | psql -v ON_ERROR_STOP=1 -q -U "$POSTGRES_USER" -d postgres
 

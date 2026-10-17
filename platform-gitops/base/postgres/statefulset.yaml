@@ -1,5 +1,5 @@
 # Single-instance PostgreSQL for the local cluster. Same image digest as /compose.yaml.
-# Secret postgres-bootstrap (created by overlays/local/up.sh): admin-password, owner-password, api-password.
+# Secret postgres-bootstrap (created by overlays/local/up.sh): admin-password, owner-password, api-password, portal-password.
 apiVersion: v1
 kind: ServiceAccount
 metadata:

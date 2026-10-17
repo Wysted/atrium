@@ -1,6 +1,6 @@
 -- Database roles that cannot be created by the migrations (platform_owner has no CREATEROLE). Run by roles.sh as the
--- bootstrap superuser over the postgres pod's local socket. Idempotent; works on a fresh and on an existing volume
--- (initdb.sh only runs on the first initialization of the data directory).
+-- bootstrap superuser over the postgres pod's local socket. Idempotent. base/postgres/initdb.sh now creates these roles on a
+-- fresh volume, so this is a no-op there; it is still needed for volumes initialized before that (initdb.sh only runs once).
 --
 --   platform_portal  NOLOGIN group role of the portal process. Migration 0009 creates it only IF NOT EXISTS, so
 --                    it must exist beforehand (the owner cannot create roles).

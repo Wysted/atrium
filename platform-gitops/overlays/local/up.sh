@@ -70,7 +70,7 @@ kc apply -k "$REL/namespaces"
 
 echo "==> secrets in cluster"
 secret platform-db postgres-bootstrap \
-  admin-password="$SECRETS/k3d-pg-admin-password" owner-password="$SECRETS/k3d-pg-owner-password" api-password="$SECRETS/k3d-pg-api-password"
+  admin-password="$SECRETS/k3d-pg-admin-password" owner-password="$SECRETS/k3d-pg-owner-password" api-password="$SECRETS/k3d-pg-api-password" portal-password="$SECRETS/k3d-pg-portal-password"
 secret platform platform-kek kek="$SECRETS/k3d-platform-kek"
 secret platform platform-owner-pgpass pgpass="$SECRETS/k3d-owner-pgpass"
 secret platform platform-api-pgpass pgpass="$SECRETS/k3d-api-pgpass"
