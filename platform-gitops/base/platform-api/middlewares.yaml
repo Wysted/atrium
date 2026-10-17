@@ -23,7 +23,7 @@ spec:
     address: http://platform-api-internal.platform.svc.cluster.local:8081/forwardauth
     # Deprecated in v3.7; kept explicitly false (no trustedIPs on the entrypoint: client X-Forwarded-* never trusted).
     trustForwardHeader: false
-    # Allowlist (contract block 2). Sec-Fetch-Site and Origin feed the logout CSRF check.
+    # Allowlist (docs/reference/forwardauth.md). Sec-Fetch-Site and Origin feed the logout CSRF check.
     authRequestHeaders:
       - Cookie
       - Accept
@@ -34,7 +34,7 @@ spec:
       - Access-Control-Request-Headers
       - X-Requested-With
       - User-Agent
-      # Read by platform-api only on the portal host (contract block 6, "Non-browser clients"); apps keep their own.
+      # Read by platform-api only on the portal host (docs/reference/api.md, "Tokens"); apps keep their own.
       - Authorization
     # Bytes read from the auth response; larger -> 401 (default is unlimited).
     maxResponseBodySize: 4096

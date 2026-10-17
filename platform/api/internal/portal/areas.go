@@ -9,7 +9,7 @@ import (
 	"github.com/Wysted/atrium/platform/api/internal/adminz"
 )
 
-// Areas (contract block 6, "Area supervisors"): the administration of areas, their members and their supervisors,
+// Areas (docs/reference/api.md, "Area supervisors"): the administration of areas, their members and their supervisors,
 // by platform admins only. What the supervisors reach through them is in tokens.go and robots.go.
 
 // Bounds of the free-text inputs of an area (the key CHECK of areas mirrors maxAreaKey).

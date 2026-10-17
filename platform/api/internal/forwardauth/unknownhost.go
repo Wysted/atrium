@@ -9,7 +9,7 @@ import (
 	"github.com/Wysted/atrium/platform/api/internal/access"
 )
 
-// Recording of unknown_host denials (contract block 2). The host comes straight from the network, so the
+// Recording of unknown_host denials (docs/reference/forwardauth.md). The host comes straight from the network, so the
 // recorder treats it as hostile input: it is validated, rate limited and written by a background goroutine, and
 // the response to ForwardAuth never waits for any of it.
 const (

@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	// DefaultCacheTTL is the lifetime of a cached access decision (contract block 4).
+	// DefaultCacheTTL is the lifetime of a cached access decision (docs/reference/data-model.md).
 	DefaultCacheTTL = 30 * time.Second
 	// maxCacheEntries bounds memory; beyond it entries are not stored (the next request just reads the database).
 	maxCacheEntries = 100_000

@@ -34,7 +34,7 @@ const (
 	envKEKFile         = keys.KEKFileEnv // PLATFORM_KEK_FILE
 	envIdleTimeout     = "PLATFORM_IDLE_TIMEOUT"
 	envFakeLogin       = "PLATFORM_FAKE_LOGIN"
-	// envPortalAppID is the optional id of the portal app, the one app any active user may open (block 6).
+	// envPortalAppID is the optional id of the portal app, the one app any active user may open (docs/reference/api.md).
 	envPortalAppID = "PLATFORM_PORTAL_APP_ID"
 	// Google login. All three are set together or none is (see loadConfig).
 	envGoogleClientID         = "PLATFORM_GOOGLE_CLIENT_ID"

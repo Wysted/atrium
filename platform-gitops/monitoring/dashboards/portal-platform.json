@@ -15,7 +15,7 @@
   "from": "now-6h",
   "to": "now"
  },
- "description": "platform-api and portal metrics (platform/docs/contract.md, block 6). Needs jobs 'platform-api' and 'portal'.",
+ "description": "platform-api and portal metrics (docs/reference/metrics.md). Needs jobs 'platform-api' and 'portal'.",
  "templating": {
   "list": [
    {
@@ -450,7 +450,7 @@
    "id": 9,
    "type": "timeseries",
    "title": "ForwardAuth decisions by decision / reason",
-   "description": "Closed sets only (no host, no app): the cardinality rule of contract block 6. decision=error is what ForwardAuthErrorsHigh watches.",
+   "description": "Closed sets only (no host, no app): the cardinality rule of docs/reference/metrics.md. decision=error is what ForwardAuthErrorsHigh watches.",
    "datasource": {
     "type": "prometheus",
     "uid": "${datasource}"

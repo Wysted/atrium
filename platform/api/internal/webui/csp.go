@@ -182,7 +182,7 @@ func scriptHash(n *html.Node) (hash string, ok bool, err error) {
 	return "'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'", true, nil
 }
 
-// buildCSP assembles the policy of the HTML responses, with the directives and the order of the contract.
+// buildCSP assembles the policy of the HTML responses, with the directives and the order of docs/reference/api.md ("Content-Security-Policy and the web UI").
 // authOrigin is the validated origin of the auth host: Chrome applies form-action to the 303 that follows the
 // logout POST.
 func buildCSP(hashes []string, authOrigin string) string {

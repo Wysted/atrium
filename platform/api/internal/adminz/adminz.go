@@ -1,5 +1,5 @@
 // Package adminz answers "may this caller do this administrative action on this resource?" for the portal
-// API (contract block 6, "Who administers what"). Like access.Decide it is a pure, AuthZEN-shaped function
+// API (docs/reference/api.md, "Who administers what"). Like access.Decide it is a pure, AuthZEN-shaped function
 // (subject, action, resource): it knows nothing about HTTP, JWT or storage, and it fails closed.
 //
 // Decide says who may attempt an action. It does not enforce invariants that depend on stored data; those run
@@ -43,7 +43,7 @@ const (
 	GroupMemberAdd    Action = "group_member.add"
 	GroupMemberRemove Action = "group_member.remove"
 
-	// Areas (block 6, "Area supervisors"): only platform admins create, delete and populate them.
+	// Areas (docs/reference/api.md, "Area supervisors"): only platform admins create, delete and populate them.
 	AreaCreate           Action = "area.create"
 	AreaDelete           Action = "area.delete"
 	AreaMemberAdd        Action = "area_member.add"
@@ -55,19 +55,19 @@ const (
 	UserEnable         Action = "user.enable"
 	UserSessionsRevoke Action = "user_sessions.revoke"
 
-	// Robots and their tokens (block 6, "Non-browser clients"): only platform admins; managers may list the
+	// Robots and their tokens (docs/reference/api.md, "Tokens"): only platform admins; managers may list the
 	// robots (RobotList below) to grant them.
 	RobotCreate      Action = "robot.create"
 	RobotUpdate      Action = "robot.update"
 	RobotTokenCreate Action = "robot_token.create" //nolint:gosec // G101: an action name, not a credential
 	RobotTokenList   Action = "robot_token.list"
 
-	// TokenRevokeAny authorizes revocation by secret only (block 6, "Non-browser clients"): global, so a supervisor
+	// TokenRevokeAny authorizes revocation by secret only (docs/reference/api.md, "Tokens"): global, so a supervisor
 	// never gets it. DELETE /tokens/{id} of another owner uses TokenRevokeSupervised, which admins pass.
 	TokenRevokeAny Action = "token.revoke_any"
 )
 
-// Actions of the area supervisors (block 6, "Area supervisors"): platform admins pass them whatever the target,
+// Actions of the area supervisors (docs/reference/api.md, "Area supervisors"): platform admins pass them whatever the target,
 // a supervisor only for a person of an area they supervise.
 const (
 	// TokenRevokeSupervised revokes a token that is not the caller's (DELETE /tokens/{id}).

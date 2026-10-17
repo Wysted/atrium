@@ -38,7 +38,7 @@ type Config struct {
 	// Issuer is empty in production (GoogleIssuer) and set only by tests.
 	Google    *googlelogin.Config
 	FakeLogin bool
-	// PortalAppID is the id of the portal app (PLATFORM_PORTAL_APP_ID, block 6); empty means there is none.
+	// PortalAppID is the id of the portal app (PLATFORM_PORTAL_APP_ID, docs/reference/api.md); empty means there is none.
 	PortalAppID string
 	Pool        *pgxpool.Pool
 	Keyring     *keys.Keyring

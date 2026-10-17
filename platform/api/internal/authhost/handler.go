@@ -35,7 +35,7 @@ const (
 	PathCallback  = "/oauth2/callback"
 	PathSignedOut = "/signed-out"
 
-	// callbackPath is the reserved path of every app host (contract block 2).
+	// callbackPath is the reserved path of every app host (docs/reference/forwardauth.md).
 	callbackPath = "/_platform/callback"
 
 	queryRD    = "rd"
@@ -399,7 +399,7 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 		h.providerUnavailable(w)
 		return
 	case errors.As(err, &rejected):
-		// Contract (Open items): rejections log hd and email; the user sees nothing specific.
+		// docs/reference/login.md ("Limitations"): rejections log hd and email; the user sees nothing specific.
 		h.log.Warn("google login rejected", "reason", rejected.Reason, "hd", rejected.HD, "email", rejected.Email)
 		outcome = LoginRejected
 		accessDenied(w)

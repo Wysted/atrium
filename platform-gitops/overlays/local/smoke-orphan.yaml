@@ -1,6 +1,6 @@
 # Temporary fixture TEMPLATE (rendered with a unique host per run, applied and removed by browser-check/browser-check.sh; __ORPHAN_HOST__ is the placeholder): routes a host that no app declares to
-# Traefik's websecure entrypoint, so ForwardAuth sees it and refuses it as unknown_host (an "orphan host", contract
-# block 2). The backend (hello-a) is never reached: ForwardAuth answers 403 first. Never part of the platform.
+# Traefik's websecure entrypoint, so ForwardAuth sees it and refuses it as unknown_host (an "orphan host", docs/reference/metrics.md,
+# "Orphan hosts"). The backend (hello-a) is never reached: ForwardAuth answers 403 first. Never part of the platform.
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:

@@ -1,4 +1,4 @@
-// Package portalhttp is the HTTP surface of the portal process (contract block 6): the request-protection
+// Package portalhttp is the HTTP surface of the portal process (docs/reference/api.md, "Request protection"): the request-protection
 // middleware chain, the response headers, the JSON helpers and the handlers of the API. It depends on the
 // application layer (internal/portal) through a small consumer-side interface and knows nothing about SQL.
 package portalhttp
@@ -90,7 +90,7 @@ func isSafeMethod(method string) bool {
 	return method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions
 }
 
-// Response headers of every portal response (contract block 6). The Content-Security-Policy set here is the
+// Response headers of every portal response (docs/reference/api.md, "Request protection"). The Content-Security-Policy set here is the
 // one of API responses. The web UI handler (later part) serves HTML and replaces it with the SPA policy, which
 // carries the script hashes computed from the embedded HTML at start-up; that is the only place where a CSP
 // is overridden.

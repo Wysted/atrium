@@ -1,5 +1,5 @@
 // Package session implements the central sessions, per-app sessions and one-time login codes of
-// contract block 5. Time decisions (expiry, idle, throttling) are taken by PostgreSQL's now() inside the
+// docs/reference/login.md. Time decisions (expiry, idle, throttling) are taken by PostgreSQL's now() inside the
 // store, never by replica clocks; this package owns the rules, tokens and validation.
 package session
 
@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-// Cookie names (contract block 5). All are host-only, Secure, HttpOnly, Path=/ and carry a 256-bit random value.
+// Cookie names (docs/reference/login.md). All are host-only, Secure, HttpOnly, Path=/ and carry a 256-bit random value.
 const (
 	CookieSession = "__Host-Http-platform_session" // auth host: central session
 	CookieApp     = "__Host-Http-platform_app"     // each app host: per-app session
@@ -31,7 +31,7 @@ const (
 	AbsoluteLifetime = 8 * time.Hour
 	// DefaultIdleTimeout is how long a central session survives without any request from any app.
 	DefaultIdleTimeout = 45 * time.Minute
-	// MinIdleTimeout and MaxIdleTimeout are the contract range for the idle timeout (block 5: 30-60 min).
+	// MinIdleTimeout and MaxIdleTimeout are the range of docs/reference/login.md for the idle timeout (30-60 min).
 	// The minimum also keeps the idle window well above TouchInterval, so the throttled last_seen_at write
 	// can never make an active session look idle.
 	MinIdleTimeout = 30 * time.Minute

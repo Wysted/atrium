@@ -7,11 +7,11 @@
 # Assumptions for adopters that scrape with their own configuration:
 #   - platform-api is scraped with job="platform-api" and the portal with job="portal" (the PodMonitors in
 #     ../operator set it; with a static or annotation-based config, relabel to these names);
-#   - the metric catalog is the one in platform/docs/contract.md, block 6 "Metrics";
+#   - the metric catalog is the one in docs/reference/metrics.md, "Metrics";
 #   - per-replica rules (SigningKey*, DBPoolSaturated) use the `pod` label, which the PodMonitors add; a scrape config
 #     that does not attach the pod name must relabel it (or the alert text loses the replica, not the alert itself);
 #   - thresholds are starting points, tune them to the load of the installation;
-#   - LoginsFailing and LoginProviderUnavailable use platform_logins_total (contract.md block 6, outcome is a closed set);
+#   - LoginsFailing and LoginProviderUnavailable use platform_logins_total (docs/reference/metrics.md, outcome is a closed set);
 #   - ProbeNotWriting needs portal_probe_interval_seconds (0 = probe disabled, the rule never fires then) and
 #     portal_probe_last_write_timestamp_seconds.
 #

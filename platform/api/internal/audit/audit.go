@@ -1,4 +1,4 @@
-// Package audit records security-relevant events (contract block 5, rule 9) in the append-only
+// Package audit records security-relevant events (docs/reference/login.md, "Rules", rule 9) in the append-only
 // audit_events table. Events never carry tokens, cookies or other secrets: only ids and coarse context.
 package audit
 

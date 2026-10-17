@@ -8,7 +8,7 @@ import (
 	"github.com/Wysted/atrium/platform/api/internal/portal"
 )
 
-// Routes of the areas (contract block 6, "Area supervisors").
+// Routes of the areas (docs/reference/api.md, "Area supervisors").
 const (
 	PathAreas           = "/api/v1/areas"
 	PathArea            = "/api/v1/areas/{id}"

@@ -1,6 +1,6 @@
 import type { HealthProblemCode, ProbeStatus } from '~/types/api'
 
-/** Fixed copy of the integration health findings. The wording follows contract.md ("Health of an app"); it is generic on purpose. */
+/** Fixed copy of the integration health findings. The wording follows docs/reference/metrics.md ("Health of an app"); it is generic on purpose. */
 export interface ProblemCopy {
   label: string
   /** What it means and what an app owner should check. */

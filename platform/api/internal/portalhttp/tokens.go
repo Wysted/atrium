@@ -11,7 +11,7 @@ import (
 	platformauth "github.com/Wysted/atrium/platform/sdk/go"
 )
 
-// Routes of the API tokens (contract block 6, "Non-browser clients"). A literal segment ("current") wins over
+// Routes of the API tokens (docs/reference/api.md, "Tokens"). A literal segment ("current") wins over
 // the {id} wildcard in the same position.
 const (
 	PathMeTokens       = "/api/v1/me/tokens"         //nolint:gosec // G101: a URL path, not a credential

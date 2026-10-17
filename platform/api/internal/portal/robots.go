@@ -11,7 +11,7 @@ import (
 	"github.com/Wysted/atrium/platform/api/internal/adminz"
 )
 
-// Robots (contract block 6, "Non-browser clients"): users of kind 'robot', created and administered by platform
+// Robots (docs/reference/api.md, "Robots"): users of kind 'robot', created and administered by platform
 // admins only. Managers may list them (id, name, status) to grant them roles.
 
 // TargetRobot is the audit target type of a robot; AuditRobotCreate and AuditRobotUpdate are the audit actions

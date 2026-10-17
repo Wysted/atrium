@@ -1,4 +1,4 @@
-// Package housekeeping runs the periodic maintenance of block 5: purging expired login state and creating
+// Package housekeeping runs the periodic maintenance of docs/reference/login.md: purging expired login state and creating
 // access_denials partitions ahead of time. The job is idempotent and safe on any number of replicas.
 package housekeeping
 
@@ -17,10 +17,10 @@ const (
 	DefaultInterval = 10 * time.Minute
 	// PartitionMonthsAhead is how many months past the current one get an access_denials partition.
 	PartitionMonthsAhead = 2
-	// AccessDenialsRetentionDays is how long access_denials history is kept (contract block 4): monthly
+	// AccessDenialsRetentionDays is how long access_denials history is kept (docs/reference/data-model.md): monthly
 	// partitions whose whole month is older than this are dropped.
 	AccessDenialsRetentionDays = 365
-	// APITokenGrace is how long a token is kept after it expired or was revoked (contract block 6), so owners
+	// APITokenGrace is how long a token is kept after it expired or was revoked (docs/reference/api.md), so owners
 	// still see recently dead tokens. The database function refuses anything under 7 days.
 	APITokenGrace = 30 * 24 * time.Hour
 )

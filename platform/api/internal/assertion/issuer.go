@@ -1,4 +1,4 @@
-// Package assertion issues the Platform-Assertion JWT defined in block 1 of the contract.
+// Package assertion issues the Platform-Assertion JWT defined in docs/reference/assertion.md.
 package assertion
 
 import (
@@ -43,7 +43,7 @@ type SignerSource interface {
 	Signer() (keys.Signer, error)
 }
 
-// Values of the token claims (contract block 6, "Non-browser clients").
+// Values of the token claims (docs/reference/assertion.md, "Claims added for API tokens and robots").
 const (
 	SubjectHuman = "human"
 	SubjectRobot = "robot"

@@ -1,4 +1,4 @@
-// Package apitoken defines the secret of an API token (contract block 6, "Non-browser clients"): how it is
+// Package apitoken defines the secret of an API token (docs/reference/api.md, "Tokens"): how it is
 // generated, how its format is checked without touching the database, and how it is hashed for storage. The
 // portal issues tokens and platform-api's ForwardAuth checks them, so both share this one definition.
 //

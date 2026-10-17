@@ -82,7 +82,7 @@ func invalid(field, code string) *ValidationError {
 	return &ValidationError{Problems: []FieldProblem{{Field: field, Code: code}}}
 }
 
-// Pagination. Lists use keyset pagination with an opaque cursor (contract block 6).
+// Pagination. Lists use keyset pagination with an opaque cursor (docs/reference/api.md).
 const (
 	DefaultPageSize = 50
 	MaxPageSize     = 200

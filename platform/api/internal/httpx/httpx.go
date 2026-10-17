@@ -39,7 +39,7 @@ const (
 	pageCSP = "default-src 'none'; base-uri 'none'; frame-ancestors 'none'"
 )
 
-// Problem is an RFC 9457 problem document with the extra login_url member of the ForwardAuth contract.
+// Problem is an RFC 9457 problem document with the extra login_url member of the ForwardAuth contract (docs/reference/forwardauth.md).
 type Problem struct {
 	Type     string `json:"type"`
 	Title    string `json:"title"`
@@ -108,7 +108,7 @@ func WritePage(w http.ResponseWriter, status int, title, message string) {
 	WriteHTML(w, status, fmt.Sprintf(errorPage, t, t, m))
 }
 
-// SetCookie sets a platform cookie: Secure, HttpOnly, SameSite=Lax, Path=/, no Domain (contract block 5).
+// SetCookie sets a platform cookie: Secure, HttpOnly, SameSite=Lax, Path=/, no Domain (docs/reference/login.md).
 // A ttl of zero or less makes it a session cookie.
 func SetCookie(w http.ResponseWriter, name, value string, ttl time.Duration) {
 	c := &http.Cookie{Name: name, Value: value, Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode}

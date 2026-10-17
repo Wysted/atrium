@@ -1,6 +1,6 @@
 # Exact Host() match, patched by the overlay: ForwardAuth answers 200 for the auth host and for preflights, so a router
 # without a pinned Host could expose the portal under another name. The entrypoint middlewares (strip-assertion,
-# forwardauth) apply to this route as to every websecure route. passHostHeader stays true (contract block 6): the portal
+# forwardauth) apply to this route as to every websecure route. passHostHeader stays true (docs/reference/api.md): the portal
 # never derives its identity from X-Forwarded-Host.
 # strip-authorization runs after the entrypoint ForwardAuth: the API token never reaches the portal. EVERY route that matches
 # a portal host must list it (smoke section 22 fails otherwise).

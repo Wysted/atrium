@@ -200,10 +200,10 @@ grafana:
       jwk_set_url: https://platform-api-jwks.platform.svc.cluster.local:8083/.well-known/jwks.json
       tls_client_ca: /etc/grafana/jwks-ca/ca.crt
       # Bounds only how long a ROTATED key takes to be seen (revocation of a session is not cached here: ForwardAuth
-      # answers 403 on the next request). The contract publishes `next` >= 1 h before it signs, so a new key is always
-      # known long before use; the emergency window is 5 min (contract block 3), which is also the JWKS max-age.
+      # answers 403 on the next request). docs/reference/keys.md publishes `next` >= 1 h before it signs, so a new key is always
+      # known long before use; the emergency window is 5 min (docs/reference/keys.md), which is also the JWKS max-age.
       cache_ttl: 5m
-      # iss = PLATFORM_ISSUER; aud = the app id of grafana in seed.sql (never the host, contract block 1).
+      # iss = PLATFORM_ISSUER; aud = the app id of grafana in seed.sql (never the host, docs/reference/assertion.md).
       expect_claims: '{"iss":"https://auth.apps.wysted.dev","aud":"app_01J9Z3K7WQ4M8R2T5XV6N0B1HD"}'
       # Identity = sub (internal UUID) ONLY. No email_claim on purpose: the email never identifies anyone (users.email is not
       # unique) and Grafana looks users up by login, then by email when it has one. Without it a user is the UUID login

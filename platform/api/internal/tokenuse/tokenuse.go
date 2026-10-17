@@ -1,4 +1,4 @@
-// Package tokenuse records when API tokens are used (api_tokens.last_used_at, contract block 6, "Non-browser
+// Package tokenuse records when API tokens are used (api_tokens.last_used_at, docs/reference/api.md, "Tokens"
 // clients"). ForwardAuth calls Touch on every authorized token request; the Recorder keeps the latest time per token
 // in a bounded in-memory set and one background writer (Run) flushes it with one statement per tick, so the database
 // sees at most one write per minute per token per replica and ForwardAuth never waits for it. It mirrors lastseen,

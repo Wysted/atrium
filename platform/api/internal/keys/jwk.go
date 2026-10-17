@@ -1,4 +1,4 @@
-// Package keys implements the signing key lifecycle of block 3 of the contract: ECDSA P-256 keys
+// Package keys implements the signing key lifecycle of docs/reference/keys.md: ECDSA P-256 keys
 // identified by their RFC 7638 thumbprint, envelope-encrypted private material and automatic rotation.
 package keys
 

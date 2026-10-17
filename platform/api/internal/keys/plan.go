@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// Lifecycle durations from block 3 of the contract.
+// Lifecycle durations from docs/reference/keys.md.
 const (
 	// PrepublishDuration is how long a next key is published before it may sign.
 	PrepublishDuration = time.Hour

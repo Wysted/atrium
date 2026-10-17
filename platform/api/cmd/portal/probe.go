@@ -19,7 +19,7 @@ import (
 	"github.com/Wysted/atrium/platform/api/internal/probe"
 )
 
-// Environment variables of the integration probe (contract block 6, "Observability").
+// Environment variables of the integration probe (docs/reference/metrics.md, "Probe").
 const (
 	// envProbeInterval is how often every deployment host is probed; 0 disables the probe. Default 5m.
 	envProbeInterval = "PORTAL_PROBE_INTERVAL"

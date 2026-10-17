@@ -1,5 +1,5 @@
 // Package probe checks, from inside the platform, that every deployment host is protected by ForwardAuth
-// (contract block 6, "Observability"). A host that answers a cookie-less navigation with anything but a
+// (docs/reference/metrics.md, "Probe"). A host that answers a cookie-less navigation with anything but a
 // redirect to the auth host login is reachable without ForwardAuth, the most dangerous integration failure and
 // one platform-api logs can never show.
 package probe
@@ -146,7 +146,7 @@ func (c *Checker) Check(ctx context.Context, t Target) Result {
 	return res
 }
 
-// classify applies the rules of the contract to a response:
+// classify applies the rules of docs/reference/metrics.md ("Probe") to a response:
 //
 //   - a redirect (301, 302, 303, 307, 308) to https://<auth host>/login... is ok, but only the temporary
 //     redirects ForwardAuth uses (302, 303, 307); a permanent redirect to the login is unexpected

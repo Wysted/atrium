@@ -158,7 +158,7 @@ func fileName(urlPath string) (string, bool) {
 // isRoute reports whether a path that matched no file may be answered with the SPA shell: a client-side route
 // has no file extension (or .html), and nothing under /_nuxt/ ever is one. A last segment with a dot counts as a
 // file name, so a missing one answers 404 instead of the shell: SPA routes must not end in a dotted segment
-// (identifiers are UUID-like, per the contract, and never contain a dot).
+// (identifiers are UUID-like, per docs/reference/assertion.md, and never contain a dot).
 func isRoute(name string) bool {
 	if name == strings.TrimSuffix(assetPrefix, "/") || strings.HasPrefix(name, assetPrefix) {
 		return false

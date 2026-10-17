@@ -10,7 +10,7 @@ import (
 	"github.com/Wysted/atrium/platform/api/internal/portal"
 )
 
-// supWorld is the cast of the supervisor tests (contract block 6, "Area supervisors"):
+// supWorld is the cast of the supervisor tests (docs/reference/api.md, "Area supervisors"):
 //
 //	area A: supervisors sup and sup2 (both also members) and supOff (disabled, also a member); members alice, bob
 //	        (disabled) and admMember (a platform admin)

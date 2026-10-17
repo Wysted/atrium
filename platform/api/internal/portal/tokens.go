@@ -12,7 +12,7 @@ import (
 	"github.com/Wysted/atrium/platform/api/internal/apitoken"
 )
 
-// API tokens (contract block 6, "Non-browser clients"). Personal tokens are created by their owner from a
+// API tokens (docs/reference/api.md, "Tokens"). Personal tokens are created by their owner from a
 // browser session; robot tokens (robots.go) are created by platform admins and share the repository, the unit
 // of work (issueToken) and the revocation.
 
@@ -34,7 +34,7 @@ const (
 	DefaultTokenMaxTTLRobot    = 2160 * time.Hour
 )
 
-// Target type and audit actions of the tokens. The audit names are the ones of the contract's Audit section;
+// Target type and audit actions of the tokens. The audit names are the ones of the Audit section of docs/reference/api.md;
 // the authorization actions (adminz.Token*Own, TokenRevokeAny) differ because they describe who may ask.
 const (
 	TargetToken                    = "token"

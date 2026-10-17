@@ -1,4 +1,4 @@
-// Package portal holds the application layer of the portal process (contract block 6): the data it exposes,
+// Package portal holds the application layer of the portal process (docs/reference/api.md): the data it exposes,
 // the small ports it needs from storage and the use-case service the HTTP handlers call. It knows nothing
 // about HTTP or SQL.
 //

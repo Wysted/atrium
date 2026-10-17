@@ -30,7 +30,7 @@ const (
 	// portal role is assumed with a startup parameter, so a privileged login role could undo it with
 	// RESET ROLE. Setting it only downgrades the refusal to a loud WARN. Never set it in production.
 	envAllowPrivilegedDBLogin = "PORTAL_ALLOW_PRIVILEGED_DB_LOGIN"
-	// Caps of the lifetime of an API token, one per owner kind (contract block 6, "Non-browser clients"). Optional Go
+	// Caps of the lifetime of an API token, one per owner kind (docs/reference/api.md, "Configuration"). Optional Go
 	// durations above zero; a request without expires_in gets the cap. Raising one is the adopter's decision.
 	envTokenMaxTTLPersonal = "PORTAL_TOKEN_MAX_TTL_PERSONAL" // default 720h
 	envTokenMaxTTLRobot    = "PORTAL_TOKEN_MAX_TTL_ROBOT"    // default 2160h

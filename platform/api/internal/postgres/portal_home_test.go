@@ -10,7 +10,7 @@ import (
 	"github.com/Wysted/atrium/platform/api/internal/testdb"
 )
 
-// The home invariant (contract block 6): a deployment appears in /me/apps for a user if and only if
+// The home invariant (docs/reference/api.md, "Home"): a deployment appears in /me/apps for a user if and only if
 // access.Evaluator would allow that user on that host, with the same roles. The single exception is the portal
 // app, which every active user may open but which the home leaves out.
 func TestHomeMatchesAccessDecisions(t *testing.T) {

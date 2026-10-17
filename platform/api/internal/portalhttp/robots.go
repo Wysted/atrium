@@ -7,7 +7,7 @@ import (
 	"github.com/Wysted/atrium/platform/api/internal/portal"
 )
 
-// Routes of the robots (contract block 6, "Non-browser clients").
+// Routes of the robots (docs/reference/api.md, "Robots").
 const (
 	PathRobots      = "/api/v1/robots"
 	PathRobot       = "/api/v1/robots/{id}"

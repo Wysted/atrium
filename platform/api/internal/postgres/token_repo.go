@@ -25,7 +25,7 @@ func NewTokenRepo(pool *pgxpool.Pool) *TokenRepo { return &TokenRepo{pool: pool}
 var _ tokenuse.Store = (*TokenRepo)(nil)
 
 // byHashSQL reads the token and its owner live (no cache) in one indexed query. The flags carry what the
-// contract states as predicates (revoked_at IS NULL AND expires_at > now(), owner active) so the log can tell the
+// docs/reference/api.md states as predicates (revoked_at IS NULL AND expires_at > now(), owner active) so the log can tell the
 // causes apart; the caller must treat anything for which Record.Usable is false as an invalid token.
 const byHashSQL = `
 SELECT t.id::text, t.scope, u.id::text, u.kind, u.email, u.name,

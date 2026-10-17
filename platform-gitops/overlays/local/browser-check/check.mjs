@@ -1437,7 +1437,7 @@ try {
 
   console.log('  -- orphan hosts: a host no app declares is refused as unknown_host; /admin/health lists it (UI == API)')
   // Traffic through Traefik for a host with a route (smoke-orphan.yaml) and no deployment: ForwardAuth answers 403 and queues an
-  // unknown_host denial (contract block 2: written by a background goroutine, at most one row per host per 10 minutes per replica).
+  // unknown_host denial (docs/reference/forwardauth.md, "Request classification and edge rules": written by a background goroutine, at most one row per host per 10 minutes per replica).
   // The host is unique per run, so it must be ABSENT from the API before the denial and PRESENT after: a new denial was recorded.
   const orphanApi = async () => (await apiCall('GET', '/health/orphan-hosts')).body?.hosts ?? null
   const before = await orphanApi()

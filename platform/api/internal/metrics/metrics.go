@@ -1,4 +1,4 @@
-// Package metrics defines the Prometheus metrics of platform-api and the portal (contract block 6,
+// Package metrics defines the Prometheus metrics of platform-api and the portal (docs/reference/metrics.md,
 // "Observability") and serves them at /metrics.
 //
 // Every process builds its own registry (NewRegistry): the global default registry is never used, so a

@@ -13,7 +13,7 @@ import (
 	"github.com/Wysted/atrium/platform/api/internal/keys"
 )
 
-// Token path (contract block 6, "Non-browser clients", "ForwardAuth token path"). On a portal host an
+// Token path (docs/reference/forwardauth.md, "Token path"). On a portal host an
 // Authorization header takes this path exclusively; on any other host it is never read.
 const (
 	headerAuthorization = "Authorization"
@@ -123,7 +123,7 @@ func (h *Handler) tokenPath(w http.ResponseWriter, r *http.Request, appID, host 
 	}
 
 	// The token row and the owner's status above are live. The app and initiative rules come from the same decision
-	// cache as sessions (CacheTTL, flushed by access_changed): contract block 6 allows it, the token itself never is.
+	// cache as sessions (CacheTTL, flushed by access_changed): docs/reference/forwardauth.md allows it, the token itself never is.
 	d, fresh, err := h.authorize(ctx, rec.OwnerID, host)
 	if err != nil {
 		return h.unavailable(w, false, ReasonBackend, err)

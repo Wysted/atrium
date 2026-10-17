@@ -1,6 +1,6 @@
 /**
  * Payloads of the portal API (`/api/v1/`). Mirror of platform/api/internal/portalhttp (ground truth:
- * handlers_test.go) and platform/docs/contract.md, block 6. Lists are never null.
+ * handlers_test.go) and docs/reference/api.md. Lists are never null.
  */
 
 /** GET /api/v1/me and /me/apps embed this reference to an initiative. */

@@ -82,7 +82,7 @@ type Facts struct {
 	InitiativeKey    string
 	InitiativeStatus string
 	AppStatus        string
-	// PortalApp is set by the Evaluator when the resolved app is the portal app (block 6). It is a fact, not
+	// PortalApp is set by the Evaluator when the resolved app is the portal app (docs/reference/api.md). It is a fact, not
 	// configuration, so Decide stays a pure function of its arguments.
 	PortalApp  bool
 	UserFound  bool

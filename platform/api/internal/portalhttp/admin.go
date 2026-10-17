@@ -80,7 +80,7 @@ type AdminService interface {
 
 var _ AdminService = (*portal.Service)(nil)
 
-// Routes of the administration API (contract block 6). Ids come from the URL, never keys.
+// Routes of the administration API (docs/reference/api.md). Ids come from the URL, never keys.
 const (
 	PathInitiatives      = "/api/v1/initiatives"
 	PathInitiative       = "/api/v1/initiatives/{id}"

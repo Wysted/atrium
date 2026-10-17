@@ -14,13 +14,13 @@ import (
 	platformauth "github.com/Wysted/atrium/platform/sdk/go"
 )
 
-// Routes of the API (contract block 6).
+// Routes of the API (docs/reference/api.md).
 const (
 	PathMe     = "/api/v1/me"
 	PathMeApps = "/api/v1/me/apps"
 )
 
-// Paths the web handler must never answer (contract blocks 1 and 6): the metrics live on a listener of their own,
+// Paths the web handler must never answer (docs/reference/assertion.md and docs/reference/api.md): the metrics live on a listener of their own,
 // the probes on the internal one, and the /_platform/ prefix is reserved on every app host.
 const (
 	pathMetrics  = "/metrics"
@@ -80,7 +80,7 @@ type Config struct {
 	Logger         *slog.Logger
 }
 
-// New builds the public handler with the middleware chain of the contract, outermost first:
+// New builds the public handler with the middleware chain of docs/reference/api.md ("Request protection"), outermost first:
 //
 //	metrics -> response headers -> request log -> recover -> read isolation (/api/*) -> CrossOriginProtection ->
 //	JSON content type (mutations) -> assertion validation (SDK) -> token scope -> deadline -> routes

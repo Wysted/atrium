@@ -1,4 +1,4 @@
-// Package forwardauth implements the /forwardauth endpoint of contract block 2: Traefik calls it for every
+// Package forwardauth implements the /forwardauth endpoint of docs/reference/forwardauth.md: Traefik calls it for every
 // request to an app host and it answers with the decision table (assertion, login redirect, 401, 403, 503).
 // Every error path fails closed: nothing but an explicit allow produces a 2xx for an app host.
 package forwardauth
@@ -24,7 +24,7 @@ import (
 	"github.com/Wysted/atrium/platform/api/internal/session"
 )
 
-// Request headers read from Traefik (contract block 2). Everything else is ignored.
+// Request headers read from Traefik (docs/reference/forwardauth.md). Everything else is ignored.
 const (
 	headerForwardedHost   = "X-Forwarded-Host"
 	headerForwardedMethod = "X-Forwarded-Method"
@@ -40,7 +40,7 @@ const (
 	acceptHTML           = "text/html"
 )
 
-// Reserved paths on every app host (contract block 2).
+// Reserved paths on every app host (docs/reference/forwardauth.md).
 const (
 	PathCallback = "/_platform/callback"
 	PathLogout   = "/_platform/logout"

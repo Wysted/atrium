@@ -1,4 +1,4 @@
-// Package googlelogin implements the OpenID Connect authorization-code flow against Google (contract block 5):
+// Package googlelogin implements the OpenID Connect authorization-code flow against Google (docs/reference/login.md):
 // PKCE S256, state, nonce, ID token verification and the domain checks go-oidc does not do. It owns the
 // protocol and the oauth_flows rules; cookies, users, sessions and audit belong to the auth host handler.
 //
@@ -39,7 +39,7 @@ const (
 	// GoogleIssuer is the issuer of Google accounts. It is fixed in production; only tests use another one.
 	GoogleIssuer = "https://accounts.google.com"
 
-	// FlowTTL is the lifetime of an oauth_flows row and of the login cookie (contract block 5).
+	// FlowTTL is the lifetime of an oauth_flows row and of the login cookie (docs/reference/login.md).
 	FlowTTL = 10 * time.Minute
 
 	// Scopes requested from Google.
@@ -107,7 +107,7 @@ const (
 )
 
 // RejectedError is a valid, signed ID token whose identity the platform refuses. HD and Email are kept for the
-// log (contract, Open items) and must never be shown to the user.
+// log (docs/reference/login.md, "Limitations") and must never be shown to the user.
 type RejectedError struct {
 	Reason string
 	HD     string

@@ -1,4 +1,4 @@
-// Package lastseen records which deployments are receiving authorized traffic (contract block 6,
+// Package lastseen records which deployments are receiving authorized traffic (docs/reference/metrics.md,
 // "Observability"). ForwardAuth calls Touch on every authorized decision; the Recorder keeps the latest time per
 // host in memory and a background flusher writes them with one statement per tick, so the database sees at most
 // one write per minute per deployment and never one per request. The aggregation and flushing live in touchset.

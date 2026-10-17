@@ -70,7 +70,7 @@ spec:
         - {protocol: TCP, port: 5432}
 ---
 # Metrics listener: the Prometheus pods of the monitoring namespace only. There is no authentication on /metrics, so
-# this rule is the whole access control (contract block 6, Metrics). Anything able to run a pod labelled
+# this rule is the whole access control (docs/reference/metrics.md, "Metrics"). Anything able to run a pod labelled
 # app.kubernetes.io/name=prometheus in `monitoring` joins this set: keep that namespace to the monitoring stack.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

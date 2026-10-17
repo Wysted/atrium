@@ -28,7 +28,7 @@ func inA(typ string) adminz.Resource {
 	return adminz.Resource{Type: typ, ID: "r1", InitiativeID: initA}
 }
 
-// Every row of the "Who administers what" table of contract block 6, for each kind of caller.
+// Every row of the "Who administers what" table of docs/reference/api.md, for each kind of caller.
 func TestDecideWhoAdministersWhat(t *testing.T) {
 	t.Parallel()
 	const (
@@ -287,7 +287,7 @@ const (
 	areaB = "00000000-0000-0000-0000-0000000000b1"
 )
 
-// Area-scoped actions (contract block 6, "Area supervisors"): the area belongs to the target person and Decide only
+// Area-scoped actions (docs/reference/api.md, "Area supervisors"): the area belongs to the target person and Decide only
 // compares it with the caller's supervised areas.
 func TestDecideAreaScope(t *testing.T) {
 	t.Parallel()

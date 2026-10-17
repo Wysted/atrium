@@ -1,4 +1,4 @@
-// Command portal is the portal app (contract block 6): the home of the apps a user can open and, in later
+// Command portal is the portal app (docs/reference/api.md): the home of the apps a user can open and, in later
 // parts, the administration API and UI. It is an app like any other behind ForwardAuth, but a separate process
 // from platform-api with its own database role; it never holds the KEK or any signing key.
 //

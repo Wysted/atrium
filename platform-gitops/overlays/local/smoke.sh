@@ -434,7 +434,7 @@ if [[ "${#seen[@]}" == 1 && -n "${seen[200]:-}" ]]; then pass "80/80 requests 20
 $K -n platform rollout status deploy/platform-api --timeout=120s >/dev/null
 JN="$WORK/dave"; code=$(login "$JN" bob@example.com "$A"); check "a fresh login flow still works afterwards" "$code" 200
 
-# --- portal (contract block 6) --------------------------------------------------------------------------------------
+# --- portal (docs/reference/api.md) --------------------------------------------------------------------------------------
 # json_get <file> <python expression over d>: value from a JSON body.
 json_get() { python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$1" "$2" 2>/dev/null; }
 # mutate <jar> <method> <url> <sec-fetch-site|-> <content-type|-> [json body]: status of a portal mutation.
@@ -992,10 +992,10 @@ else
   fi
 fi
 
-section "22. API tokens end to end (contract block 6, part 3): Authorization reaches platform-api on the portal host only and never the portal"
+section "22. API tokens end to end (docs/reference/api.md, 'Tokens'): Authorization reaches platform-api on the portal host only and never the portal"
 SINCE_22="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 # Bearer values never reach stdout, argv or $WORK/b-derived output: they live in header files (curl -H @file) and are
-# compared by grep -F -f; a failing check never prints a body that carries one (see body_clean). The whole section follows the contract's checks (a)-(g) of "Implementation parts", item 3.
+# compared by grep -F -f; a failing check never prints a body that carries one (see body_clean). The whole section follows the checks (a)-(g) of docs/reference/api.md ("Tokens").
 tokfile() { echo "$WORK/auth.$1"; }
 # bcall <token name> <curl args...>: portal-style API call carrying that token and NO cookie.
 bcall() { local n="$1"; shift; req "$WORK/tok-none" -H 'Accept: application/json' -H 'Sec-Fetch-Mode: cors' -H @"$(tokfile "$n")" "$@"; }
@@ -1245,7 +1245,7 @@ echo "  -- cleanup: remaining token revoked, fixtures removed (the robot stays, 
 code=$(mutate "$JTA" DELETE "$P/api/v1/me/tokens/$idA" same-origin application/json); check "last token revoked" "$code" 204
 $K delete -f "$REL/smoke-whoami.yaml" -f "$REL/smoke-whoami-portal.yaml" --wait=false >/dev/null
 
-section "23. portalctl (contract block 6, part 5): grant and revoke through the API with a token"
+section "23. portalctl (docs/reference/api.md, 'Tokens'): grant and revoke through the API with a token"
 # The host reaches the portal like curl does: public DNS -> 127.0.0.1 and the real Let's Encrypt wildcard, so no
 # --resolve and no SSL_CERT_FILE are needed (the CLI uses the system roots).
 CTL="$ROOT/.tools/portalctl/portalctl"
@@ -1339,7 +1339,7 @@ if [[ -x "$CTL" ]]; then
   if leaks "$WORK/ctl-all.out"; then fail "a Bearer value is in the portalctl output"; else pass "no Bearer value in any portalctl output ($(wc -l < "$WORK/ctl-all.out") lines, success and failure paths)"; fi
 fi
 
-section "24. Areas (contract block 6, part 1a): admin-only CRUD, one area per member, supervisors, supervised_areas in /me"
+section "24. Areas (docs/reference/api.md, 'Area supervisors'): admin-only CRUD, one area per member, supervisors, supervised_areas in /me"
 AR="$P/api/v1/areas"
 JAR_AD="$WORK/area-admin"; JAR_AL="$WORK/area-alice"; JAR_CA="$WORK/area-carol"
 login "$JAR_AD" admin@example.com "$P" >/dev/null; login "$JAR_AL" alice@example.com "$P" >/dev/null; login "$JAR_CA" carol@example.com "$P" >/dev/null

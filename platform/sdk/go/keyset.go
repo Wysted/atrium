@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	// MaxCacheTTL caps how long a fetched JWKS is trusted, whatever max-age says (contract: 5 minutes).
+	// MaxCacheTTL caps how long a fetched JWKS is trusted, whatever max-age says (docs/reference/keys.md: 5 minutes).
 	MaxCacheTTL = 5 * time.Minute
 	// minCacheTTL floors the TTL so max-age=0 or no-store cannot turn every request into a fetch.
 	minCacheTTL = 10 * time.Second

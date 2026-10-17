@@ -1,4 +1,4 @@
-// Package platformauth validates the Platform-Assertion JWT injected by the platform (contract block 1).
+// Package platformauth validates the Platform-Assertion JWT injected by the platform (docs/reference/assertion.md).
 // It is the only place apps should implement that validation.
 package platformauth
 
@@ -46,7 +46,7 @@ const (
 	maxTokenSize  = 8 << 10
 	tokenSegments = 3
 
-	// AssertionTTL is the lifetime the platform gives an assertion (contract: exp = iat + 90 s).
+	// AssertionTTL is the lifetime the platform gives an assertion (docs/reference/assertion.md: exp = iat + 90 s).
 	// A token whose exp - iat exceeds it (plus leeway) was not issued by the platform.
 	AssertionTTL = 90 * time.Second
 )
@@ -94,7 +94,7 @@ type wireClaims struct {
 	Name  string   `json:"name"`
 	SID   string   `json:"sid"`
 	Roles []string `json:"roles"`
-	// Present only on assertions issued for an API token (contract block 1).
+	// Present only on assertions issued for an API token (docs/reference/assertion.md).
 	SubType string `json:"sub_type"`
 	TID     string `json:"tid"`
 	Scope   string `json:"scope"`
@@ -224,7 +224,7 @@ func (v *Verifier) Verify(ctx context.Context, token string) (*Claims, error) {
 		return nil, fmt.Errorf("%w: %w", ErrInvalidAssertion, err)
 	}
 
-	// The parser accepts any matching entry of an aud array; the contract requires exactly our app id.
+	// The parser accepts any matching entry of an aud array; docs/reference/assertion.md requires exactly our app id.
 	if len(wc.Audience) != 1 || wc.Audience[0] != v.audience {
 		return nil, fmt.Errorf("%w: audience mismatch", ErrInvalidAssertion)
 	}
