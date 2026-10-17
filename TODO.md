@@ -43,7 +43,11 @@ Pending work and open questions for the portal platform. Detailed context lives 
   carries no portal-app flag, so the UI shows Disable and Remove host on the portal app and relies on the 409.
   `npm audit` reports high advisories in Nuxt's build tooling (`braces`, `node-forge` via nitropack/listhen) with no
   upstream fix; they never reach the embedded output. Recheck on each Nuxt upgrade.
-- [ ] **Non-browser clients for the portal API.** CLI and automation have no way to authenticate yet (block 6 open items).
+- [ ] **Non-browser clients for the portal API.** Phase 1 designed in `platform/docs/contract.md` block 6, "Non-browser
+  clients" (personal and robot tokens). Parts: (1) schema + portal API (migration, repos, handlers, adminz, audit,
+  grants by robot, last-manager rule); (2) ForwardAuth token path + assertion claims + SDK fields; (3) Traefik
+  (`Authorization` in `authRequestHeaders`, strip on the portal route) + smoke checks; (4) web: tokens page and robots
+  admin page; (5) CLI replacing `grant.sh`/`revoke.sh`. Phases 2 (workload identity) and 3 (device flow) stay open.
 - [x] **Flaky test database cleanup.** Closed 2026-10-16. Root cause: every `DROP DATABASE` makes PostgreSQL run an
   immediate checkpoint and wait for it, and the checkpoint's fsync phase covers the files of every live test database
   (hundreds each) across all parallel test binaries. On Docker/WSL storage that phase takes seconds, and a slow one

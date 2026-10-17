@@ -1,6 +1,6 @@
 # platform-api contract
 
-Status: v1 complete (2026-10-14); block 6 added (2026-10-15). Blocks were closed one at a time; research notes live in Engram (`architecture/portal-assertion-research`).
+Status: v1 complete (2026-10-14); block 6 added (2026-10-15); non-browser client design (phase 1, block 6) added (2026-10-16), not implemented. Blocks were closed one at a time; research notes live in Engram (`architecture/portal-assertion-research`).
 
 | Block | Topic | Status |
 |---|---|---|
@@ -31,11 +31,12 @@ not a bearer token to forward.
 |---|---|---|
 | `iss` | `https://auth.apps.<domain>` | Exact match |
 | `aud` | Opaque, immutable app id (`app_<ulid>`) | Never a hostname or slug; injected into each app by config |
-| `sub` | Internal user UUID | Never the email or the Google `sub` |
+| `sub` | Internal user UUID (human or robot) | Never the email or the Google `sub` |
 | `email`, `name` | Profile data | Informational; never used as identifiers |
 | `iat`, `nbf`, `exp` | `nbf = iat`, `exp = iat + 90s` | Re-issued on every request |
 | `jti` | Unique per issuance | Log correlation only; apps keep no replay list |
-| `sid` | Public session id | Never the cookie value; cannot authenticate |
+| `sid` | Public session id | Never the cookie value; cannot authenticate. Absent on token-authenticated assertions |
+| `sub_type`, `tid`, `scope` | `human`/`robot`, API token id, `read`/`admin` | Optional: only on assertions issued for an API token, and only the portal receives them (block 6, "Non-browser clients"). `email` is `""` for robots |
 | `roles` | `["editor", ...]` | Only role keys of the initiative that owns `aud`; capped count |
 
 ### App-side validation (implemented once in `sdk/go`)
@@ -76,8 +77,9 @@ Attached to the `websecure` entrypoint (applies to every router, no opt-out), in
 2. `forwardauth`: calls `platform-api /forwardauth` with
    - `authResponseHeaders: [Platform-Assertion]`
    - `authRequestHeaders` as an allowlist: `Cookie`, `Accept`, `Sec-Fetch-Mode`, `Sec-Fetch-Site`, `Origin`,
-     `Access-Control-Request-Method`, `Access-Control-Request-Headers`, `X-Requested-With`, `User-Agent`
-     (`Sec-Fetch-Site` and `Origin` are needed for the logout CSRF check)
+     `Access-Control-Request-Method`, `Access-Control-Request-Headers`, `X-Requested-With`, `User-Agent`,
+     `Authorization` (`Sec-Fetch-Site` and `Origin` are needed for the logout CSRF check; `Authorization` is read only for
+     portal hosts and reaches platform-api for every host, block 6 "Non-browser clients")
    - bounded `maxResponseBodySize`
    - client `X-Forwarded-*` never trusted (entrypoint `forwardedHeaders` without `trustedIPs`)
 
@@ -101,7 +103,7 @@ A NetworkPolicy filters by port, never by path, so `/metrics` and the JWKS each 
 ### Inputs read by platform-api
 
 `X-Forwarded-Host`, `X-Forwarded-Method`, `X-Forwarded-Uri`, `Cookie`, `Accept`, `Sec-Fetch-Mode`,
-`Origin`, `Access-Control-Request-Method`. Ignored: `X-Forwarded-Prefix`, `X-Forwarded-Port`, `X-Forwarded-Proto`.
+`Origin`, `Access-Control-Request-Method`, and `Authorization` only when the host is a portal host (never logged). Ignored: `X-Forwarded-Prefix`, `X-Forwarded-Port`, `X-Forwarded-Proto`.
 The app is resolved only from `X-Forwarded-Host` (exact, lowercase) against `deployments.host`.
 
 ### Decision table
@@ -111,6 +113,7 @@ The app is resolved only from `X-Forwarded-Host` (exact, lowercase) against `dep
 | Host is the auth host | 200, no assertion |
 | Host not in deployments | 403 (an `unknown_host` row goes to `access_denials`, see below) |
 | CORS preflight (`OPTIONS` + `Origin` + `Access-Control-Request-Method`) | 200, no assertion (CORS is the app's job) |
+| Portal host with an `Authorization` header (any value; the preflight row above wins) | Token path only, cookie ignored (a valid cookie with an invalid token is 401), never a redirect: valid `Bearer` token and active owner -> 200 + `Platform-Assertion` (empty `roles`, token claims); malformed, unknown, expired or revoked token, inactive owner -> 401 problem+json with `WWW-Authenticate: Bearer error="invalid_token"`; method not allowed by the token scope -> 403. Any other host ignores `Authorization` |
 | `/_platform/callback?code=` with a valid one-time code bound to this host and to the browser's `__Host-Http-platform_bind` cookie | 302 to the stored `rd` + `Set-Cookie: __Host-Http-platform_app`, `Referrer-Policy: no-referrer` |
 | No or invalid app cookie, navigation (`GET`/`HEAD` + HTML signals) | 302 to `https://auth.apps.<domain>/login?rd=<original url>&bind=<hash>` + `Set-Cookie: __Host-Http-platform_bind` (short-lived random value) |
 | No or invalid app cookie, API/XHR | 401 |
@@ -156,7 +159,7 @@ The app is resolved only from `X-Forwarded-Host` (exact, lowercase) against `dep
 ### Verified in the spike (Traefik v3.7.14, 2026-10-14)
 
 1. With `authRequestHeaders` as an allowlist, `X-Forwarded-Method/Host/Uri/Proto/For/Port` still reach platform-api
-   (Traefik provides them); headers outside the list (`Authorization`, custom ones) do not. A client-sent
+   (Traefik provides them); headers outside the list (`Authorization` at the time, custom ones) do not. A client-sent
    `X-Forwarded-Host` is replaced by the real host.
 2. `strip-assertion` (`customRequestHeaders` with an empty value) removes a client-sent assertion on the auth host
    and on preflight requests; authorized requests still receive the assertion issued by platform-api.
@@ -227,15 +230,16 @@ users --< group_members >-- groups
 
 | Table | Purpose and key constraints |
 |---|---|
-| `users` | Created just-in-time on first login. `id` uuid = JWT `sub`; `google_sub` UNIQUE NOT NULL; `email`, `name` informational; `status` active/disabled |
-| `groups`, `group_members` | Internal groups; PK `(group_id, user_id)`. Google Workspace group sync is a later extension |
+| `users` | Humans are created just-in-time on first login; robots by platform admins (block 6). `id` uuid = JWT `sub`; `kind` human/robot, `UNIQUE (id, kind)`; `google_sub` UNIQUE, NOT NULL iff `kind = 'human'` (CHECK; robots have none); `owner_user_id` (robots, informational); `email`, `name` informational; `status` active/disabled |
+| `groups`, `group_members` | Internal groups; PK `(group_id, user_id)`; members are humans only (`kind` pinned by composite FK). Google Workspace group sync is a later extension |
 | `initiatives` | `key` UNIQUE, `status` |
 | `initiative_roles` | `UNIQUE (initiative_id, key)` and `UNIQUE (initiative_id, id)` (target of the composite FK); `manages_access` flag for delegated administration |
 | `apps` | `id` = `app_<ulid>` (the `aud`); belongs to one initiative; `status` active/disabled (block 6) |
 | `deployments` | `host` UNIQUE, lowercase; maps a host to an app (an app may have several hosts); `last_seen_at` and last probe result (block 6) |
 | `initiative_access` | Grant: initiative + role + exactly one of user/group (CHECK), optional `expires_at`, `granted_by`, `granted_at`; FK `(initiative_id, role_id)` -> `initiative_roles (initiative_id, id)` |
-| `platform_admins` | Platform-wide administrators, separate from initiative roles |
-| `audit_events` | Admin changes (actor, action, target, before/after jsonb, nullable `initiative_id` for scoping, block 6). Append-only: the app role has INSERT and SELECT only |
+| `platform_admins` | Platform-wide administrators, separate from initiative roles; humans only (`kind` pinned by composite FK) |
+| `api_tokens` | Personal and robot access tokens (block 6): `user_id`, `token_hash` UNIQUE (SHA-256), `scope` read/admin, `expires_at` NOT NULL, `last_used_at`, `revoked_at` |
+| `audit_events` | Admin changes (actor, action, target, before/after jsonb, nullable `initiative_id` for scoping and nullable `token_id` for token-made changes, block 6). Append-only: the app role has INSERT and SELECT only |
 | `access_denials` | Deny decisions, partitioned by month; retention 365 days by dropping partitions |
 
 ### Rules
@@ -344,9 +348,12 @@ column, with the expected set in both directions (an extra grant or a missing on
 
 - Read only: `group_members`, `initiatives`, `initiative_roles`, `apps`, `initiative_access`.
 - No access: `groups`, `platform_admins`, `schema_migrations`.
-- `users`: SELECT, INSERT, and UPDATE of `email`, `name`, `updated_at` only (JIT login upsert); `status` and `google_sub` are never writable.
+- `users`: SELECT, INSERT (to be narrowed to `google_sub`, `email`, `name` by the non-browser design, see below), and UPDATE of `email`, `name`, `updated_at` only (JIT login upsert); `status` and `google_sub` are never writable.
 - `sessions`: SELECT, INSERT, DELETE, UPDATE of `last_seen_at`. `app_sessions`: SELECT, INSERT, DELETE.
 - `login_codes`, `oauth_flows`: SELECT, INSERT, DELETE, UPDATE of `consumed_at`.
+- `api_tokens` (block 6): SELECT and UPDATE of `last_used_at` only, plus EXECUTE on the SECURITY DEFINER purge function
+  `purge_dead_api_tokens` (no DELETE on the table); it never creates or revokes tokens.
+- `users` INSERT narrows to the columns of the login upsert (`google_sub`, `email`, `name`), so this role cannot create a robot.
 - `deployments`: SELECT and UPDATE of `last_seen_at` only (the `FOR NO KEY UPDATE SKIP LOCKED` row lock needs UPDATE on at
   least one column); `host` and `app_id` are read-only.
 - `signing_keys`, `audit_events` (append-only), `access_denials` (append-only) and the partition functions are unchanged.
@@ -376,7 +383,9 @@ Operational notes:
   values, rejections log `hd` and email, and it must be tested with real alias and secondary-domain accounts before production.
 - Suspended Workspace users: v1 relies on the local `disabled` flag plus the 8 h session cap. A faster cutoff needs the
   Admin SDK Directory API (`users.get`, scope `admin.directory.user.readonly`, domain-wide delegation granted by a super admin);
-  decided later together with the company's offboarding process.
+  decided later together with the company's offboarding process. Until then, offboarding must disable the user in the
+  portal: that revokes their sessions and API tokens (block 6, "Non-browser clients"). A user suspended in Google but
+  not disabled in the portal keeps working tokens up to the personal cap (30 days by default).
 
 ## 6. Portal app: home, administration, observability
 
@@ -414,10 +423,13 @@ Research notes: Engram `architecture/portal-web-stack-research`, `architecture/p
 | Create, rename, deactivate initiatives | Yes | No (read their own) |
 | Apps (create, rename, disable) and deployments (add or remove hosts) | Yes | No (list the apps of their initiatives, with their deployments) |
 | Initiative roles (create, delete, `manages_access`) | Yes | No: role keys are part of the app's contract (`roles` claim). They list the roles of their initiatives, needed to grant |
-| Grants in the initiative (user or group to role, `expires_at`), including `manages_access` roles | Yes | Yes, only in their initiatives |
+| Grants in the initiative (user, robot or group to role, `expires_at`), including `manages_access` roles | Yes | Yes, only in their initiatives |
 | Revoke grants in the initiative | Yes, except the last effective `manages_access` grant (last-manager rule below) | Same exception |
 | Groups and members | Yes | List groups only (id, key, name; never members), to grant access to a group. No changes: groups are global, a change affects every initiative |
-| Disable users, revoke their sessions | Yes (never themselves, never the last active platform admin) | No |
+| Disable users, revoke their sessions and tokens | Yes (never themselves, never the last active platform admin) | No |
+| Robots (create, rename, disable, owner) and their tokens | Yes (token creation from a browser session only) | No (list id, name and status, to grant) |
+| Own personal tokens (create, list, revoke) | Yes (any active user; `admin` scope only with admin permissions at issuance) | Same |
+| Revoke any token | Yes | No |
 | `platform_admins` | No: CLI or SQL only (bootstrap) | No |
 | Audit log | All | Only events of their initiatives |
 | Integration health of an app | Yes | Yes, for the apps of their initiatives |
@@ -426,7 +438,8 @@ Research notes: Engram `architecture/portal-web-stack-research`, `architecture/p
 Administration rules, enforced inside the mutation's transaction:
 
 - **Last effective manager.** A `manages_access` grant is *effective* when it is not expired and its subject has at
-   least one active user: the grant's own user is active, or the group has at least one active member. A disabled
+   least one active **human** user: the grant's own user is an active human, or the group has at least one active
+   member (groups hold only humans). A robot grant never counts, so every initiative keeps a human manager. A disabled
    user is no manager (the portal refuses them), so grants held only by disabled users do not keep an initiative
    managed. Revoking an effective `manages_access` grant fails with 409 if no other effective one remains in the
    initiative; revoking a grant that is not effective is always allowed. It applies to platform admins too: an
@@ -547,6 +560,7 @@ Required tests: POST with `Sec-Fetch-Site: same-site` or `cross-site` -> 403; PO
 3. Deletions keep the full `before`: revoking a grant deletes the row, removing a deployment deletes the host.
 4. Revoking sessions and disabling users from the portal are audited too, and so are `RevokeUser`/`RevokeApp`
    from platform-api.
+5. Token-made mutations also record the token (`token_id`); token and robot actions are in "Non-browser clients".
 
 ### Data model changes
 
@@ -555,12 +569,12 @@ Required tests: POST with `Sec-Fetch-Site: same-site` or `cross-site` -> 403; PO
 | `audit_events.initiative_id uuid NULL` (no FK, like the rest of the table) + index `(initiative_id, occurred_at)` | Managers filter by column instead of parsing jsonb |
 | `apps.status` active/disabled; new decision reason `app_disabled` | Deactivate instead of delete |
 | `deployments.last_seen_at`, `last_probe_at`, `last_probe_status` | Integration health |
-| Role `platform_portal`: CRUD on authorization tables except `users` (SELECT + `UPDATE (status, updated_at)` only: users are created just-in-time by platform-api and `google_sub` is never writable), SELECT+INSERT on `audit_events`, SELECT on `access_denials`, DELETE plus SELECT without the token hashes on `sessions` and `app_sessions`; nothing on `signing_keys`, `oauth_flows` or `login_codes` | Least privilege for the admin process |
+| Role `platform_portal`: CRUD on authorization tables except `users` (SELECT + `UPDATE (status, updated_at)` only: humans are created just-in-time by platform-api and `google_sub` is never writable; the non-browser design adds `INSERT` without `google_sub`, so only robots, and `api_tokens` without the hashes), SELECT+INSERT on `audit_events`, SELECT on `access_denials`, DELETE plus SELECT without the token hashes on `sessions` and `app_sessions`; nothing on `signing_keys`, `oauth_flows` or `login_codes` | Least privilege for the admin process |
 
 Deactivate instead of delete: initiatives through `status` (already exists); apps through `status`; a deployment is
 deleted (nothing references it, the audit keeps it); a role is deleted only without grants (the FK already blocks
 it); a group is deleted only when it has no members and no grants. Grants by email resolve to exactly one active
-user: zero or several matches fail (`users.email` is not unique, `google_sub` is the identity).
+human user: zero or several matches fail (`users.email` is not unique, `google_sub` is the identity).
 
 ### API
 
@@ -572,9 +586,12 @@ user: zero or several matches fail (`users.email` is not unique, `google_sub` is
 | `GET, POST /api/v1/initiatives/{id}/roles`; `PATCH, DELETE /api/v1/roles/{id}` | Roles (`PATCH`: `manages_access` only) |
 | `GET, POST /api/v1/initiatives/{id}/apps`; `PATCH /api/v1/apps/{id}` | Apps with their deployments (`PATCH`: `status`, `name`) |
 | `POST /api/v1/apps/{id}/deployments`; `DELETE /api/v1/deployments/{id}` | Hosts (read through the apps listing) |
-| `GET, POST /api/v1/initiatives/{id}/grants`; `DELETE /api/v1/grants/{id}` | Grants (subject by email or group id, role, optional `expires_at` in the future) |
+| `GET, POST /api/v1/initiatives/{id}/grants`; `DELETE /api/v1/grants/{id}` | Grants (subject by email, group id or robot id, role, optional `expires_at` in the future) |
 | `GET, POST /api/v1/groups`; `GET, DELETE /api/v1/groups/{id}`; `GET, POST /api/v1/groups/{id}/members`; `DELETE /api/v1/groups/{id}/members/{user_id}` | Groups (members: platform admins only). `GET /groups?q=` filters by a case-insensitive substring of key or name (max 64 characters, `422` on `q` otherwise; wildcards are literal) and keeps the keyset pagination. `GET /groups/{id}` returns `id, key, name, created_at` with the same access as the list (admins and managers; `404` for an unknown id), never members |
-| `GET /api/v1/users?email=`; `PATCH /api/v1/users/{id}`; `DELETE /api/v1/users/{id}/sessions` | Users (`status`) and session revocation |
+| `GET /api/v1/users?email=` (humans only); `PATCH /api/v1/users/{id}`; `DELETE /api/v1/users/{id}/sessions` | Users (`status`) and session revocation |
+| `GET, POST /api/v1/me/tokens`; `DELETE /api/v1/me/tokens/{id}` | Own personal tokens (block 6 "Non-browser clients"). `POST` returns the secret once and only from a browser session; lists never return `token_hash` |
+| `GET, POST /api/v1/robots`; `PATCH /api/v1/robots/{id}` | Robots (`PATCH`: `name`, `status`, `owner_user_id`). Platform admins; managers may list id, name and status |
+| `GET, POST /api/v1/robots/{id}/tokens`; `DELETE /api/v1/tokens/{id}` | Robot tokens (platform admins; `POST` from a browser session only); `DELETE` revokes any token |
 | `GET /api/v1/audit?initiative_id=&cursor=` | Audit log, newest first, keyset pagination |
 | `GET /api/v1/apps/{id}/health` | Integration health of an app (admins and managers of its initiative) |
 | `GET /api/v1/health/orphan-hosts` | Hosts refused as `unknown_host` that have no deployment (platform admins only) |
@@ -792,8 +809,255 @@ is the number of recorded denials; platform-api records at most one per host eve
 so it measures how long a host has been hit, not how many requests it got. The query reads `access_denials`, which
 the `platform_portal` role may select; no extra index is kept: `unknown_host` rows are bounded to 30 per minute per replica (block 2), so a week holds at most about 300 000 per replica, and the endpoint is admin-only.
 
+### Non-browser clients
+
+Design for CLI and automation that call the portal API (phase 1 decided 2026-10-16; research notes: Engram
+`architecture/portal-non-browser-clients`). Nothing here is implemented yet. The product is multi-company: the design
+assumes no CI system, secret manager or stack on the adopter's side.
+
+| Phase | Mechanism | Status |
+|---|---|---|
+| 1 | Personal access tokens (humans) and robot tokens, one mechanism | Designed here |
+| 2 | Workload identity: OIDC issuers configurable per adopter (Kubernetes service accounts, GitHub or GitLab CI), mapped to robots by a trust policy on combined claims (issuer + audience + subject + repository/namespace); no long-lived secret | Direction only; reuses robots, scopes and the token path of phase 1 |
+| 3 | OAuth device flow, only if personal tokens prove annoying. Device-code phishing campaigns (Storm-2372 style) target admins, so it would need a verification page that shows the client and requested scope, short code lifetime and no `admin` scope without a browser session | Not planned |
+
+Discarded: Google ID tokens (`gcloud auth print-identity-token --audiences` does not work with user accounts, and Google
+identity would bypass the platform's revocation and audit).
+
+#### Identities: humans and robots
+
+1. A robot is a row in `users` with `kind = 'robot'`; humans have `kind = 'human'` (default, so existing rows stay valid).
+   Everything keyed by user id works unchanged: grants, `access.Decide`, `adminz`, the audit actor and the assertion `sub`.
+2. `users.google_sub` becomes nullable. `CHECK ((kind = 'human') = (google_sub IS NOT NULL))`: a robot has no
+   `google_sub`, so a Google login can never resolve to it, and a human always has one (seed users keep their `fake:` value).
+   Robots have `email = ''` (`CHECK (kind = 'human' OR email = '')`), a `name` of 1 to 64 characters (`CHECK (kind = 'human'
+   OR char_length(name) BETWEEN 1 AND 64)`; humans keep the default `''`) unique among robots (case-insensitive), `status`,
+   and an optional `owner_user_id` (FK `users`, `ON DELETE SET NULL`): the accountable human, informational, not authority.
+   The FK cannot say "active human", so the API checks it on create and on change (422 otherwise). A robot does not
+   stop working when its owner is disabled; offboarding checks the owner column (the robot list shows it).
+3. Robots are global like users. Only platform admins create, rename, disable or change the owner of a robot, and issue
+   or revoke its tokens. Humans are still created only by login. The two families never mix in the API: `/users/*`
+   (`GET`, `PATCH` status, `DELETE .../sessions`) answers 404 for a robot id and `/robots/*` answers 404 for a human id,
+   filtered by `kind` in the SQL, not after loading the row. Disabling revokes the target's tokens in one repository
+   function shared by both paths, in the same transaction; it records the revoked token ids. The last-admin guard
+   counts humans only (robots are never in `platform_admins`, so it already does).
+4. Robots get access only through direct grants, never through groups: their access stays explicit and reviewable.
+   The grant subject gains `robot_id` (exactly one of `email`, `group_id`, `robot_id`); an email resolves to exactly one
+   active **human** (`FindActiveByEmail` filters `kind = 'human'`), and `robot_id` must name an active robot (422
+   otherwise). Robots have no email, so they cannot be found by `GET /users?email=`.
+5. Robots are never platform admins. The permission query counts only humans, and the schema enforces it with the same
+   pattern as the composite FK of grants: `users` gets `UNIQUE (id, kind)`, and `platform_admins` and `group_members`
+   get a column `kind text NOT NULL DEFAULT 'human' CHECK (kind = 'human')` with a composite FK `(user_id, kind)`
+   to `users (id, kind)` (cascade kept). Neither table can reference a robot. The composite FK replaces the single-column
+   one under the same constraint name (`group_members_user_id_fkey`, `platform_admins_user_id_fkey`), so the
+   `referenceFields` mapping of the portal repository (violated FK -> request field `user_id`) stays correct.
+   `sessions.user_id` gets no pin: no login path produces a session for an id without `google_sub`, and the role that writes
+   sessions could forge one for a human just as well, so the pin would add a column and no protection.
+6. A robot may hold a role with `manages_access` (this is what lets automation replace `grant.sh`), but it is never an
+   *effective* manager (last-effective-manager rule above): an initiative always keeps a human manager. The human-only
+   filter goes once into `effectiveGrantExpr` (portal repository: `u.kind = 'human'` in both `EXISTS`), which feeds the
+   last-manager rule and the integration health counts alike.
+
+#### Tokens
+
+Table `api_tokens` (block 4). The secret is `ptk_` + 43 characters of base64url (32 random bytes from `crypto/rand`) +
+8 hex digits of the CRC-32 of the preceding text: 55 characters. The prefix lets secret scanners find leaks; the checksum
+is only a format check (it is not secret, and the hash covers the whole string), so malformed values are rejected before
+any database query.
+
+| Column | Meaning |
+|---|---|
+| `id` | uuid (`tid` claim, audit target) |
+| `user_id` | FK `users`, `ON DELETE CASCADE`: owner, human or robot |
+| `name` | Label chosen by the creator, 1 to 64 characters |
+| `token_hash` | SHA-256 of the whole secret, `bytea`, unique index. 256 bits of entropy make a slow hash pointless; lookup is by hash, so no secret is ever compared and there is no timing oracle |
+| `scope` | `read` or `admin` (CHECK) |
+| `created_by`, `created_at` | Acting user (equals `user_id` for personal tokens; a platform admin for robot tokens) |
+| `expires_at` | NOT NULL, `CHECK (expires_at > created_at)`; the cap is configuration |
+| `last_used_at` | Best-effort |
+| `revoked_at` | NULL while valid |
+
+Rules:
+
+1. The secret is shown once, in the creation response; it is never retrievable and no endpoint returns `token_hash`.
+2. Expiration is mandatory, with one cap per owner kind: `PORTAL_TOKEN_MAX_TTL_PERSONAL` (default `720h`, 30 days) and
+   `PORTAL_TOKEN_MAX_TTL_ROBOT` (default `2160h`, 90 days). A human token must not outlive a Google suspension by much:
+   the v1 offboarding control is the local `disabled` flag plus the 8 h session cap (block 5), and a suspended but
+   not disabled user keeps a working token up to the cap. Robots are not offboarded through Google, so they can
+   afford a longer cap. Rotation stays routine (create the new token, switch, revoke the old one; several tokens per
+   owner overlap, at most 25 unexpired unrevoked ones). Raising a cap is the adopter's decision. A request without
+   `expires_in` gets the cap of the owner's kind; a larger one is a 422.
+3. Scope is a ceiling, never a grant. `read` allows only `GET` and `HEAD`; `admin` lifts the method restriction. In both
+   cases the effective permission is the intersection of the owner's live permissions (resolved from the database on
+   every request, as in "Authorization of portal calls") and the scope.
+4. Permissions are checked at issuance and on every use. At issuance, `admin` is accepted only if the token's owner is
+   at that moment a platform admin or holds `manages_access` in at least one initiative; otherwise 422. A token never
+   carries more than its owner can do at issuance, and what it can do later shrinks with the owner (grant revoked,
+   user or robot disabled).
+5. Disabling a user or a robot revokes all their tokens (`revoked_at`) in the same transaction, like their sessions;
+   re-enabling does not bring them back. ForwardAuth also checks `status` on every request.
+6. Housekeeping (the existing job in platform-api) deletes tokens 30 days after `expires_at` or `revoked_at`, so owners
+   still see recently dead tokens. It calls `purge_dead_api_tokens(grace interval)`, a SECURITY DEFINER function with a
+   pinned `search_path` that only deletes rows past the grace period and refuses a grace under 7 days (same pattern
+   as `drop_expired_access_denials_partitions`, migration 0008); the runtime role has no DELETE on the table. The audit keeps name, scope and expiry in `before`/`after`.
+
+#### Issuance and revocation
+
+1. Tokens are created only from a browser session: a request authenticated by a token (assertion with `tid`) can never
+   create a token or a robot token, so a leaked token cannot extend itself. The portal checks it, not the client.
+2. A human creates tokens only for themselves (`POST /api/v1/me/tokens`). Robot tokens are created only by platform
+   admins, from a session (`POST /api/v1/robots/{id}/tokens`).
+3. The owner revokes their own tokens; a platform admin revokes any token. A token may revoke tokens (own ones, or any if
+   its owner is a platform admin and the scope is `admin`): containment must not require a browser.
+4. Creation runs in one transaction that takes `LockUser(owner)` (`FOR NO KEY UPDATE`, the lock `SetUserStatus` takes)
+   as its first lock, reads the owner's `status` again under it, counts the unexpired unrevoked tokens against the
+   limit of 25 and then inserts. The lock is needed because the foreign key of the insert takes only `KEY SHARE` on
+   the user, which does not conflict with a concurrent disable: without it, a token could be inserted after the
+   disable revoked the others, and two parallel creations could pass the count together. It is a leaf lock (no other
+   user lock is held with it), so it cannot join the lock orders of block 6.
+5. Every creation and revocation is audited (below). Creation has no natural key, so a retry after an ambiguous failure
+   can leave a second token; the client lists and revokes the extra one.
+
+#### ForwardAuth token path
+
+Changes block 2 as follows; only platform-api decides.
+
+1. Traefik adds `Authorization` to `authRequestHeaders`. This reaches platform-api for **every** host, so platform-api
+   reads it only when the resolved app satisfies the same portal rule as the Evaluator (`Facts.PortalApp`: app id equal
+   to `PLATFORM_PORTAL_APP_ID` **and** initiative `platform`, not the app id alone) and ignores it, and never logs it,
+   on any other host. Like `Cookie`, it reaches only the internal listener, which only Traefik reaches (NetworkPolicy). Apps behind ForwardAuth keep their own `Authorization` (Grafana, for example): ForwardAuth never
+   changes the request that reaches the app.
+2. On a portal host, any `Authorization` header takes the token path exclusively; the cookie is not consulted and there
+   is no fallback to it. Accepted form: one header, scheme `Bearer` (case-insensitive), one token. Tokens are never
+   accepted in a query string, a cookie or another header.
+3. Order: format check (prefix, length, checksum) -> one query by `token_hash` joined with the owner, no cache:
+   `revoked_at IS NULL AND expires_at > now()` and owner `status = 'active'` -> the portal rules of block 2 (app and
+   initiative active; any active owner; empty `roles`) -> scope: with `read`, a method other than `GET`/`HEAD`
+   (`X-Forwarded-Method`) answers 403. The token row and the owner's `status` are read live; if the app and
+   initiative rules reuse the Evaluator, they may come from its 30 s decision cache (flushed by `access_changed`).
+4. Failures (RFC 6750): a malformed, unknown, expired or revoked token, or an inactive owner (human or robot), answer
+   401 `application/problem+json` with `WWW-Authenticate: Bearer error="invalid_token"`, the same body for every cause
+   (no oracle; the reason goes to the log). An `Authorization` header with another scheme, or `Bearer` without
+   credentials, answers 401 with `WWW-Authenticate: Bearer` and no `error`. Never a redirect, no `Set-Cookie`, no
+   `login_url`. Scope violation: 403 with `WWW-Authenticate: Bearer error="insufficient_scope"`. Database failure:
+   503 (fail closed).
+5. Success: 200 + `Platform-Assertion` (claims below). `last_used_at` is written throttled (once per minute per token per
+   replica, like `deployments.last_seen_at`) and best effort, through a bounded queue: ForwardAuth never waits for it.
+6. The decision log line carries decision, reason, host, app id, `tid` and `jti`; never the `Authorization` header or the token.
+7. Traefik: on the portal route, a `headers` middleware `strip-authorization` removes `Authorization` after ForwardAuth
+   (`customRequestHeaders` with an empty value, as `strip-assertion`), so the secret never reaches the portal process,
+   its logs or its panics. The portal never reads `Authorization`. The middleware lives in the `portal` namespace and
+   the routes reference it locally by name (`allowCrossNamespace` is false: one in `platform` would break the portal
+   route). Invariant: every IngressRoute that matches a portal host references it; the smoke check lists them and
+   fails if one lacks it. The access log keeps dropping headers (`fields.headers.defaultMode: drop`); that setting
+   protects the secret and must not be relaxed.
+8. CORS preflights (`OPTIONS` + `Origin` + `Access-Control-Request-Method`) keep answering 200 without assertion before
+   any token handling; the portal never answers CORS.
+
+New claims (block 1), present only on assertions issued by the token path; session assertions are unchanged:
+
+| Claim | Value |
+|---|---|
+| `sub` | User id of the owner, human or robot |
+| `sub_type` | `human` or `robot`. Not `act` (RFC 8693 actor object, different meaning) |
+| `tid` | Token id (uuid); absent means browser session |
+| `scope` | `read` or `admin` (RFC 9068 name; single value) |
+| `sid` | Absent: there is no session |
+| `email` | `""` for robots; `name` = robot name |
+
+Absent `sid` and empty `email` need no SDK change: both are plain optional strings in `Claims`, and the portal does not
+read `sid`. The platform issuer does need one: `assertion.Issuer.Issue` rejects an empty session id today, so
+`assertion.Request` gains the token fields and `SessionID` becomes optional exactly when `APITokenID` is set (one of
+the two is always required). `Claims` gains `SubjectType`, `APITokenID` (`TokenID` already holds the `jti`) and `Scope`, empty for session assertions. Only the portal receives these assertions: no other app can be
+reached with a token.
+
+#### Request protection with tokens
+
+A Bearer request carries no ambient credential: the browser never adds `Authorization` by itself, and to add it from a
+page of another origin it needs a CORS preflight, which the portal never approves (no `Access-Control-*`). Fetch Metadata
+stays as is: non-browser clients send no `Sec-Fetch-Site`, and a missing header is allowed (block 6, middleware order
+2 and 3); a browser always sends it, so a browser-originated cross-site request is rejected whatever it carries.
+Because the token path ignores cookies, a request cannot mix a victim's cookie with an attacker's token. Mutations keep
+the JSON-only rule (415). The portal additionally enforces scope from the `scope` claim in a middleware after authentication and before the
+routes: if `tid` is set, `scope` must be `read` or `admin` (anything else: 403, fail closed), and `read` means exactly
+`GET` and `HEAD`. It does not reuse `isSafeMethod` (portalhttp `guard.go`), which also accepts `OPTIONS`. Defense in depth
+if ForwardAuth and the portal ever disagree.
+
+#### Audit
+
+Each mutation made with a token records the acting user or robot in `actor_id` (as today) and the token in a new column
+`audit_events.token_id uuid NULL` (no FK, like the rest of the table), with an index like `initiative_id` if filtering
+needs it. A column, not jsonb: it is filterable, and `actor_id` alone cannot say which of the owner's tokens acted.
+Actions: `token.create` (`after`: name, scope, `expires_at`, owner; never the hash), `token.revoke`, `robot.create`,
+`robot.update` (name, status, owner). Disabling a user or robot records the ids of the revoked tokens in the
+`user.update` / `robot.update` row (ids, not a count: each one can be traced). Reads and plain uses are not audited
+(`last_used_at` is the trace). Audit listings, grants and user documents show a robot by its name (they show only the
+email today).
+
+#### Privileges
+
+- `platform_runtime`: `api_tokens` SELECT and `UPDATE (last_used_at)`, plus EXECUTE on `purge_dead_api_tokens` (no
+  DELETE); `users` INSERT narrows from table-wide to `(google_sub, email, name)`, the columns of the login upsert, so a
+  compromised runtime cannot create a robot. `runtimeGrants` and `CheckRuntimeRole` gain these entries. Old pods
+  against the new grants (or new pods against old ones during a rollback) fail the start-up check and refuse to start,
+  fail closed as with migration 0010; the migrate Job runs first and a rollback needs the previous migration state.
+- `platform_portal`: `api_tokens` INSERT, `SELECT (id, user_id, name, scope, created_by, created_at, expires_at,
+  last_used_at, revoked_at)` (never `token_hash`) and `UPDATE (revoked_at)`; `users` gains
+  `INSERT (kind, name, email, owner_user_id, status)` without `google_sub`, which is why the portal can only create robots
+  (the CHECK rejects a human without `google_sub`), and `UPDATE (name, owner_user_id)` next to `status, updated_at`;
+  `audit_events` is unchanged. The expected sets of `CheckPortalRole` change, and migration ordering follows the
+  deployment rule of block 5 (migrate Job first).
+
+#### Threat model
+
+| Threat | Mitigation | Residual risk |
+|---|---|---|
+| Token leaked in logs, CI output or shell history | Prefix for secret scanners; expiry (cap 30 days personal, 90 robot); `last_used_at` and revocation; Traefik strips `Authorization` before the portal, platform-api never logs it; query strings refused | A bearer secret works for anyone holding it until revoked or expired; no sender constraint (DPoP, mTLS). Traefik or client-side logs outside the platform are the adopter's |
+| Database dump | Only SHA-256 of 256-bit secrets is stored; hashes are not readable by `platform_portal` | None for the secret; a dump still exposes token metadata (names, owners) |
+| Token replayed to the portal by a sibling app that received it by mistake | Tokens are not accepted on any other host; apps cannot read the portal route's headers (Traefik strips them); clients talk only to the portal host | A malicious sibling that obtains the secret can replay it to the portal until expiry or revocation: the token has no audience binding beyond the host rule |
+| Token sent to other app hosts | Ignored by platform-api there; the secret is exposed to that app, which could replay it to the portal | Until expiry or revocation. The CLI refuses any host but the portal's; a stray `Authorization` elsewhere is a client bug |
+| Privilege escalation at issuance | Browser session only; owners only for themselves; `admin` only if the owner is admin or manager at that moment; robot tokens only by platform admins; scope never adds permissions | None beyond the owner's own rights at issuance |
+| Privilege drift after issuance (grant revoked, owner disabled) | Permissions resolved live per request from the owner; disabling revokes tokens; ForwardAuth checks the owner's `status` per request | The token row has no cache, but the app and initiative rules may come from the 30 s decision cache if the Evaluator is reused |
+| Offboarding gap: user suspended in Google but not disabled in the portal | Personal cap of 30 days; offboarding disables the user in the portal, which revokes sessions and tokens at once (block 5 open item) | A suspended, not disabled user keeps a working personal token up to 30 days; closing it needs the Directory API check (block 5) |
+| `Authorization` of every app now reaches platform-api | Added to `authRequestHeaders`; read only for the portal app, never logged; internal listener reachable only from Traefik (NetworkPolicy), same exposure as `Cookie` today | A platform-api compromise sees app `Authorization` headers, as it already sees cookies |
+| Robot used as backdoor admin | Robots never platform admins (schema pin), never in groups, never effective managers; only platform admins create them; creation and grants audited | A platform admin can still grant a robot `manages_access` in an initiative together with a human manager; reviewed through audit and the robot list |
+| Leaked token mints new tokens | Issuance only from a browser session (assertion without `tid`) | Containment only: a leaked `admin` token of an admin can still change grants, disable users and revoke tokens until revoked |
+| CSRF or confused deputy through the browser | Bearer is not ambient; preflight never approved; Fetch Metadata and JSON-only unchanged; token path ignores cookies | None identified |
+| DoS with random Bearer values | Format and checksum check before the database; one indexed lookup otherwise, no heavier than the existing uncached session lookup; Traefik rate limits are the adopter's tool | A flood of well-formed random tokens costs one indexed query each; same class as a flood of random cookies |
+| Revocation latency | No cache: the next request after revocation fails on every replica | A request already past ForwardAuth finishes; its assertion lives at most 90 s and is never visible to the client |
+| Phishing an admin into creating a token | Creation needs a browser session on the portal host and shows the scope and expiry; audited | A deceived admin can hand a token to an attacker; mitigated only by expiry and review. Device flow (phase 3) would widen this surface |
+| Insider creating a robot | Only platform admins; every robot, grant and token creation audited; robots listed with owner and last use | A malicious platform admin is already trusted with grants; the audit is the control |
+| Compromised portal process | Cannot read `token_hash` or write `platform_admins`; `platform_runtime` cannot insert tokens or delete them, and cannot create a robot | The portal role can insert a token with a hash it knows for any user, equivalent to what its grant writes already allow; the audit trail is bypassable by that role |
+
+#### Implementation parts
+
+1. Schema and portal API: migration (`users.kind`, nullable `google_sub`, `owner_user_id`, kind pins, `api_tokens`,
+   `audit_events.token_id`, privileges), repositories, handlers, `adminz` actions, audit, grants by robot, last-manager
+   rule (human managers only, in `effectiveGrantExpr`), `purge_dead_api_tokens` and its housekeeping call,
+   `CheckRuntimeRole`/`CheckPortalRole` sets, `/users` vs `/robots` split by `kind`, the scope middleware, robot names in
+   audit, grant and user documents. Specifics: `adminz` needs an action for "own tokens, any active human"
+   (`token.create_own`, `token.list_own`, `token.revoke_own`), because a user without roles is forbidden everything
+   else today; the audit recording (`audit.Event`, which carries only the caller id) needs a way to carry `tid`.
+   Concurrency test: token creation against a parallel disable of the owner, and against 26 parallel creations of
+   the same owner (no token survives a disable; never more than 25).
+2. ForwardAuth token path in platform-api, assertion claims, SDK fields (`SubjectType`, `APITokenID`, `Scope`),
+   `assertion.Request` token fields with `SessionID` optional only when `APITokenID` is set (`issuer.go` rejects an
+   empty session id today).
+3. Traefik: `Authorization` in `authRequestHeaders`, `strip-authorization` in the `portal` namespace referenced by
+   every portal-host route, and smoke checks: (a) token accepted on the portal host; (b) `Authorization` ignored on
+   another host and kept for that app (stripped only on the portal route); (c) a valid cookie with an invalid
+   `Authorization` on the portal host answers 401; (d) every IngressRoute matching a portal host references the
+   middleware; (e) `WWW-Authenticate` reaches the client; (f) the Bearer value sent in these checks appears in no
+   Traefik log and no platform-api log; (g) it never reaches the portal: a `whoami` fixture in namespace `portal`
+   with the same host rule and the same middleware list as the portal route (not a longer `PathPrefix` router that skips
+   it), with its own NetworkPolicy ingress from Traefik, echoes the headers it receives. A rate limit on failed tokens
+   per client IP waits for the real client IP item of `TODO.md` (k3d shows every client as `10.42.0.1`).
+4. Web: tokens page for humans, robots admin page.
+5. CLI replacing `grant.sh`/`revoke.sh` (Go, uses a token, talks only to the portal host).
+
+Open points: a revoke-by-secret endpoint for secret-scanner reports (the platform hashes the secret and revokes by
+hash); whether an owner's departure should disable their robots automatically (today it does not, by design).
+
 ### Open items
 
-- Non-browser clients (CLI, automation replacing `grant.sh`) have no way to authenticate to the portal API yet:
-  today everything enters through the session cookie.
 - Reka UI injects `<style>` in some components: verify each one used against `style-src 'self'`.
