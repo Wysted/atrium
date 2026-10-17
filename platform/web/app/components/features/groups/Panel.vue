@@ -23,50 +23,16 @@ watch(list.loading, (now, was) => {
 })
 
 const createOpen = ref(false)
-const removing = ref<Group | null>(null)
-const removeOpen = computed({
-  get: () => removing.value !== null,
-  set: (value: boolean) => {
-    if (!value) removing.value = null
-  },
-})
-const removeBusy = ref(false)
-const removeError = ref('')
-const notice = ref('')
-
-function askRemove(group: Group) {
-  notice.value = ''
-  removeError.value = ''
-  removing.value = group
-}
-
-async function confirmRemove() {
-  const group = removing.value
-  if (!group || removeBusy.value) return
-  removeBusy.value = true
-  removeError.value = ''
-  try {
-    await api.del(`/groups/${encodeURIComponent(group.id)}`)
+const { removing, open: removeOpen, busy: removeBusy, error: removeError, notice, ask: askRemove, confirm: confirmRemove } = useRemoveFlow<Group>({
+  remove: group => api.del(`/groups/${encodeURIComponent(group.id)}`),
+  onRemoved: (group) => {
     list.items.value = list.items.value.filter(g => g.id !== group.id)
-    removing.value = null
-    notice.value = 'Group deleted.'
-  }
-  catch (e) {
-    if (e instanceof ApiError && e.kind === 'not_found') {
-      removing.value = null
-      notice.value = 'This group no longer exists.'
-      void list.reload(true)
-    }
-    else {
-      removeError.value = describeMutationError(e, {
-        conflict: 'This group still has members or grants. Remove them first.',
-      }).message
-    }
-  }
-  finally {
-    removeBusy.value = false
-  }
-}
+  },
+  reload: () => void list.reload(true),
+  done: 'Group deleted.',
+  gone: 'This group no longer exists.',
+  conflict: 'This group still has members or grants. Remove them first.',
+})
 
 function onCreated() {
   notice.value = 'Group created.'
@@ -101,46 +67,24 @@ function onCreated() {
       />
     </BaseField>
 
-    <BaseBox as="div" :aria-busy="list.loading.value">
-      <BaseStack v-if="list.loading.value" :gap="3">
-        <BaseText class="sr-only">
-          Loading groups
-        </BaseText>
-        <BaseSkeleton />
-        <BaseSkeleton />
-        <BaseSkeleton />
-      </BaseStack>
-      <FeaturesHomeLoadError
-        v-else-if="list.error.value && list.items.value.length === 0"
-        :error="list.error.value"
-        subject="groups"
-        forbidden-description="Your account is not allowed to manage groups."
-        @retry="list.reload()"
+    <FeaturesAdminPagedBlock :list="list" subject="groups" forbidden-description="Your account is not allowed to manage groups.">
+      <FeaturesGroupsTable
+        caption="Groups"
+        :groups="list.items.value"
+        :empty-text="search.query.value ? 'No groups match your search.' : undefined"
+        @remove="askRemove"
       />
-      <BaseStack v-else :gap="4">
-        <FeaturesGroupsTable
-          caption="Groups"
-          :groups="list.items.value"
-          :empty-text="search.query.value ? 'No groups match your search.' : undefined"
-          @remove="askRemove"
-        />
-        <BaseCluster v-if="list.error.value" :gap="2">
-          <BaseText role="alert" size="sm" tone="danger">
-            Could not load more groups.
-          </BaseText>
-          <BaseButton size="sm" variant="secondary" :loading="list.loadingMore.value" @click="list.loadMore()">
-            Try again
-          </BaseButton>
-        </BaseCluster>
-        <BaseCluster v-else-if="list.hasMore.value" justify="center">
-          <BaseButton variant="secondary" :loading="list.loadingMore.value" @click="list.loadMore()">
-            Load more
-          </BaseButton>
-        </BaseCluster>
-      </BaseStack>
-    </BaseBox>
+    </FeaturesAdminPagedBlock>
 
-    <FeaturesGroupsCreateDialog v-model:open="createOpen" @created="onCreated" />
+    <FeaturesAdminCreateKeyDialog
+      v-model:open="createOpen"
+      endpoint="/groups"
+      title="New group"
+      description="A group can be granted access in any initiative. Its key identifies it and cannot be changed later."
+      submit-label="Create group"
+      conflict="A group with this key already exists. If you just retried, it may have been created by your earlier attempt: check the list."
+      @created="onCreated"
+    />
     <UiConfirmDialog
       v-model:open="removeOpen"
       :title="`Delete group ${removing ? groupLabel(removing) : ''}?`"

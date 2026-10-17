@@ -20,6 +20,15 @@ export interface MePermissions {
   platform_admin: boolean
   /** Initiatives where the caller has a non-expired `manages_access` grant. */
   managed_initiatives: InitiativeRef[]
+  /** Areas the caller supervises, by key; always `[]` under a token. Gates the supervisor screens. */
+  supervised_areas: SupervisedArea[]
+}
+
+/** An area as `/me` lists it (`permissions.supervised_areas`). */
+export interface SupervisedArea {
+  id: string
+  key: string
+  name: string
 }
 
 /** GET /api/v1/me */
@@ -250,6 +259,29 @@ export interface CreateDeploymentBody {
 export interface CreateGroupBody {
   key: string
   name?: string
+}
+
+/** An area (platform admins only): a set of people whose robots and tokens its supervisors manage. `GET /areas`. */
+export interface Area {
+  id: string
+  key: string
+  name: string
+  created_at: string
+}
+
+/** GET /api/v1/areas?cursor=&limit= (keyset). */
+export interface AreaList {
+  areas: Area[]
+  next_cursor?: string
+}
+
+/** Which list of an area: `GET /areas/{id}/<kind>` answers `{ <kind>: [...] }`. */
+export type AreaPersonKind = 'members' | 'supervisors'
+
+export interface AreaPersonList {
+  members?: GroupMember[]
+  supervisors?: GroupMember[]
+  next_cursor?: string
 }
 
 /** `users.status` (portal.UserStatusActive / UserStatusDisabled). */

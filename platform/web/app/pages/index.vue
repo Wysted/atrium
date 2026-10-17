@@ -13,6 +13,7 @@ const showAdmin = computed(() => {
   const permissions = me.data.value?.permissions
   return !!permissions && (permissions.platform_admin || permissions.managed_initiatives.length > 0)
 })
+const isSupervisor = computed(() => (me.data.value?.permissions.supervised_areas.length ?? 0) > 0)
 // The page state comes from the apps request alone; /me only adds the greeting and the admin link.
 const loadError = computed(() => apps.error.value)
 const meFailed = computed(() => !!me.error.value && !me.pending.value && !me.error.value.reloading)
@@ -34,6 +35,9 @@ async function retry() {
       <BaseCluster :gap="2">
         <BaseButton to="/tokens" variant="secondary">
           API tokens
+        </BaseButton>
+        <BaseButton v-if="isSupervisor" to="/areas" variant="secondary">
+          My areas
         </BaseButton>
         <BaseButton v-if="showAdmin" to="/admin" variant="secondary">
           Administration

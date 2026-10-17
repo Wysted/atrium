@@ -2,20 +2,22 @@
 import type { GroupMember } from '~/types/api'
 import type { TableColumn } from '~/types/ui'
 
-/** Members of a group: name and email, account status (disabled users are listed too), added date, "Remove". */
-defineProps<{
+/** People of a group or an area (members or supervisors): name and email, account status (disabled users are listed too), added date, "Remove". */
+const props = defineProps<{
   members: GroupMember[]
   caption: string
+  emptyText?: string
+  personLabel?: string
 }>()
 
 const emit = defineEmits<{ remove: [member: GroupMember] }>()
 
-const columns: TableColumn[] = [
-  { key: 'member', label: 'Member' },
+const columns = computed<TableColumn[]>(() => [
+  { key: 'member', label: props.personLabel ?? 'Member' },
   { key: 'status', label: 'Status' },
   { key: 'added_at', label: 'Added' },
   { key: 'actions', label: 'Actions', align: 'end', hideLabel: true },
-]
+])
 </script>
 
 <template>
@@ -26,7 +28,7 @@ const columns: TableColumn[] = [
     :rows="members"
     :row-key="(row: GroupMember) => row.user_id"
     row-header="member"
-    empty-text="This group has no members yet."
+    :empty-text="emptyText ?? 'This group has no members yet.'"
   >
     <template #cell="{ row, column }">
       <BaseStack v-if="column.key === 'member'" :gap="0">

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { ApiToken, TokenList } from '~/types/api'
-import type { SelectOption } from '~/types/ui'
+import type { HeadingLevel, SelectOption } from '~/types/ui'
 import { ApiError } from '~/composables/useApi'
 
 /**
@@ -19,6 +19,9 @@ const props = defineProps<{
   /** "you" or "the robot ci". */
   owner: string
   expiryOptions?: SelectOption[]
+  /** Title of the list (default "Tokens"). */
+  heading?: string
+  headingLevel?: HeadingLevel
 }>()
 
 const api = useApi()
@@ -87,8 +90,8 @@ function onUncertain() {
 <template>
   <BaseStack :gap="4">
     <BaseCluster justify="between">
-      <BaseHeading :level="2" size="lg">
-        Tokens
+      <BaseHeading :level="headingLevel ?? 2" size="lg">
+        {{ heading ?? 'Tokens' }}
       </BaseHeading>
       <BaseButton v-if="canCreate" @click="createOpen = true">
         <BaseIcon name="plus" size="sm" />
@@ -120,7 +123,7 @@ function onUncertain() {
         @retry="list.reload()"
       />
       <BaseStack v-else :gap="4">
-        <FeaturesTokensTable caption="Tokens" :tokens="list.items.value" @revoke="askRevoke" />
+        <FeaturesTokensTable :caption="heading ?? 'Tokens'" :tokens="list.items.value" @revoke="askRevoke" />
         <BaseCluster v-if="list.error.value" :gap="2">
           <BaseText role="alert" size="sm" tone="danger">
             Could not load more tokens.
@@ -150,7 +153,7 @@ function onUncertain() {
     <UiConfirmDialog
       v-model:open="revokeOpen"
       :title="`Revoke token ${revoking?.name ?? ''}?`"
-      description="Anything using this token stops working at its next request. This cannot be undone: create a new token to replace it."
+      :description="`Anything using this token stops working at its next request. This cannot be undone${canCreate ? ': create a new token to replace it' : ''}.`"
       confirm-label="Revoke token"
       :busy="revokeBusy"
       :error="revokeError"

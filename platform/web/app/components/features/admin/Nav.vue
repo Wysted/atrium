@@ -7,6 +7,8 @@
 const props = defineProps<{
   isPlatformAdmin: boolean
   isManager: boolean
+  /** Supervises at least one area: links the supervisor screens (outside the admin gate). */
+  isSupervisor?: boolean
 }>()
 
 interface NavItem { label: string, to: string, visible: boolean }
@@ -14,9 +16,11 @@ interface NavItem { label: string, to: string, visible: boolean }
 const items = computed<NavItem[]>(() => [
   { label: 'Initiatives', to: '/admin/initiatives', visible: props.isPlatformAdmin || props.isManager },
   { label: 'Groups', to: '/admin/groups', visible: props.isPlatformAdmin },
+  { label: 'Areas', to: '/admin/areas', visible: props.isPlatformAdmin },
   { label: 'Users', to: '/admin/users', visible: props.isPlatformAdmin },
   { label: 'Robots', to: '/admin/robots', visible: props.isPlatformAdmin },
   { label: 'Health', to: '/admin/health', visible: props.isPlatformAdmin },
+  { label: 'My areas', to: '/areas', visible: !!props.isSupervisor },
   { label: 'Audit', to: '/admin/audit', visible: props.isPlatformAdmin || props.isManager },
 ].filter(item => item.visible))
 

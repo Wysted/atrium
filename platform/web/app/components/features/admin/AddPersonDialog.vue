@@ -1,13 +1,20 @@
 <script setup lang="ts">
-import type { AddMemberBody, GroupMember } from '~/types/api'
+import type { AddMemberBody } from '~/types/api'
 
 /**
- * Dialog to add a member to a group by email (platform admins; the API enforces). The email must match exactly
- * one active user: 422 `no_unique_active_user` otherwise, shown on the field. 409 = already a member. The email
- * input takes focus on open. Groups are global, so the dialog says the change reaches every initiative.
+ * Dialog to add a member or supervisor to a group or an area by email (POST to `endpoint`; platform admins, the API
+ * enforces). The email must match exactly one active user: 422 `no_unique_active_user` otherwise, shown on the field.
+ * 409 = `conflict`. 404 = the parent is gone: `notFound` is shown and `not-found` emitted. The email input takes focus on open.
  */
-const props = defineProps<{ groupId: string }>()
-const emit = defineEmits<{ added: [member: GroupMember] }>()
+const props = defineProps<{
+  endpoint: string
+  title: string
+  description: string
+  submitLabel: string
+  conflict: string
+  notFound: string
+}>()
+const emit = defineEmits<{ added: [], notFound: [] }>()
 const open = defineModel<boolean>('open', { required: true })
 
 const api = useApi()
@@ -36,18 +43,19 @@ async function submit() {
   const body: AddMemberBody = { email: value }
   submitting.value = true
   try {
-    const member = await api.post<GroupMember>(`/groups/${encodeURIComponent(props.groupId)}/members`, body)
+    await api.post(props.endpoint, body)
     open.value = false
-    emit('added', member)
+    emit('added')
   }
   catch (e) {
     const failure = describeMutationError(e, {
-      conflict: 'This user is already a member of the group.',
-      notFound: 'This group no longer exists. Reload the page.',
+      conflict: props.conflict,
+      notFound: props.notFound,
       fields: ['email'],
       fieldCopy: EMAIL_FIELD_COPY,
     })
     const duplicate = e instanceof ApiError && e.kind === 'conflict'
+    if (e instanceof ApiError && e.kind === 'not_found') emit('notFound')
     emailError.value = failure.fields.email ?? (duplicate ? failure.message : '')
     formError.value = emailError.value ? '' : failure.message
     if (emailError.value) emailInput.value?.focus()
@@ -61,8 +69,8 @@ async function submit() {
 <template>
   <UiDialog
     v-model:open="open"
-    title="Add member"
-    description="The member gains every access this group is granted, in every initiative."
+    :title="title"
+    :description="description"
     :busy="submitting"
     :initial-focus="emailInput"
   >
@@ -79,7 +87,7 @@ async function submit() {
             Cancel
           </BaseButton>
           <BaseButton type="submit" :loading="submitting">
-            Add member
+            {{ submitLabel }}
           </BaseButton>
         </BaseCluster>
       </BaseStack>

@@ -1,12 +1,19 @@
 <script setup lang="ts">
-import type { CreateGroupBody, Group } from '~/types/api'
+import type { CreateGroupBody } from '~/types/api'
 
 /**
- * Dialog to create a group (platform admins; the API enforces). Groups are global: they can be granted access in
- * any initiative. Key and name are validated here like Go; the key cannot be changed later. 409 = key taken, shown
+ * Dialog to create a keyed thing (a group or an area; platform admins, the API enforces) by POST to `endpoint`. Key and
+ * name follow the group rules and are validated here like Go; the key cannot be changed later. 409 = key taken, shown
  * on the key field (it may be our own earlier attempt). The Key input takes focus on open.
  */
-const emit = defineEmits<{ created: [group: Group] }>()
+const props = defineProps<{
+  endpoint: string
+  title: string
+  description: string
+  submitLabel: string
+  conflict: string
+}>()
+const emit = defineEmits<{ created: [] }>()
 const open = defineModel<boolean>('open', { required: true })
 
 const api = useApi()
@@ -44,13 +51,13 @@ async function submit() {
   if (trimmedName) body.name = trimmedName
   submitting.value = true
   try {
-    const created = await api.post<Group>('/groups', body)
+    await api.post(props.endpoint, body)
     open.value = false
-    emit('created', created)
+    emit('created')
   }
   catch (e) {
     const failure = describeMutationError(e, {
-      conflict: 'A group with this key already exists. If you just retried, it may have been created by your earlier attempt: check the list.',
+      conflict: props.conflict,
       fields: ['key', 'name'],
       fieldCopy: GROUP_FIELD_COPY,
     })
@@ -70,8 +77,8 @@ async function submit() {
 <template>
   <UiDialog
     v-model:open="open"
-    title="New group"
-    description="A group can be granted access in any initiative. Its key identifies it and cannot be changed later."
+    :title="title"
+    :description="description"
     :busy="submitting"
     :initial-focus="keyInput"
   >
@@ -91,7 +98,7 @@ async function submit() {
             Cancel
           </BaseButton>
           <BaseButton type="submit" :loading="submitting">
-            Create group
+            {{ submitLabel }}
           </BaseButton>
         </BaseCluster>
       </BaseStack>

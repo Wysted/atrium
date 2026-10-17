@@ -29,6 +29,7 @@ const loading = computed(() => !access.me.value && !access.error.value)
             v-if="access.canAdminister.value"
             :is-platform-admin="access.isPlatformAdmin.value"
             :is-manager="access.isManager.value"
+            :is-supervisor="access.isSupervisor.value"
           />
         </BaseStack>
       </BaseContainer>

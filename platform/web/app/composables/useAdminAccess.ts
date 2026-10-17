@@ -12,6 +12,7 @@ export function useAdminAccess() {
   const permissions = computed(() => state.data.value?.permissions ?? null)
   const isPlatformAdmin = computed(() => !!permissions.value?.platform_admin)
   const isManager = computed(() => (permissions.value?.managed_initiatives.length ?? 0) > 0)
+  const supervisedAreas = computed(() => permissions.value?.supervised_areas ?? [])
   /** Platform admin, or a non-expired `manages_access` grant on this initiative (grants and roles screens). */
   const managesInitiative = (initiativeId: string) =>
     isPlatformAdmin.value || !!permissions.value?.managed_initiatives.some(i => i.id === initiativeId)
@@ -24,6 +25,8 @@ export function useAdminAccess() {
     isPlatformAdmin,
     isManager,
     managesInitiative,
+    supervisedAreas,
+    isSupervisor: computed(() => supervisedAreas.value.length > 0),
     canAdminister: computed(() => isPlatformAdmin.value || isManager.value),
   }
 }

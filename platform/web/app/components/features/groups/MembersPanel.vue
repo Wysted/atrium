@@ -13,50 +13,16 @@ const base = `/groups/${encodeURIComponent(props.groupId)}/members`
 const list = usePagedList<GroupMemberList, GroupMember>(base, page => page.members)
 
 const addOpen = ref(false)
-const removing = ref<GroupMember | null>(null)
-const removeOpen = computed({
-  get: () => removing.value !== null,
-  set: (value: boolean) => {
-    if (!value) removing.value = null
-  },
-})
-const removeBusy = ref(false)
-const removeError = ref('')
-const notice = ref('')
-
-function askRemove(member: GroupMember) {
-  notice.value = ''
-  removeError.value = ''
-  removing.value = member
-}
-
-async function confirmRemove() {
-  const member = removing.value
-  if (!member || removeBusy.value) return
-  removeBusy.value = true
-  removeError.value = ''
-  try {
-    await api.del(`${base}/${encodeURIComponent(member.user_id)}`)
+const { removing, open: removeOpen, busy: removeBusy, error: removeError, notice, ask: askRemove, confirm: confirmRemove } = useRemoveFlow<GroupMember>({
+  remove: member => api.del(`${base}/${encodeURIComponent(member.user_id)}`),
+  onRemoved: (member) => {
     list.items.value = list.items.value.filter(m => m.user_id !== member.user_id)
-    removing.value = null
-    notice.value = 'Member removed.'
-  }
-  catch (e) {
-    if (e instanceof ApiError && e.kind === 'not_found') {
-      removing.value = null
-      notice.value = 'This member is no longer in the group.'
-      void list.reload(true)
-    }
-    else {
-      removeError.value = describeMutationError(e, {
-        conflict: 'The member could not be removed. Reload the page and try again.',
-      }).message
-    }
-  }
-  finally {
-    removeBusy.value = false
-  }
-}
+  },
+  reload: () => void list.reload(true),
+  done: 'Member removed.',
+  gone: 'This member is no longer in the group.',
+  conflict: 'The member could not be removed. Reload the page and try again.',
+})
 
 function onAdded() {
   notice.value = 'Member added.'
@@ -89,51 +55,30 @@ const heading = computed(() => (group.data.value ? groupLabel(group.data.value) 
       Group members
     </BaseHeading>
 
-    <BaseBox as="div" :aria-busy="list.loading.value">
-      <BaseStack v-if="list.loading.value" :gap="3">
-        <BaseText class="sr-only">
-          Loading members
-        </BaseText>
-        <BaseSkeleton />
-        <BaseSkeleton />
-        <BaseSkeleton />
-      </BaseStack>
-      <BaseEmptyState
-        v-else-if="notFound"
-        :level="2"
-        title="Group not found"
-        description="It may have been deleted."
-      >
-        <BaseButton to="/admin/groups">
-          Back to groups
-        </BaseButton>
-      </BaseEmptyState>
-      <FeaturesHomeLoadError
-        v-else-if="list.error.value && list.items.value.length === 0"
-        :error="list.error.value"
-        subject="members"
-        forbidden-description="Your account is not allowed to see group members."
-        @retry="list.reload()"
-      />
-      <BaseStack v-else :gap="4">
-        <FeaturesGroupsMembersTable caption="Members" :members="list.items.value" @remove="askRemove" />
-        <BaseCluster v-if="list.error.value" :gap="2">
-          <BaseText role="alert" size="sm" tone="danger">
-            Could not load more members.
-          </BaseText>
-          <BaseButton size="sm" variant="secondary" :loading="list.loadingMore.value" @click="list.loadMore()">
-            Try again
-          </BaseButton>
-        </BaseCluster>
-        <BaseCluster v-else-if="list.hasMore.value" justify="center">
-          <BaseButton variant="secondary" :loading="list.loadingMore.value" @click="list.loadMore()">
-            Load more
-          </BaseButton>
-        </BaseCluster>
-      </BaseStack>
-    </BaseBox>
+    <BaseEmptyState
+      v-if="notFound"
+      :level="2"
+      title="Group not found"
+      description="It may have been deleted."
+    >
+      <BaseButton to="/admin/groups">
+        Back to groups
+      </BaseButton>
+    </BaseEmptyState>
+    <FeaturesAdminPagedBlock v-else :list="list" subject="members" forbidden-description="Your account is not allowed to see group members.">
+      <FeaturesGroupsMembersTable caption="Members" :members="list.items.value" @remove="askRemove" />
+    </FeaturesAdminPagedBlock>
 
-    <FeaturesGroupsAddMemberDialog v-model:open="addOpen" :group-id="groupId" @added="onAdded" />
+    <FeaturesAdminAddPersonDialog
+      v-model:open="addOpen"
+      :endpoint="base"
+      title="Add member"
+      description="The member gains every access this group is granted, in every initiative."
+      submit-label="Add member"
+      conflict="This user is already a member of the group."
+      not-found="This group no longer exists. Reload the page."
+      @added="onAdded"
+    />
     <UiConfirmDialog
       v-model:open="removeOpen"
       :title="`Remove ${removing?.email ?? 'member'}?`"
