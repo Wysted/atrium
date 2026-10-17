@@ -592,7 +592,7 @@ human user: zero or several matches fail (`users.email` is not unique, `google_s
 | `GET, POST /api/v1/me/tokens`; `DELETE /api/v1/me/tokens/{id}` | Own personal tokens (block 6 "Non-browser clients"). `POST` returns the secret once and only from a browser session; lists never return `token_hash` |
 | `GET, POST /api/v1/robots`; `PATCH /api/v1/robots/{id}` | Robots (`PATCH`: `name`, `status`, `owner_user_id`). Platform admins; managers may list id, name and status |
 | `GET, POST /api/v1/robots/{id}/tokens`; `DELETE /api/v1/tokens/{id}` | Robot tokens (platform admins; `POST` from a browser session only); `DELETE` revokes any token |
-| `POST /api/v1/tokens/revoke`; `DELETE /api/v1/me/tokens/current` | Revocation by secret: a platform admin posts `{token}` (a leaked secret from any scanner report); the request that carries a token revokes that same token. Both answer 204 |
+| `POST /api/v1/tokens/revoke`; `DELETE /api/v1/me/tokens/current` | Revocation by secret: a platform admin posts `{token}` (a leaked secret from any scanner report); the request that carries an `admin` token revokes that same token (a `read` token gets 403). Both answer 204 |
 | `GET /api/v1/audit?initiative_id=&cursor=` | Audit log, newest first, keyset pagination |
 | `GET /api/v1/apps/{id}/health` | Integration health of an app (admins and managers of its initiative) |
 | `GET /api/v1/health/orphan-hosts` | Hosts refused as `unknown_host` that have no deployment (platform admins only) |
@@ -813,7 +813,7 @@ the `platform_portal` role may select; no extra index is kept: `unknown_host` ro
 ### Non-browser clients
 
 Design for CLI and automation that call the portal API (phase 1 decided 2026-10-16; research notes: Engram
-`architecture/portal-non-browser-clients`). Part 1a (schema, privileges, `kind` filters, token revocation on disable, purge) is implemented; the rest is design only. The product is multi-company: the design
+`architecture/portal-non-browser-clients`). Part 1a (schema, privileges, `kind` filters, token revocation on disable, purge) and part 1b-1 (token secret package, scope middleware, `token_id` in the audit, personal token endpoints and the `PORTAL_TOKEN_MAX_TTL_*` settings below) are implemented (revocation by secret included, through the function of migration 0013); the rest is design only. The product is multi-company: the design
 assumes no CI system, secret manager or stack on the adopter's side.
 
 | Phase | Mechanism | Status |
@@ -920,8 +920,10 @@ Rules:
      format, hashes the secret and revokes the matching live token. It answers 204 whether or not a token matched,
      so the endpoint never confirms that a secret exists; a revocation is visible in the audit and the token list.
      It works with any secret scanner (GitHub, GitLab or an internal one): an admin pastes what the report contains.
-   - `DELETE /api/v1/me/tokens/current` revokes the token that authenticates the request (RFC 7009 spirit: whoever
-     holds the secret can kill it). A request without a token (browser session) answers 404.
+   - `DELETE /api/v1/me/tokens/current` revokes the token that authenticates the request (RFC 7009 spirit). It is a
+     `DELETE`, so it needs an `admin` token like any other mutation: no path is exempt from the `read` restriction
+     (ForwardAuth never special-cases paths). A leaked `read` token is contained by its owner (revoke by id) or by a
+     platform admin (revoke by secret). A request without a token (browser session) answers 404.
    - No public endpoint for scanner partner programs: they are provider-specific and would need a route outside
      ForwardAuth. An adopter that needs one adds it later.
 4. Creation runs in one transaction that takes `LockUser(owner)` (`FOR NO KEY UPDATE`, the lock `SetUserStatus` takes)
@@ -1017,7 +1019,12 @@ email today).
   compromised runtime cannot create a robot. `runtimeGrants` and `CheckRuntimeRole` gain these entries. Old pods
   against the new grants (or new pods against old ones during a rollback) fail the start-up check and refuse to start,
   fail closed as with migration 0010; the migrate Job runs first and a rollback needs the previous migration state.
-- `platform_portal`: `api_tokens` INSERT, `SELECT (id, user_id, name, scope, created_by, created_at, expires_at,
+- `platform_portal`: EXECUTE on `revoke_api_token_by_hash(p_hash bytea) RETURNS uuid` (migration 0013), the only way the
+  portal touches `token_hash`: a `SECURITY DEFINER` function with a pinned `search_path` that rejects a hash that is
+  not 32 bytes and revokes the live token with that hash (not revoked, not expired), returning its id or NULL when
+  nothing matched; `platform_runtime` and PUBLIC cannot execute it. Function privileges are outside `CheckPortalRole`
+  (it compares table, column and sequence privileges only), like `purge_dead_api_tokens`: a test pins them.
+  `api_tokens` INSERT, `SELECT (id, user_id, name, scope, created_by, created_at, expires_at,
   last_used_at, revoked_at)` (never `token_hash`) and `UPDATE (revoked_at)`; `users` gains
   `INSERT (kind, name, email, owner_user_id, status)` without `google_sub`, which is why the portal can only create robots
   (the CHECK rejects a human without `google_sub`), and `UPDATE (name, owner_user_id)` next to `status, updated_at`;
@@ -1070,6 +1077,25 @@ email today).
    per client IP waits for the real client IP item of `TODO.md` (k3d shows every client as `10.42.0.1`).
 4. Web: tokens page for humans, robots admin page.
 5. CLI replacing `grant.sh`/`revoke.sh` (Go, uses a token, talks only to the portal host).
+
+Configuration (portal process; both optional Go durations above zero, an invalid value fails start-up):
+
+| Variable | Meaning |
+|---|---|
+| `PORTAL_TOKEN_MAX_TTL_PERSONAL` | Cap and default lifetime of a personal token. Default `720h` |
+| `PORTAL_TOKEN_MAX_TTL_ROBOT` | Cap and default lifetime of a robot token. Default `2160h`; parsed now, used by the robot endpoints (part 1b-2) |
+
+Personal token API as implemented: `POST /api/v1/me/tokens` takes `{name, scope, expires_in}` (`expires_in` in seconds,
+optional) and answers 201 with the token and its `secret`; the limit of 25 live tokens answers 409; an `admin` scope
+the owner cannot hold at that moment, an `expires_in` above the cap or not positive, and a bad name or scope answer 422;
+a request authenticated by a token answers 403. Lists are newest first with the keyset `cursor` and include recently
+dead tokens (`last_used_at`, `revoked_at`). Revoking a token that is already revoked answers 204 and writes no audit
+row; a token that is not the caller's answers 404 (`DELETE /api/v1/tokens/{id}` too, unless the caller is a platform
+admin). The audit action names are `token.create` and `token.revoke`; `adminz` uses `token.create_own`, `token.list_own`,
+`token.revoke_own` and `token.revoke_any` (the latter also authorizes revocation by secret). `POST /api/v1/tokens/revoke`
+answers 422 for an empty or malformed `token` (the format check reveals nothing about existence, and runs after the
+authorization check and before the lookup by hash), 403 for a caller who is not a platform admin, and 204 for every well-formed secret, matched or not;
+only a match writes an audit row (`token.revoke`, the token id and its owner, never the secret).
 
 Decided 2026-10-16: revocation by secret (Issuance and revocation, rule 3); an owner's departure never disables their
 robots automatically.
