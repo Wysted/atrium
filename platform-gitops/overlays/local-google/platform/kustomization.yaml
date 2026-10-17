@@ -3,7 +3,8 @@
 #   - the client secret mounted as a Secret (fsGroup + 0440, same policy as the KEK),
 #   - Google env vars and PLATFORM_FAKE_LOGIN=false,
 #   - an egress NetworkPolicy to the public internet on TCP 443 (see ../../README.md for the tradeoff).
-# The Secret platform/platform-google-client-secret (key: secret) is created by up.sh with --from-file.
+# The Secret platform/platform-google-client-secret (key: secret) and the ConfigMap platform/platform-google-client-id
+# (key: client-id, not a secret) are created by up.sh with --from-file.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
@@ -25,7 +26,8 @@ patches:
               - name: platform-api
                 env:
                   - {name: PLATFORM_FAKE_LOGIN, value: "false"}
-                  - {name: PLATFORM_GOOGLE_CLIENT_ID, value: your-client-id.apps.googleusercontent.com}
+                  - name: PLATFORM_GOOGLE_CLIENT_ID
+                    valueFrom: {configMapKeyRef: {name: platform-google-client-id, key: client-id}}
                   - {name: PLATFORM_GOOGLE_CLIENT_SECRET_FILE, value: /etc/platform/google/secret}
                   - {name: PLATFORM_ALLOWED_HD, value: wysted.dev}
                 volumeMounts:

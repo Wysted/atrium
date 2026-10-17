@@ -6,6 +6,7 @@
 #   BUILD=1 platform-gitops/overlays/local-google/up.sh      # build portal-platform-api:dev-google first
 #
 # The client secret lives in .tools/secrets/google-client-secret and is loaded with --from-file only.
+# The client id (public) lives in .tools/secrets/google-client-id and goes into a ConfigMap the same way.
 # NOTE: overlays/local/up.sh applies the fake-login overlay again; re-run this script afterwards.
 set -euo pipefail
 
@@ -16,10 +17,13 @@ cd "$ROOT"
 
 readonly IMAGE=portal-platform-api:dev-google
 readonly SECRET_FILE=.tools/secrets/google-client-secret
+readonly CLIENT_ID_FILE=.tools/secrets/google-client-id
 readonly ROLLOUT_TIMEOUT=240s
 kc() { ./tk kubectl "$@"; }
 
-[[ -s "$SECRET_FILE" ]] || { echo "missing $SECRET_FILE" >&2; exit 1; }
+for f in "$SECRET_FILE" "$CLIENT_ID_FILE"; do
+  [[ -s "$f" ]] || { echo "missing $f" >&2; exit 1; }
+done
 
 if [[ "${BUILD:-0}" == 1 ]]; then
   echo "==> building $IMAGE"
@@ -30,6 +34,9 @@ echo "==> importing $IMAGE"
 
 echo "==> client secret (platform/platform-google-client-secret)"
 ./tk sh -c "kubectl -n platform create secret generic platform-google-client-secret --from-file=secret=$SECRET_FILE --dry-run=client -o yaml | kubectl apply -f - >/dev/null"
+
+echo "==> client id (platform/platform-google-client-id)"
+./tk sh -c "kubectl -n platform create configmap platform-google-client-id --from-file=client-id=$CLIENT_ID_FILE --dry-run=client -o yaml | kubectl apply -f - >/dev/null"
 
 echo "==> migrate Job"
 kc -n platform delete job migrate --ignore-not-found
