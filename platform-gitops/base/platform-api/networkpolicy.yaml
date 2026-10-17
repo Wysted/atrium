@@ -20,7 +20,7 @@ spec:
       ports:
         - {protocol: TCP, port: 8081}
 ---
-# JWKS listener (GET /.well-known/jwks.json only): app namespaces (portal.wysted.dev/app-namespace=true, which includes
+# JWKS listener (GET /.well-known/jwks.json only): app namespaces (atrium.wysted.dev/app-namespace=true, which includes
 # the portal). The policy filters by PORT, so this port serves nothing else on purpose. Anything that can label a
 # namespace joins this set, and all it gets is public keys.
 apiVersion: networking.k8s.io/v1
@@ -31,7 +31,7 @@ spec:
   policyTypes: [Ingress]
   ingress:
     - from:
-        - namespaceSelector: {matchLabels: {portal.wysted.dev/app-namespace: "true"}}
+        - namespaceSelector: {matchLabels: {atrium.wysted.dev/app-namespace: "true"}}
       ports:
         - {protocol: TCP, port: 8083}
 ---

@@ -5,14 +5,14 @@ kind: Deployment
 metadata:
   name: smoke-whoami
   namespace: hello-a
-  labels: {app.kubernetes.io/name: smoke-whoami, portal.wysted.dev/smoke: "true"}
+  labels: {app.kubernetes.io/name: smoke-whoami, atrium.wysted.dev/smoke: "true"}
 spec:
   replicas: 1
   selector:
     matchLabels: {app.kubernetes.io/name: smoke-whoami}
   template:
     metadata:
-      labels: {app.kubernetes.io/name: smoke-whoami, portal.wysted.dev/smoke: "true"}
+      labels: {app.kubernetes.io/name: smoke-whoami, atrium.wysted.dev/smoke: "true"}
     spec:
       automountServiceAccountToken: false
       securityContext:
@@ -38,7 +38,7 @@ kind: Service
 metadata:
   name: smoke-whoami
   namespace: hello-a
-  labels: {portal.wysted.dev/smoke: "true"}
+  labels: {atrium.wysted.dev/smoke: "true"}
 spec:
   selector: {app.kubernetes.io/name: smoke-whoami}
   ports: [{name: http, port: 8080, targetPort: http}]
@@ -48,7 +48,7 @@ kind: NetworkPolicy
 metadata:
   name: smoke-allow-ingress-traefik
   namespace: hello-a
-  labels: {portal.wysted.dev/smoke: "true"}
+  labels: {atrium.wysted.dev/smoke: "true"}
 spec:
   podSelector: {matchLabels: {app.kubernetes.io/name: smoke-whoami}}
   policyTypes: [Ingress]
@@ -62,7 +62,7 @@ kind: IngressRoute
 metadata:
   name: smoke-whoami-app
   namespace: hello-a
-  labels: {portal.wysted.dev/smoke: "true"}
+  labels: {atrium.wysted.dev/smoke: "true"}
 spec:
   entryPoints: [websecure]
   routes:
@@ -77,7 +77,7 @@ kind: IngressRoute
 metadata:
   name: smoke-whoami-auth
   namespace: hello-a
-  labels: {portal.wysted.dev/smoke: "true"}
+  labels: {atrium.wysted.dev/smoke: "true"}
 spec:
   entryPoints: [websecure]
   routes:

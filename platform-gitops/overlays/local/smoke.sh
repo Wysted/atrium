@@ -147,7 +147,7 @@ $K -n hello-a run probe-hello --image="$CURL_IMG" --restart=Never \
 # INGRESS policy of the destination (the app namespaces of the platform also have an egress policy that hides it).
 $K delete namespace smoke-app --ignore-not-found --wait=true >/dev/null 2>&1
 $K create namespace smoke-app >/dev/null
-$K label namespace smoke-app portal.wysted.dev/app-namespace=true portal.wysted.dev/smoke=true >/dev/null
+$K label namespace smoke-app atrium.wysted.dev/app-namespace=true atrium.wysted.dev/smoke=true >/dev/null
 $K -n smoke-app run probe-open --image="$CURL_IMG" --restart=Never --command -- sleep 900 >/dev/null
 $K wait --for=condition=Ready pod/probe-default --timeout=120s >/dev/null
 $K -n smoke-app wait --for=condition=Ready pod/probe-open --timeout=120s >/dev/null

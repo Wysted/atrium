@@ -6,7 +6,7 @@ kind: IngressRoute
 metadata:
   name: smoke-orphan
   namespace: hello-a
-  labels: {portal.wysted.dev/smoke: "true"}
+  labels: {atrium.wysted.dev/smoke: "true"}
 spec:
   entryPoints: [websecure]
   routes:

@@ -50,7 +50,7 @@ rm -f "$HERE"/out/*.png
 # smoke-orphan.yaml is rendered with this run's host and applied from stdin. Removed on exit by label, whatever the verdict (also
 # leftovers of older runs); INT/TERM exit through the EXIT trap.
 FIXTURE="$HERE/../smoke-orphan.yaml"
-LABEL=portal.wysted.dev/smoke=true
+LABEL=atrium.wysted.dev/smoke=true
 cd "$ROOT"
 cleanup() {
   ./tk kubectl -n hello-a delete ingressroute -l "$LABEL" --ignore-not-found --wait=false >/dev/null || echo "WARN: orphan fixture not removed" >&2
