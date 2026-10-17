@@ -298,6 +298,33 @@ func TestTokenPathFailures(t *testing.T) {
 	}
 }
 
+// An app/initiative denial of a token is recorded like a session one (owner as user, no sid, once per cache miss);
+// a scope denial (a ceiling, not an access rule) is not.
+func TestTokenPathRecordsDenial(t *testing.T) {
+	secret := newSecret(t)
+	rig := newTokenRig(t, liveRecord(assertion.ScopeAdmin), secret)
+	rig.eval.denyReason = access.ReasonInitiativeInactive
+	den := &recordingDenials{}
+	rig.h.cfg.Denials = den
+	for range 2 {
+		if w := rig.serve(t, tReq{host: tPortalHost, authz: []string{"Bearer " + secret}}); w.Code != http.StatusForbidden {
+			t.Fatalf("status %d", w.Code)
+		}
+	}
+	if len(den.rows) != 1 || den.rows[0].UserID != tOwnerID || den.rows[0].SessionID != "" ||
+		den.rows[0].Host != tPortalHost || den.rows[0].Reason != access.ReasonInitiativeInactive {
+		t.Fatalf("denials = %+v, want one row for the owner without sid", den.rows)
+	}
+
+	rig = newTokenRig(t, liveRecord(assertion.ScopeRead), secret)
+	den = &recordingDenials{}
+	rig.h.cfg.Denials = den
+	rig.serve(t, tReq{host: tPortalHost, method: http.MethodPost, authz: []string{"Bearer " + secret}})
+	if len(den.rows) != 0 {
+		t.Fatalf("scope denial recorded: %+v", den.rows)
+	}
+}
+
 // Without X-Forwarded-Method a read token fails closed (it must not default to GET); admin has no method limit.
 func TestTokenPathMissingForwardedMethod(t *testing.T) {
 	secret := newSecret(t)

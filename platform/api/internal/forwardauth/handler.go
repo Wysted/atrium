@@ -360,7 +360,7 @@ func (h *Handler) decide(w http.ResponseWriter, r *http.Request, host string) ou
 	d := cd.decision
 	if !d.Allow {
 		if fresh {
-			h.recordDenial(ctx, as, host, d)
+			h.recordDenial(ctx, as.UserID, as.SessionID, host, d)
 		}
 		h.respondDenied(w, nav, cd.profile.Email)
 		return outcome{decision: DecisionDeny, reason: d.Reason, appID: d.AppID, sid: as.SessionID, userID: as.UserID}
@@ -439,14 +439,15 @@ func (h *Handler) authorize(ctx context.Context, userID, host string) (cd cached
 }
 
 // recordDenial writes the access_denials row. A failure is logged and never changes the response.
-func (h *Handler) recordDenial(ctx context.Context, as session.AppSession, host string, d access.Decision) {
+// sid is empty on the token path, which has no session.
+func (h *Handler) recordDenial(ctx context.Context, userID, sid, host string, d access.Decision) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), DenialRecordTimeout)
 	defer cancel()
 	err := h.cfg.Denials.RecordDenial(ctx, access.Denial{
-		UserID: as.UserID, Host: host, AppID: d.AppID, InitiativeID: d.InitiativeID, Reason: d.Reason, SessionID: as.SessionID,
+		UserID: userID, Host: host, AppID: d.AppID, InitiativeID: d.InitiativeID, Reason: d.Reason, SessionID: sid,
 	})
 	if err != nil {
-		h.log.Error("cannot record access denial", "error", err.Error(), "host", host, "reason", d.Reason, "sid", as.SessionID)
+		h.log.Error("cannot record access denial", "error", err.Error(), "host", host, "reason", d.Reason, "sid", sid)
 	}
 }
 

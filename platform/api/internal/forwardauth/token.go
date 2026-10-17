@@ -124,17 +124,18 @@ func (h *Handler) tokenPath(w http.ResponseWriter, r *http.Request, appID, host 
 
 	// The token row and the owner's status above are live. The app and initiative rules come from the same decision
 	// cache as sessions (CacheTTL, flushed by access_changed): contract block 6 allows it, the token itself never is.
-	d, _, err := h.authorize(ctx, rec.OwnerID, host)
+	d, fresh, err := h.authorize(ctx, rec.OwnerID, host)
 	if err != nil {
 		return h.unavailable(w, false, ReasonBackend, err)
 	}
 	if !d.decision.Allow {
+		if fresh { // same dedupe as sessions: one row per cache miss, with the owner as user and no sid
+			h.recordDenial(ctx, rec.OwnerID, "", host, d.decision)
+		}
 		h.respondError(w, false, http.StatusForbidden, "Access denied", "")
 		base.decision, base.reason = DecisionDeny, d.decision.Reason
 		return base
 	}
-	// shortcut: no access_denials row for token requests (the table is keyed to sessions); upgrade if denials by token must be queryable.
-
 	// Scope is a ceiling: read allows GET and HEAD only; an unknown scope (never stored, the column is CHECKed) fails closed.
 	if rec.Scope != assertion.ScopeAdmin && (rec.Scope != assertion.ScopeRead || method != http.MethodGet && method != http.MethodHead) {
 		w.Header().Set(headerWWWAuth, challengeInsufficientScope)
