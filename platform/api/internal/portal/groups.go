@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"unicode/utf8"
 
 	"platform/api/internal/adminz"
 )
@@ -24,8 +25,13 @@ type memberDoc struct {
 }
 
 // ListGroups lists the groups (id, key, name): platform admins and initiative managers may, to grant access to
-// a group. Members are never part of it. Oldest first, keyset on the group id.
-func (s *Service) ListGroups(ctx context.Context, callerID string, req PageRequest) (Page[Group], error) {
+// a group. Members are never part of it. Oldest first, keyset on the group id. A non-empty search keeps the
+// groups whose key or name contains it, ignoring case; the keyset is the same, so a cursor stays valid for
+// the same search.
+func (s *Service) ListGroups(ctx context.Context, callerID string, req PageRequest, search string) (Page[Group], error) {
+	if utf8.RuneCountInString(search) > maxGroupSearch || !cleanText(search) {
+		return Page[Group]{}, invalid("q", CodeInvalid)
+	}
 	size := pageSize(req.Limit)
 	var out Page[Group]
 	err := s.store.WithTx(ctx, func(tx Tx) error {
@@ -38,11 +44,34 @@ func (s *Service) ListGroups(ctx context.Context, callerID string, req PageReque
 		if err != nil {
 			return err
 		}
-		rows, err := tx.Groups().ListGroups(ctx, d.Scope, PageQuery{After: after, Limit: size + 1})
+		rows, err := tx.Groups().ListGroups(ctx, d.Scope, PageQuery{After: after, Limit: size + 1, Search: search})
 		if err != nil {
 			return fmt.Errorf("list groups: %w", err)
 		}
 		out = pageOf(rows, size, cursorKindGroups, func(g Group) Cursor { return Cursor{ID: g.ID} })
+		return nil
+	})
+	return out, err
+}
+
+// GetGroup returns one group (id, key, name, created_at), with the same access as ListGroups: platform admins
+// and initiative managers. Members are never part of it. An unknown or malformed id is ErrNotFound.
+func (s *Service) GetGroup(ctx context.Context, callerID, groupID string) (Group, error) {
+	var out Group
+	err := s.store.WithTx(ctx, func(tx Tx) error {
+		out = Group{}
+		if _, _, err := begin(ctx, tx, callerID, adminz.GroupList, adminz.Resource{Type: TargetGroup}); err != nil {
+			return err
+		}
+		id, ok := canonicalUUID(groupID)
+		if !ok {
+			return ErrNotFound
+		}
+		g, err := tx.Groups().GetGroup(ctx, id)
+		if err != nil {
+			return err
+		}
+		out = g
 		return nil
 	})
 	return out, err

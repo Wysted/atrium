@@ -104,6 +104,9 @@ type Page[T any] struct {
 type PageQuery struct {
 	After *Cursor
 	Limit int
+	// Search is the validated text a group listing filters by (case-insensitive substring of key or name);
+	// empty means no filter. Other listings ignore it.
+	Search string
 }
 
 // uuidPattern is the canonical text form of an id; anything else is "not found" before it reaches SQL.
@@ -280,6 +283,7 @@ type GrantRepo interface {
 
 // GroupRepo is the storage of groups and their members.
 type GroupRepo interface {
+	// ListGroups filters by q.Search when it is not empty.
 	ListGroups(ctx context.Context, scope adminz.Scope, q PageQuery) ([]Group, error)
 	// GetGroup returns ErrNotFound for an unknown id.
 	GetGroup(ctx context.Context, id string) (Group, error)

@@ -33,7 +33,8 @@ type AdminService interface {
 	CreateGrant(ctx context.Context, callerID, initiativeID string, in portal.NewGrant) (portal.Grant, error)
 	DeleteGrant(ctx context.Context, callerID, grantID string) error
 
-	ListGroups(ctx context.Context, callerID string, req portal.PageRequest) (portal.Page[portal.Group], error)
+	ListGroups(ctx context.Context, callerID string, req portal.PageRequest, search string) (portal.Page[portal.Group], error)
+	GetGroup(ctx context.Context, callerID, groupID string) (portal.Group, error)
 	CreateGroup(ctx context.Context, callerID string, in portal.NewGroup) (portal.Group, error)
 	DeleteGroup(ctx context.Context, callerID, groupID string) error
 	ListGroupMembers(ctx context.Context, callerID, groupID string, req portal.PageRequest) (portal.Page[portal.GroupMember], error)
@@ -80,6 +81,7 @@ const (
 const (
 	queryCursor       = "cursor"
 	queryLimit        = "limit"
+	queryText         = "q"
 	queryEmail        = "email"
 	queryInitiativeID = "initiative_id"
 )
@@ -93,6 +95,7 @@ func (a *api) adminRoutes(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET "+PathGroups, a.listGroups)
 	mux.HandleFunc("POST "+PathGroups, a.createGroup)
+	mux.HandleFunc("GET "+PathGroup, a.getGroup)
 	mux.HandleFunc("DELETE "+PathGroup, a.deleteGroup)
 	mux.HandleFunc("GET "+PathGroupMembers, a.listMembers)
 	mux.HandleFunc("POST "+PathGroupMembers, a.addMember)
@@ -316,12 +319,25 @@ func (a *api) listGroups(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	p, err := a.admin.ListGroups(r.Context(), uid, req)
+	p, err := a.admin.ListGroups(r.Context(), uid, req, r.URL.Query().Get(queryText))
 	if err != nil {
 		a.fail(w, r, "groups_list", err)
 		return
 	}
 	WriteJSON(w, http.StatusOK, listResponse("groups", mapSlice(p.Items, groupToJSON), p.NextCursor))
+}
+
+func (a *api) getGroup(w http.ResponseWriter, r *http.Request) {
+	uid, ok := a.caller(w, r)
+	if !ok {
+		return
+	}
+	g, err := a.admin.GetGroup(r.Context(), uid, r.PathValue("id"))
+	if err != nil {
+		a.fail(w, r, "group_get", err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, groupToJSON(g))
 }
 
 func groupToJSON(g portal.Group) groupJSON { return groupJSON(g) }

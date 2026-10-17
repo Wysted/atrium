@@ -384,7 +384,7 @@ func TestListGrantsPaginatesInAScope(t *testing.T) {
 	// A cursor issued by another listing is refused too.
 	groups, _ := e.svc.CreateGroup(ctx, admin, portal.NewGroup{Key: "g-one"})
 	_, _ = e.svc.CreateGroup(ctx, admin, portal.NewGroup{Key: "g-two"})
-	gp, err := e.svc.ListGroups(ctx, admin, portal.PageRequest{Limit: 1})
+	gp, err := e.svc.ListGroups(ctx, admin, portal.PageRequest{Limit: 1}, "")
 	if err != nil || gp.NextCursor == "" || len(gp.Items) != 1 || gp.Items[0].ID != groups.ID {
 		t.Fatalf("groups page = %+v, %v", gp, err)
 	}

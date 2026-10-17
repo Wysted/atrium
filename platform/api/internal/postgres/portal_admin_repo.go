@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -276,13 +277,27 @@ func scanGroup(row pgx.CollectableRow) (portal.Group, error) {
 	return g, err
 }
 
+// likeEscaper escapes the LIKE metacharacters so a search is always literal text.
+var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+
+// containsPattern turns a search into an ILIKE substring pattern ("" stays "": no filter). The pattern cannot
+// use an index (leading wildcard), which is fine for a table of a few hundred groups.
+func containsPattern(search string) string {
+	if search == "" {
+		return ""
+	}
+	return "%" + likeEscaper.Replace(search) + "%"
+}
+
 // ListGroups implements portal.GroupRepo. Groups are global, so only Scope.All lists them.
 func (r GroupsRepo) ListGroups(ctx context.Context, scope adminz.Scope, q portal.PageQuery) ([]portal.Group, error) {
 	if !scope.All {
 		return nil, nil
 	}
 	rows, err := r.db.Query(ctx, `SELECT `+groupColumns+` FROM groups
-WHERE ($1::uuid IS NULL OR id > $1::uuid) ORDER BY id LIMIT $2`, afterID(q.After), q.Limit)
+WHERE ($1::uuid IS NULL OR id > $1::uuid)
+  AND ($3::text = '' OR key ILIKE $3::text ESCAPE '\' OR name ILIKE $3::text ESCAPE '\')
+ORDER BY id LIMIT $2`, afterID(q.After), q.Limit, containsPattern(q.Search))
 	if err != nil {
 		return nil, fmt.Errorf("query groups: %w", err)
 	}

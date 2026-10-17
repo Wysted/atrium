@@ -78,6 +78,8 @@ const (
 	maxEmailLength = 254 // users_email_length
 	maxGroupKey    = 63
 	maxGroupName   = 200
+	// maxGroupSearch bounds the text a group listing filters by (characters, not bytes).
+	maxGroupSearch = 64
 )
 
 // validEmail is a deliberately small syntactic check: the address is only used to look up an existing user.

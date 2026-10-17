@@ -31,6 +31,7 @@ type fakeAdmin struct {
 	newGrant   portal.NewGrant
 	newGroup   portal.NewGroup
 	email      string
+	search     string
 	status     string
 	auditQuery portal.AuditQuery
 	calls      int
@@ -70,9 +71,13 @@ func (f *fakeAdmin) DeleteGrant(_ context.Context, caller, id string) error {
 	return f.note(caller, id)
 }
 
-func (f *fakeAdmin) ListGroups(_ context.Context, caller string, req portal.PageRequest) (portal.Page[portal.Group], error) {
-	f.req = req
+func (f *fakeAdmin) ListGroups(_ context.Context, caller string, req portal.PageRequest, search string) (portal.Page[portal.Group], error) {
+	f.req, f.search = req, search
 	return f.groups, f.note(caller, "")
+}
+
+func (f *fakeAdmin) GetGroup(_ context.Context, caller, id string) (portal.Group, error) {
+	return portal.Group{ID: id, Key: "ops", Name: "Ops", CreatedAt: time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)}, f.note(caller, id)
 }
 
 func (f *fakeAdmin) CreateGroup(_ context.Context, caller string, in portal.NewGroup) (portal.Group, error) {
@@ -153,6 +158,7 @@ func TestAdminRoutes(t *testing.T) {
 		{"create grant for a group", http.MethodPost, "/api/v1/initiatives/" + initiativeID + "/grants", `{"group_id":"` + groupID + `","role_id":"r"}`, http.StatusCreated, `"user":null,"group":{"id":"` + groupID + `"`},
 		{"delete grant", http.MethodDelete, "/api/v1/grants/" + grantID, "{}", http.StatusNoContent, ""},
 		{"list groups", http.MethodGet, "/api/v1/groups", "", http.StatusOK, `{"groups":[]}`},
+		{"get group", http.MethodGet, "/api/v1/groups/" + groupID, "", http.StatusOK, `{"id":"` + groupID + `","key":"ops","name":"Ops","created_at":"2030-01-02T03:04:05Z"}`},
 		{"create group", http.MethodPost, "/api/v1/groups", `{"key":"ops","name":"Ops"}`, http.StatusCreated, `"key":"ops"`},
 		{"delete group", http.MethodDelete, "/api/v1/groups/" + groupID, "{}", http.StatusNoContent, ""},
 		{"list members", http.MethodGet, "/api/v1/groups/" + groupID + "/members", "", http.StatusOK, `{"members":[]}`},
@@ -404,5 +410,47 @@ func TestCallerIDIsLowercased(t *testing.T) {
 	do(h, http.MethodGet, "/api/v1/groups", "", map[string]string{"X-Test-Sub": strings.ToUpper(callerID)})
 	if fake.caller != callerID {
 		t.Fatalf("caller = %q, want %q", fake.caller, callerID)
+	}
+}
+
+func TestGroupSearchReachesTheUseCase(t *testing.T) {
+	t.Parallel()
+	fake := &fakeAdmin{}
+	h := newTestHandler(t, fakeService{}, fake, nil)
+	do(h, http.MethodGet, "/api/v1/groups?q=Ops%25_&limit=5", "", nil)
+	if fake.search != "Ops%_" || fake.req.Limit != 5 {
+		t.Fatalf("search = %q, req = %+v", fake.search, fake.req)
+	}
+	do(h, http.MethodGet, "/api/v1/groups", "", nil)
+	if fake.search != "" {
+		t.Fatalf("search without q = %q", fake.search)
+	}
+	do(h, http.MethodGet, "/api/v1/groups/"+groupID, "", map[string]string{"X-Test-Sub": strings.ToUpper(callerID)})
+	if fake.caller != callerID || fake.id != groupID {
+		t.Fatalf("get group call = %q %q", fake.caller, fake.id)
+	}
+}
+
+func TestGetGroupErrors(t *testing.T) {
+	t.Parallel()
+	for name, tt := range map[string]struct {
+		err    error
+		status int
+	}{
+		"unknown id": {portal.ErrNotFound, http.StatusNotFound},
+		"forbidden":  {portal.ErrForbidden, http.StatusForbidden},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			w := do(newTestHandler(t, fakeService{}, &fakeAdmin{err: tt.err}, nil), http.MethodGet, "/api/v1/groups/"+groupID, "", nil)
+			if w.Code != tt.status {
+				t.Fatalf("status = %d, want %d (%s)", w.Code, tt.status, w.Body.String())
+			}
+		})
+	}
+	fake := &fakeAdmin{err: &portal.ValidationError{Problems: []portal.FieldProblem{{Field: "q", Code: portal.CodeInvalid}}}}
+	w := do(newTestHandler(t, fakeService{}, fake, nil), http.MethodGet, "/api/v1/groups?q=x", "", nil)
+	if w.Code != http.StatusUnprocessableEntity || !strings.Contains(w.Body.String(), `"field":"q"`) {
+		t.Fatalf("validation = %d %s", w.Code, w.Body.String())
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -78,11 +79,11 @@ func TestGroups(t *testing.T) {
 	})
 
 	t.Run("managers list group names but plain users do not", func(t *testing.T) {
-		p, err := e.svc.ListGroups(ctx, mgr, portal.PageRequest{})
+		p, err := e.svc.ListGroups(ctx, mgr, portal.PageRequest{}, "")
 		if err != nil || len(p.Items) == 0 {
 			t.Fatalf("manager: %+v, %v", p, err)
 		}
-		if _, err := e.svc.ListGroups(ctx, plain, portal.PageRequest{}); !errors.Is(err, portal.ErrForbidden) {
+		if _, err := e.svc.ListGroups(ctx, plain, portal.PageRequest{}, ""); !errors.Is(err, portal.ErrForbidden) {
 			t.Fatalf("plain: %v", err)
 		}
 	})
@@ -194,7 +195,7 @@ func TestGroupsAndMembersPaginate(t *testing.T) {
 	var got []string
 	cursor := ""
 	for {
-		p, err := e.svc.ListGroups(ctx, admin, portal.PageRequest{Cursor: cursor, Limit: 3})
+		p, err := e.svc.ListGroups(ctx, admin, portal.PageRequest{Cursor: cursor, Limit: 3}, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -560,4 +561,134 @@ func compareStrings(a, b string) int {
 	default:
 		return 0
 	}
+}
+
+func TestGetGroup(t *testing.T) {
+	t.Parallel()
+	e := newAdminEnv(t)
+	ctx := e.ctx()
+	alpha := e.initiative("alpha")
+	admin := e.admin()
+	mgr := e.manager(alpha.id, alpha.manager)
+	plain := e.w.user(t, "active")
+	g, err := e.svc.CreateGroup(ctx, admin, portal.NewGroup{Key: "ops-team", Name: "Ops"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := e.auditCount()
+	for name, caller := range map[string]string{"admin": admin, "manager": mgr} {
+		got, err := e.svc.GetGroup(ctx, caller, g.ID)
+		if err != nil || got != g {
+			t.Errorf("%s: %+v, %v, want %+v", name, got, err, g)
+		}
+	}
+	if _, err := e.svc.GetGroup(ctx, plain, g.ID); !errors.Is(err, portal.ErrForbidden) {
+		t.Errorf("plain: %v", err)
+	}
+	for _, id := range []string{"00000000-0000-0000-0000-000000000000", "nope", "", "' OR 1=1 --"} {
+		if _, err := e.svc.GetGroup(ctx, admin, id); !errors.Is(err, portal.ErrNotFound) {
+			t.Errorf("id %q: %v", id, err)
+		}
+	}
+	if got, err := e.svc.GetGroup(ctx, admin, strings.ToUpper(g.ID)); err != nil || got.ID != g.ID {
+		t.Errorf("uppercase id: %+v, %v", got, err)
+	}
+	if e.auditCount() != events {
+		t.Fatal("a read was audited")
+	}
+}
+
+func TestListGroupsSearch(t *testing.T) {
+	t.Parallel()
+	e := newAdminEnv(t)
+	ctx := e.ctx()
+	alpha := e.initiative("alpha")
+	admin := e.admin()
+	mgr := e.manager(alpha.id, alpha.manager)
+	plain := e.w.user(t, "active")
+	for _, in := range []portal.NewGroup{
+		{Key: "ops-team", Name: "Operations"},
+		{Key: "dev_team", Name: "Developers"},
+		{Key: "devx", Name: "100% Coverage"},
+		{Key: "sre", Name: "Site Reliability"},
+		{Key: "back-slash", Name: `a\b`},
+	} {
+		if _, err := e.svc.CreateGroup(ctx, admin, in); err != nil {
+			t.Fatal(err)
+		}
+	}
+	keys := func(caller, q string) []string {
+		t.Helper()
+		p, err := e.svc.ListGroups(ctx, caller, portal.PageRequest{}, q)
+		if err != nil {
+			t.Fatalf("q=%q: %v", q, err)
+		}
+		var out []string
+		for _, g := range p.Items {
+			out = append(out, g.Key)
+		}
+		return out
+	}
+	tests := []struct {
+		name, q string
+		want    []string
+	}{
+		{"empty is everything", "", []string{"ops-team", "dev_team", "devx", "sre", "back-slash"}},
+		{"key prefix", "ops", []string{"ops-team"}},
+		{"key substring", "team", []string{"ops-team", "dev_team"}},
+		{"name substring", "liab", []string{"sre"}},
+		{"case-insensitive", "DEVELOPERS", []string{"dev_team"}},
+		{"case-insensitive key", "OPS-TEAM", []string{"ops-team"}},
+		{"underscore is literal", "dev_", []string{"dev_team"}},
+		{"percent is literal", "%", []string{"devx"}},
+		{"percent in the middle is literal", "0% C", []string{"devx"}},
+		{"lone wildcard matches nothing else", "_", []string{"dev_team"}},
+		{"backslash is literal", `\`, []string{"back-slash"}},
+		{"no match", "zzz", nil},
+		{"sql text is just text", "'; DROP TABLE groups; --", nil},
+	}
+	for _, tt := range tests {
+		if got := keys(admin, tt.q); !slices.Equal(got, tt.want) {
+			t.Errorf("%s (q=%q): %v, want %v", tt.name, tt.q, got, tt.want)
+		}
+	}
+	if got := keys(mgr, "team"); len(got) != 2 {
+		t.Errorf("manager search: %v", got)
+	}
+	if _, err := e.svc.ListGroups(ctx, plain, portal.PageRequest{}, "team"); !errors.Is(err, portal.ErrForbidden) {
+		t.Errorf("plain: %v", err)
+	}
+
+	t.Run("length limit counts characters", func(t *testing.T) {
+		if _, err := e.svc.ListGroups(ctx, admin, portal.PageRequest{}, strings.Repeat("ñ", 64)); err != nil {
+			t.Errorf("64 characters: %v", err)
+		}
+		for _, q := range []string{strings.Repeat("a", 65), strings.Repeat("ñ", 65), "a\x00b", "\xff"} {
+			_, err := e.svc.ListGroups(ctx, admin, portal.PageRequest{}, q)
+			if got := validationFields(t, err); got[0].Field != "q" {
+				t.Errorf("q %.10q: %v", q, got)
+			}
+		}
+	})
+
+	t.Run("pagination keeps the filter", func(t *testing.T) {
+		var got []string
+		cursor := ""
+		for range 10 {
+			p, err := e.svc.ListGroups(ctx, admin, portal.PageRequest{Cursor: cursor, Limit: 1}, "team")
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, g := range p.Items {
+				got = append(got, g.Key)
+			}
+			if p.NextCursor == "" {
+				break
+			}
+			cursor = p.NextCursor
+		}
+		if want := []string{"ops-team", "dev_team"}; !slices.Equal(got, want) {
+			t.Fatalf("paged = %v, want %v", got, want)
+		}
+	})
 }

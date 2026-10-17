@@ -573,7 +573,7 @@ user: zero or several matches fail (`users.email` is not unique, `google_sub` is
 | `GET, POST /api/v1/initiatives/{id}/apps`; `PATCH /api/v1/apps/{id}` | Apps with their deployments (`PATCH`: `status`, `name`) |
 | `POST /api/v1/apps/{id}/deployments`; `DELETE /api/v1/deployments/{id}` | Hosts (read through the apps listing) |
 | `GET, POST /api/v1/initiatives/{id}/grants`; `DELETE /api/v1/grants/{id}` | Grants (subject by email or group id, role, optional `expires_at` in the future) |
-| `GET, POST /api/v1/groups`; `DELETE /api/v1/groups/{id}`; `GET, POST /api/v1/groups/{id}/members`; `DELETE /api/v1/groups/{id}/members/{user_id}` | Groups (members: platform admins only) |
+| `GET, POST /api/v1/groups`; `GET, DELETE /api/v1/groups/{id}`; `GET, POST /api/v1/groups/{id}/members`; `DELETE /api/v1/groups/{id}/members/{user_id}` | Groups (members: platform admins only). `GET /groups?q=` filters by a case-insensitive substring of key or name (max 64 characters, `422` on `q` otherwise; wildcards are literal) and keeps the keyset pagination. `GET /groups/{id}` returns `id, key, name, created_at` with the same access as the list (admins and managers; `404` for an unknown id), never members |
 | `GET /api/v1/users?email=`; `PATCH /api/v1/users/{id}`; `DELETE /api/v1/users/{id}/sessions` | Users (`status`) and session revocation |
 | `GET /api/v1/audit?initiative_id=&cursor=` | Audit log, newest first, keyset pagination |
 | `GET /api/v1/apps/{id}/health` | Integration health of an app (admins and managers of its initiative) |
