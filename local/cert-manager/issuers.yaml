@@ -1,4 +1,5 @@
 # Let's Encrypt issuers using DNS-01 through the Cloudflare API.
+# No ACME email on purpose (optional field; set `email` to get expiry notices).
 # The token secret is created by local/certs-up.sh from .tools/secrets.
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
@@ -7,7 +8,6 @@ metadata:
 spec:
   acme:
     server: https://acme-staging-v02.api.letsencrypt.org/directory
-    email: admin@example.com
     privateKeySecretRef:
       name: letsencrypt-staging-account
     solvers:
@@ -24,7 +24,6 @@ metadata:
 spec:
   acme:
     server: https://acme-v02.api.letsencrypt.org/directory
-    email: admin@example.com
     privateKeySecretRef:
       name: letsencrypt-prod-account
     solvers:
