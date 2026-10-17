@@ -20,7 +20,10 @@ Pending work and open questions for the portal platform. Detailed context lives 
   global bucket. Verify the client IP behind the production load balancer.
 - [ ] **Egress filtering.** The `local-google` overlay allows platform-api HTTPS egress to any public address.
   FQDN-level filtering (Google endpoints only) needs an egress proxy or a CNI with L7 policies.
-- [ ] **Internal TLS for the JWKS.** Apps fetch the JWKS over in-cluster HTTP; integrity relies on NetworkPolicy.
+- [x] **Internal TLS for the JWKS.** Closed 2026-10-16: opt-in HTTPS on the JWKS listener (`PLATFORM_JWKS_TLS_CERT_FILE` /
+  `_KEY_FILE`, reloaded every 30 s) and a CA file for verifiers (`PORTAL_JWKS_CA_FILE`, SDK `RootCAs`). `base/` stays HTTP;
+  the local overlay enables it with a local CA. Production adopters must supply the certificate (cert-manager, Vault or
+  manual) and distribute the CA; see `platform-gitops/README.md`.
 - [x] **`client_secret` rotation runbook.** Closed 2026-10-16. `platform-gitops/docs/runbooks/google-client-secret-rotation.md`: add, deploy (restart required), verify a real login, disable the old one, observe, delete; rollback and leak variants. Original note: Google allows two active secrets.
 - [ ] **NOTIFY commit serialization.** The `access_changed` and `signing_keys_changed` triggers use NOTIFY, and
   PostgreSQL serializes the commit of every notifying transaction on one cluster-wide lock (waits of up to ~3 s were
