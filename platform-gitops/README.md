@@ -86,7 +86,8 @@ rules file). Prometheus's own ClusterRole is read-only (pods, services, endpoint
 Alertmanager is disabled and has no receivers: alerts are evaluated and visible in Prometheus (`/alerts`) and Grafana, and go
 nowhere. `down-monitoring.sh` tears it down.
 
-**Grafana access (not exposed through Traefik).** The toolbox runs in a container, so `./tk` can publish the forwarded port on the
+**Grafana access.** Day to day, Grafana is an app of the portal behind ForwardAuth: https://grafana.apps.wysted.dev (section
+"Grafana behind ForwardAuth" below). The port-forward below is the break-glass path (basic auth is off by default, see there). The toolbox runs in a container, so `./tk` can publish the forwarded port on the
 host loopback with `TK_PUBLISH`; leave the command running and open http://127.0.0.1:3000 (user `admin`):
 
 ```
@@ -104,7 +105,7 @@ behind ForwardAuth.
 
 **NetworkPolicies.** `monitoring` is default deny both ways. Prometheus: ingress from Grafana (9090) and itself; egress to
 the metrics port 9090 of platform-api and portal pods only, itself, DNS and the Kubernetes API (`up.sh` renders
-`overlays/local/monitoring/networkpolicy-apiserver.tpl.yaml` with one /32 per endpoint of the `kubernetes` Service, port 6443). Grafana: egress to Prometheus 9090 and DNS only (no sidecars, so it never needs the API). On the
+`overlays/local/monitoring/networkpolicy-apiserver.tpl.yaml` with one /32 per endpoint of the `kubernetes` Service, port 6443). Grafana: egress to Prometheus 9090, DNS and (local overlay) the JWKS 8083; ingress from Traefik on 3000 only (no sidecars, so it never needs the API). On the
 other side, `allow-ingress-metrics` in `platform` and `portal` admits only pods labelled `app.kubernetes.io/name=prometheus` from the
 `monitoring` namespace to port 9090; the app-namespace label does NOT grant it. Anything that can run a pod with that label in
 `monitoring` joins the set: keep the namespace to the stack.
@@ -164,6 +165,57 @@ Adopters: only the contract matters, not the script.
 - Switch the URLs to `https://` in the same change; an `http` URL logs a warning at verifier start-up.
 - Smoke section `16b` checks the SAN, CA verification (and its failure without the CA), TLS-only and TLS 1.3.
 - `overlays/local-google` builds on `overlays/local/platform`, so it inherits the TLS patches (the apps keep the CA ConfigMap from `up.sh`).
+
+## Grafana behind ForwardAuth (local overlay)
+
+Grafana is registered as an app of the portal model and reached only through Traefik; it authenticates the request with the
+`Platform-Assertion` header that ForwardAuth injects. Nothing in `base/` changes.
+
+| Piece | Where |
+|---|---|
+| Authorization | `overlays/local/seed.sql`: initiative `observability` (roles `viewer`, `editor`, `admin`, none with `manages_access`), app `grafana` id `app_01J9Z3K7WQ4M8R2T5XV6N0B1HD`, host `grafana.apps.wysted.dev`; `admin@example.com` has `admin`, alice `viewer`, bob only `auditor` (a role Grafana does not map: ForwardAuth lets him in, Grafana refuses), carol nothing |
+| Grafana `[auth.jwt]` | `overlays/local/monitoring/values.yaml`: `header_name: Platform-Assertion`, `jwk_set_url` = the HTTPS JWKS, `tls_client_ca` = the `platform-jwks-ca` ConfigMap (created in `monitoring` by `jwks-tls.sh`, mounted at `/etc/grafana/jwks-ca`), `expect_claims` `iss` + `aud` (the app id, never the host), `username_claim: sub` (no `email_claim`: identity is the UUID `sub` only, the email never matches a Grafana user; the built-in admin has `admin_email: break-glass@invalid`), `cache_ttl: 5m`, `auto_sign_up`, `role_attribute_strict: true`, `url_login: false` |
+| Roles | `role_attribute_path` takes the `roles` claim and returns one string, highest wins: `admin` -> Admin, `editor` -> Editor, `viewer` -> Viewer; any other role (or none) refuses the login. Org role only: `allow_assign_grafana_admin` is off, nobody becomes a Grafana server admin through the portal |
+| Route | `overlays/local/monitoring/grafana-ingressroute.yaml`: `Host(grafana.apps.wysted.dev)` on `websecure` (ForwardAuth and strip-assertion are entrypoint-level) -> Service `monitoring-grafana:80` |
+| NetworkPolicies | `overlays/local/monitoring/networkpolicy-grafana.yaml`: ingress to Grafana :3000 from Traefik only; egress to platform-api :8083. `overlays/local/platform/networkpolicy-jwks-grafana.yaml`: platform-api admits :8083 from the Grafana pods (the `monitoring` namespace is NOT labelled as an app namespace) |
+| Local login off | `[auth] disable_login_form`, `disable_signout_menu`, `[auth.basic] enabled=false`, anonymous off, `root_url` = the public URL, `cookie_secure` |
+
+Properties worth knowing: Grafana ignores the JOSE `typ` (the contract's `platform-assertion+jwt`) and cannot require it, which is
+acceptable because the platform signing key signs only `Platform-Assertion`; the 60 s clock leeway is fixed (go-jose); the header is
+checked on every request, so revocation takes effect on the next request (ForwardAuth answers 403; there is no Grafana-side session
+to outlive it). `cache_ttl` (5m) only bounds how long a rotated JWKS key takes to be seen: the contract publishes the `next` key at
+least 1 h before it signs and keeps the retired one 1 h, and the emergency window is 5 min (block 3, same as the JWKS `max-age`),
+so 5m never rejects a legitimate token. Grafana has no display-name claim in `[auth.jwt]`, so users show as their UUID login with
+an empty email. A client-sent `Platform-Assertion` never reaches Grafana: strip-assertion removes it and ForwardAuth re-issues a
+genuine one (proven at the auth host and on hello-a, smoke section 7; smoke 19b checks the Grafana-side consequences, an assertion
+minted for another app is refused by `aud`, and an unmapped role by `role_attribute_strict`).
+
+**Break-glass admin.** With the form and basic auth off there is no password path. If the platform is down and you need Grafana,
+turn the local login back on for as long as you need it and reach Grafana by port-forward (see "Grafana access") with the admin
+credentials from `.tools/secrets/k3d-grafana-admin-password`. `GF_AUTH_DISABLE_LOGIN_FORM=false` brings the UI form back,
+`GF_AUTH_BASIC_ENABLED=true` is only needed for API calls with basic auth. WARNING: while this is on, the login form is open on
+the same Grafana that Traefik serves at `grafana.apps.wysted.dev`, so any logged-in platform user with access to that host can try the
+admin password. Keep the window short, with one command each way (a single `set env` rolls the pod once; the revert rolls it again, and the
+Grafana database is an emptyDir, so sessions made in the window are lost), and optionally take the route out of Traefik for the
+duration (the IngressRoute is local-overlay only and `kubectl apply -k` restores it):
+
+```
+./tk kubectl -n monitoring delete ingressroute grafana        # optional: nobody reaches the form through Traefik
+./tk kubectl -n monitoring set env deploy/monitoring-grafana -c grafana GF_AUTH_DISABLE_LOGIN_FORM=false GF_AUTH_BASIC_ENABLED=true
+# ... port-forward, work ...
+./tk kubectl -n monitoring set env deploy/monitoring-grafana -c grafana GF_AUTH_DISABLE_LOGIN_FORM- GF_AUTH_BASIC_ENABLED-   # back to off
+./tk kubectl apply -k platform-gitops/overlays/local/monitoring   # restores the IngressRoute (also re-applies the policies)
+```
+
+Adopters, mirroring this with their own Grafana and PKI:
+- Register in the portal an initiative with role keys equal to what your `role_attribute_path` matches, an app for Grafana, and its
+  host (`aud` = the app id). Route the host through the entrypoint that runs ForwardAuth; the Grafana Service must not be reachable
+  any other way (NetworkPolicy: ingress from the proxy only; also no LoadBalancer/NodePort), or anyone can send the header.
+- `[auth.jwt]` with `jwk_set_url` over HTTPS (mandatory outside dev mode), `tls_client_ca` for a private CA (the CA that issues the JWKS
+  certificate, see "Internal TLS for the JWKS"; omit for a public CA), `expect_claims` with the exact `PLATFORM_ISSUER` and app id,
+  `role_attribute_strict`, `url_login = false`. `GF_AUTH_JWT_*` env vars work the same as the ini.
+- Turn off every other way in (login form, basic auth, anonymous, other `[auth.*]`) and decide your break-glass path.
+- Let Grafana reach the JWKS Service (egress) and the JWKS listener admit it (ingress, by pod selector, not by the app-namespace label).
 
 ## Notes
 

@@ -681,20 +681,24 @@ for q in 'sum(platform_forwardauth_decisions_total)' 'sum(portal_http_requests_t
   if [[ -n "$v" ]] && python3 -c 'import sys;sys.exit(0 if float(sys.argv[1])>0 else 1)' "$v"; then pass "$q > 0"; else fail "$q is not > 0 (got '${v:-none}')"; fi
 done
 
-echo "  -- Grafana (port-forward inside the toolbox, polled until it answers; admin password from .tools/secrets via a 0600 curl config)"
-umask 077; printf 'user = "admin:%s"\n' "$(<.tools/secrets/k3d-grafana-admin-password)" > "$GW/curlrc"; umask 022
+echo "  -- Grafana: health and the unauthenticated API through a port-forward (inside the toolbox); the dashboard and the datasource"
+echo "     health as the platform admin through Traefik (basic auth is off, the assertion is the only credential)"
 $K -n monitoring rollout status deploy/monitoring-grafana --timeout=120s >/dev/null
-./tk sh -c 'cd /workspace/.tools/tmp/'"$(basename "$GW")"' && rm -f health.json dash.json ds.json anon.code
+./tk sh -c 'cd /workspace/.tools/tmp/'"$(basename "$GW")"' && rm -f health.json anon.code
   kubectl -n monitoring port-forward deploy/monitoring-grafana 13000:3000 >pf.log 2>&1 &
   pf=$!
   B=http://127.0.0.1:13000
   for i in $(seq 1 60); do curl -s -o health.json --max-time 2 "$B/api/health" && break; sleep 0.5; done
   curl -s -o /dev/null -w "%{http_code}" "$B/api/dashboards/uid/portal-platform" > anon.code
-  curl -s -K curlrc -o dash.json "$B/api/dashboards/uid/portal-platform"
-  curl -s -K curlrc -o ds.json "$B/api/datasources/uid/prometheus/health"
   kill $pf' >/dev/null 2>&1
+G_HOST=grafana.apps.wysted.dev
+G=https://$G_HOST
+GRAFANA_APP_ID=app_01J9Z3K7WQ4M8R2T5XV6N0B1HD # seed.sql and expect_claims in monitoring/values.yaml
+JGA="$WORK/grafana-admin"; login "$JGA" admin@example.com "$G" >/dev/null
+api "$JGA" "$G/api/dashboards/uid/portal-platform" >/dev/null; cp "$WORK/b" "$GW/dash.json"
+api "$JGA" "$G/api/datasources/uid/prometheus/health" >/dev/null; cp "$WORK/b" "$GW/ds.json"
 check "Grafana health: database ok" "$(json_get "$GW/health.json" 'd["database"]')" ok
-check "Grafana API without credentials" "$(<"$GW/anon.code")" 401
+check "Grafana API without credentials (port-forward, no assertion)" "$(<"$GW/anon.code")" 401
 check "dashboard 'Portal platform' is provisioned" "$(json_get "$GW/dash.json" 'd["dashboard"]["title"] + " provisioned=" + str(d["meta"]["provisioned"])')" "Portal platform provisioned=True"
 check "dashboard has every panel of the versioned JSON" "$(json_get "$GW/dash.json" 'len(d["dashboard"]["panels"])')" "$(json_get platform-gitops/monitoring/dashboards/portal-platform.json 'len(d["panels"])')"
 check "Grafana reaches Prometheus (datasource health)" "$(json_get "$GW/ds.json" 'd["status"]')" OK
@@ -745,6 +749,108 @@ check_not "Prometheus runs without --web.enable-lifecycle" "$($K -n monitoring g
 check "POST /-/reload is refused (lifecycle API off; a Grafana-labelled pod asks)" "$($K -n monitoring exec probe-grafana -- curl -s -o /dev/null --max-time 4 -w '%{http_code}' -X POST "http://$PROM_IP:9090/-/reload" 2>/dev/null || true)" 403
 check "Grafana pod mounts no ServiceAccount token" "$($K -n monitoring get deploy monitoring-grafana -o jsonpath='{.spec.template.spec.automountServiceAccountToken}')" false
 check "API egress policy lists /32 endpoints only" "$($K -n monitoring get networkpolicy allow-egress-apiserver -o jsonpath='{.spec.egress[0].to[*].ipBlock.cidr}' | tr ' ' '\n' | grep -vc '/32$' || true)" 0
+
+section "19b. Grafana behind ForwardAuth: JWT auth from Platform-Assertion, roles from the grant, no other way in"
+# assertion_for <jar> <host> <outfile>: asks one platform-api replica (from the Traefik-labelled probe pod, like section 5)
+# for the ForwardAuth decision with the app cookie of <jar> for <host>. Prints the status; the Platform-Assertion it returns
+# (a real one, minted for that host's app, valid 90 s) goes to <outfile> and is never printed.
+assertion_for() {
+  local jar="$1" host="$2" out="$3" ip cookie
+  ip="$($K -n platform get pods -l app.kubernetes.io/name=platform-api -o jsonpath='{.items[0].status.podIP}')"
+  cookie="$(awk -v h="$host" '$1 ~ h && $6=="__Host-Http-platform_app"{print $7}' "$jar")"
+  rm -f "$out"
+  $K -n traefik exec probe-traefik -- curl -s -o /dev/null --max-time 4 -D - -H "X-Forwarded-Host: $host" -H "X-Forwarded-Method: GET" \
+    -H "X-Forwarded-Uri: /api/user" -H "Accept: application/json" -H "Sec-Fetch-Mode: cors" -H "Cookie: __Host-Http-platform_app=$cookie" \
+    "http://$ip:8081/forwardauth" 2>/dev/null | tr -d '\r' \
+    | awk -v out="$out" 'NR==1{st=$2} tolower($1)=="platform-assertion:"{print $2 > out} END{print st}'
+}
+# jwt_claim <file> <claim>: claim of the (unverified) assertion in <file>.
+jwt_claim() { python3 -I -c 'import base64,json,sys;t=open(sys.argv[1]).read().split()[0].split(".")[1];print(json.loads(base64.urlsafe_b64decode(t+"="*(-len(t)%4))).get(sys.argv[2],""))' "$1" "$2"; }
+UUID_RE='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+is_uuid() { [[ "$1" =~ $UUID_RE ]] && echo uuid || echo "not-a-uuid:$1"; }
+
+GU="$WORK/grafana-user"
+echo "  -- admin (observability/admin) -> Grafana Admin; identity = sub (UUID), the email is never the identity"
+code=$(api "$JGA" "$G/api/user"); check "admin: GET /api/user" "$code" 200
+cp "$WORK/b" "$GW/admin-user.json"
+check "admin: login is the UUID" "$(is_uuid "$(json_get "$GW/admin-user.json" 'd["login"]')")" uuid
+check "admin: assertion is for the grafana app" "$(assertion_for "$JGA" "$G_HOST" "$GW/admin.jwt")" 200
+check "admin: login == sub of the assertion" "$([[ "$(json_get "$GW/admin-user.json" 'd["login"]')" == "$(jwt_claim "$GW/admin.jwt" sub)" ]] && echo equal || echo different)" equal
+check_not "admin: the assertion's email is not stored in Grafana" "$(json_get "$GW/admin-user.json" 'd["email"]')" example.com
+code=$(api "$JGA" "$G/api/org"); check "admin: GET /api/org" "$code" 200
+api "$JGA" "$G/api/user/orgs" >/dev/null; check "admin: org role" "$(json_get "$WORK/b" '",".join(o["role"] for o in d)')" Admin
+check "admin: not a Grafana server admin (allow_assign_grafana_admin off)" "$(json_get "$GW/admin-user.json" 'd["isGrafanaAdmin"]')" False
+echo "  -- alice (observability/viewer) -> Viewer"
+login "$GU" alice@example.com "$G" >/dev/null
+code=$(api "$GU" "$G/api/user"); check "alice: GET /api/user" "$code" 200
+check "alice: login is the UUID" "$(is_uuid "$(json_get "$WORK/b" 'd["login"]')")" uuid
+check_not "alice: the assertion's email is not stored in Grafana" "$(json_get "$WORK/b" 'd["email"]')" example.com
+api "$GU" "$G/api/user/orgs" >/dev/null; check "alice: org role" "$(json_get "$WORK/b" '",".join(o["role"] for o in d)')" Viewer
+code=$(mutate "$GU" POST "$G/api/dashboards/db" same-origin application/json '{"dashboard":{"title":"x"}}'); check "alice: cannot create a dashboard" "$code" 403
+echo "  -- carol (no grant on observability) -> 403 from ForwardAuth"
+JGC="$WORK/grafana-carol"; code=$(login "$JGC" carol@example.com "$G"); check "carol: opening Grafana after the login" "$code" 403
+code=$(api "$JGC" "$G/api/user"); check "carol: GET /api/user" "$code" 403
+echo "  -- bob (only role on observability: auditor, unmapped) -> ForwardAuth allows, Grafana refuses (role_attribute_strict)"
+JGB="$WORK/grafana-bob"; login "$JGB" bob@example.com "$G" >/dev/null
+check "bob: ForwardAuth decision for grafana" "$(assertion_for "$JGB" "$G_HOST" "$GW/bob.jwt")" 200
+check "bob: the assertion carries role auditor only" "$(jwt_claim "$GW/bob.jwt" roles)" "['auditor']"
+code=$(api "$JGB" "$G/api/user"); check "bob: GET /api/user through Traefik (refused by Grafana, not by ForwardAuth)" "$code" 403
+check "bob: Grafana's own refusal (jwt.invalid_role)" "$(json_get "$WORK/b" 'd["messageId"]')" jwt.invalid_role
+code=$(api "$JGB" "$G/api/org"); check "bob: GET /api/org" "$code" 403
+code=$(nav "$JGB" "$G/"); echo "  GET / -> $code Location: $(header location)"
+check "bob: opening Grafana never yields a page (redirected to the refusal, no session)" "$code" 302
+echo "  -- anonymous / client-sent assertion"
+code=$(api "$WORK/grafana-anon" "$G/api/user"); check "anonymous API request" "$code" 401
+FORGED="$(python3 -c 'import base64,json;b=lambda o:base64.urlsafe_b64encode(json.dumps(o).encode()).rstrip(b"=").decode();print(b({"alg":"none","typ":"JWT"})+"."+b({"iss":"https://auth.apps.wysted.dev","aud":"'$GRAFANA_APP_ID'","sub":"forged","email":"forged@example.com","roles":["admin"]})+".")')"
+code=$(api "$WORK/grafana-anon" -H "Platform-Assertion: $FORGED" "$G/api/user"); check "unauthenticated request carrying an assertion is rejected at the door (no session)" "$code" 401
+code=$(api "$GU" -H "Platform-Assertion: $FORGED" "$G/api/user"); check "alice's request carrying an assertion: served with the platform-issued one" "$code" 200
+check "still alice's UUID, not the client's sub" "$(is_uuid "$(json_get "$WORK/b" 'd["login"]')")" uuid
+echo "     (that the client's header is stripped before the app is proven at the auth host and on hello-a: section 7)"
+echo "  -- direct to Grafana (port-forward, bypassing Traefik): audience binding, no local login, basic auth off"
+# Fresh assertions (90 s): one minted for hello-a (another app's aud), one for Grafana (positive control).
+JHA="$WORK/ja19"; login "$JHA" alice@example.com "$A" >/dev/null
+check "alice: ForwardAuth decision for hello-a" "$(assertion_for "$JHA" "$A_HOST" "$GW/hello.jwt")" 200
+check "hello-a assertion has aud = hello-a" "$(jwt_claim "$GW/hello.jwt" aud)" "$HELLO_A_ID"
+check "alice: ForwardAuth decision for grafana" "$(assertion_for "$GU" "$G_HOST" "$GW/graf.jwt")" 200
+check "grafana assertion has aud = grafana" "$(jwt_claim "$GW/graf.jwt" aud)" "$GRAFANA_APP_ID"
+printf 'header = "Platform-Assertion: %s"\n' "$(<"$GW/hello.jwt")" > "$GW/curlrc-hello"
+printf 'header = "Platform-Assertion: %s"\n' "$(<"$GW/graf.jwt")" > "$GW/curlrc-graf"
+chmod 600 "$GW"/curlrc-*
+# The password file must be the Secret's content: otherwise a 401 would only say "wrong password", not "basic auth disabled".
+PW_FILE_SHA="$(sha256sum < .tools/secrets/k3d-grafana-admin-password | cut -d' ' -f1)"
+PW_SECRET_SHA="$($K -n monitoring get secret grafana-admin -o jsonpath='{.data.admin-password}' | base64 -d | sha256sum | cut -d' ' -f1)"
+check "positive control: the admin password file matches Secret grafana-admin (hashes compared)" "$([[ -n $PW_FILE_SHA && $PW_FILE_SHA == "$PW_SECRET_SHA" ]] && echo match || echo mismatch)" match
+./tk sh -c 'cd /workspace/.tools/tmp/'"$(basename "$GW")"' && printf "user = \"admin:%s\"\n" "$(cat /workspace/.tools/secrets/k3d-grafana-admin-password)" > curlrc2 && chmod 600 curlrc2
+  rm -f aud.code ctl.code ctl.json basic.code form.code form.json login.code root.loc
+  kubectl -n monitoring port-forward deploy/monitoring-grafana 13001:3000 >pf2.log 2>&1 &
+  pf=$!
+  U=http://127.0.0.1:13001
+  for i in $(seq 1 60); do curl -s -o /dev/null --max-time 2 $U/api/health && break; sleep 0.5; done
+  curl -s -K curlrc-hello -o /dev/null -w "%{http_code}" $U/api/user > aud.code
+  curl -s -K curlrc-graf -o ctl.json -w "%{http_code}" $U/api/user > ctl.code
+  curl -s -K curlrc2 -o /dev/null -w "%{http_code}" $U/api/user > basic.code
+  curl -s -o form.json -w "%{http_code}" -X POST -H "Content-Type: application/json" -d "{\"user\":\"admin\",\"password\":\"x\"}" $U/login > form.code
+  curl -s -o /dev/null -w "%{redirect_url}" $U/ > root.loc
+  kill $pf; rm -f curlrc2' >/dev/null 2>&1
+check "assertion minted for hello-a (valid, wrong aud) does not authenticate" "$(<"$GW/aud.code")" 401
+check "positive control: the Grafana-aud assertion authenticates through the same path" "$(<"$GW/ctl.code")" 200
+check "positive control: it is alice (login == sub)" "$([[ "$(json_get "$GW/ctl.json" 'd["login"]')" == "$(jwt_claim "$GW/graf.jwt" sub)" ]] && echo equal || echo different)" equal
+check "basic auth with the admin credentials is refused (password verified above; port-forward, no assertion)" "$(<"$GW/basic.code")" 401
+check "POST /login with the form is refused (auth.client.notConfigured)" "$(<"$GW/form.code")" 400
+check "POST /login: no session cookie or user in the answer" "$(json_get "$GW/form.json" 'd.get("message")')" BadRequest
+api "$JGA" "$G/api/frontend/settings" >/dev/null; check "frontend settings: disableLoginForm is true" "$(json_get "$WORK/b" 'd["disableLoginForm"]')" True
+check "unauthenticated / redirects to /login (which renders no form)" "$(<"$GW/root.loc")" "/login"
+rm -f "$GW"/curlrc-* "$GW"/*.jwt
+echo "  -- NetworkPolicy: Grafana :3000 is reachable from Traefik only"
+GRAFANA_IP="$(pod_ip monitoring "$($K -n monitoring get pod -l app.kubernetes.io/name=grafana -o jsonpath='{.items[0].metadata.name}')")"
+check "Traefik-labelled pod -> Grafana $GRAFANA_IP:3000 (positive)" "$(wait_probe traefik probe-traefik http://$GRAFANA_IP:3000/api/health 200)" 200
+check "[ingress] other namespace (default) -> Grafana :3000" "$(probe default probe-default http://$GRAFANA_IP:3000/api/health)" 000
+check "[ingress] app-namespace pod (smoke-app) -> Grafana :3000" "$(probe smoke-app probe-open http://$GRAFANA_IP:3000/api/health)" 000
+check "[ingress] same namespace (probe-other) -> Grafana :3000" "$(probe monitoring probe-other http://$GRAFANA_IP:3000/api/health)" 000
+check "[service] default -> monitoring-grafana.monitoring:80" "$(probe default probe-default http://monitoring-grafana.monitoring.svc.cluster.local/api/health)" 000
+echo "  -- NetworkPolicy: Grafana -> JWKS only through its own rule (platform side)"
+check "probe-other (monitoring, not Grafana) -> platform-api JWKS :8083" "$($K -n monitoring exec probe-other -- curl -s -o /dev/null --max-time 4 -w '%{http_code}' -k https://platform-api-jwks.platform.svc.cluster.local:8083/.well-known/jwks.json 2>/dev/null || true)" 000
+check "probe-grafana (Grafana labels) -> platform-api JWKS :8083" "$($K -n monitoring exec probe-grafana -- curl -s -o /dev/null --max-time 4 -w '%{http_code}' -k https://platform-api-jwks.platform.svc.cluster.local:8083/.well-known/jwks.json 2>/dev/null || true)" 200
 
 section "20. Web app through Traefik: HTML with the startup-computed CSP, immutable assets, JSON 404s, ForwardAuth, method guards"
 # inline_hash <html file>: sha256 (base64) of every EXECUTABLE inline <script> body, one per line (what a browser compares

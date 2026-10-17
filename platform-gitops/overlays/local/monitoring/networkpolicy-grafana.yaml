@@ -1,0 +1,28 @@
+# Grafana behind the IAP (local overlay; the base policies keep Grafana unexposed). Ports are POD ports.
+# Ingress: Traefik only (the pod port is 3000; the Service port 80 maps to it). Port-forward and the apiserver proxy come from
+# the node and are not filtered. Egress: the JWKS listener of platform-api (8083) to verify Platform-Assertion.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: allow-ingress-grafana-traefik, namespace: monitoring}
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: grafana}}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: traefik}}
+          podSelector: {matchLabels: {app.kubernetes.io/name: traefik}}
+      ports:
+        - {protocol: TCP, port: 3000}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: allow-egress-grafana-jwks, namespace: monitoring}
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: grafana}}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: platform}}
+          podSelector: {matchLabels: {app.kubernetes.io/name: platform-api}}
+      ports:
+        - {protocol: TCP, port: 8083}

@@ -115,6 +115,12 @@ grafana:
     existingSecret: grafana-admin
     userKey: admin-user
     passwordKey: admin-password
+  # CA of the JWKS listener (ConfigMap created by ../jwks-tls.sh, same one the app namespaces use).
+  extraConfigmapMounts:
+    - name: jwks-ca
+      mountPath: /etc/grafana/jwks-ca
+      configMap: platform-jwks-ca
+      readOnly: true
   # No sidecars: they watch ConfigMaps through the Kubernetes API, and Grafana's egress policy allows Prometheus only.
   # The datasource is provisioned from values and the dashboard from the ConfigMap that kustomize generates
   # (platform-gitops/monitoring/dashboards) mounted as a plain volume.
@@ -162,10 +168,48 @@ grafana:
       reporting_enabled: false
     log:
       mode: console
+    server:
+      root_url: https://grafana.apps.wysted.dev
+    security:
+      cookie_secure: true
+      # The built-in admin (break-glass only) gets an address no platform user can hold (RFC 2606 .invalid), so no
+      # email-based lookup can ever land on it. Applied when the admin is created (the data dir is an emptyDir).
+      admin_email: break-glass@invalid
     users:
       allow_sign_up: false
     auth.anonymous:
       enabled: false
+    # Grafana behind the IAP: the only way in is Traefik (ForwardAuth + strip-assertion) -> Platform-Assertion. No local
+    # login: no form, no basic auth, no signout (the platform session is the portal's). Break-glass admin: README,
+    # "Grafana behind ForwardAuth".
+    auth:
+      disable_login_form: true
+      disable_signout_menu: true
+    auth.basic:
+      enabled: false
+    auth.jwt:
+      enabled: true
+      header_name: Platform-Assertion
+      # Never the URL login (?auth_token=): the header set by ForwardAuth is the only credential.
+      url_login: false
+      # Keys by kid, ES256, rotation follows the JWKS. https is mandatory outside dev mode; the CA is the local one.
+      jwk_set_url: https://platform-api-jwks.platform.svc.cluster.local:8083/.well-known/jwks.json
+      tls_client_ca: /etc/grafana/jwks-ca/ca.crt
+      # Bounds only how long a ROTATED key takes to be seen (revocation of a session is not cached here: ForwardAuth
+      # answers 403 on the next request). The contract publishes `next` >= 1 h before it signs, so a new key is always
+      # known long before use; the emergency window is 5 min (contract block 3), which is also the JWKS max-age.
+      cache_ttl: 5m
+      # iss = PLATFORM_ISSUER; aud = the app id of grafana in seed.sql (never the host, contract block 1).
+      expect_claims: '{"iss":"https://auth.apps.wysted.dev","aud":"app_01J9Z3K7WQ4M8R2T5XV6N0B1HD"}'
+      # Identity = sub (internal UUID) ONLY. No email_claim on purpose: the email never identifies anyone (users.email is not
+      # unique) and Grafana looks users up by login, then by email when it has one. Without it a user is the UUID login
+      # with an empty email; Grafana's JWT auth has no display-name claim, so the UI shows the UUID.
+      username_claim: sub
+      auto_sign_up: true
+      # JMESPath must yield ONE string; the highest role wins. No match -> login refused (strict).
+      role_attribute_path: "contains(roles[*], 'admin') && 'Admin' || contains(roles[*], 'editor') && 'Editor' || contains(roles[*], 'viewer') && 'Viewer'"
+      role_attribute_strict: true
+      allow_assign_grafana_admin: false
   # initChownData runs as root; the pod is non-root and the data dir is an emptyDir owned through fsGroup.
   initChownData:
     enabled: false

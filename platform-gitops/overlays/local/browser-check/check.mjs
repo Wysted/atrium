@@ -7,13 +7,14 @@ const AUTH_HOST = process.env.AUTH_HOST ?? 'auth.apps.wysted.dev'
 const OUT = process.env.OUT_DIR ?? 'out'
 // Fake users of the local seed (overlays/local/seed.sql; dave is below): alice = viewer on hello-a (demo) and hello-b (other), not an admin;
 // admin = platform admin; carol = exists, no grants (no apps, not an admin).
-const ALICE = { email: 'alice@example.com', name: 'alice', apps: [{ name: 'hello-a', initiative: 'Demo', host: 'hello-a.apps.wysted.dev' }, { name: 'hello-b', initiative: 'Other', host: 'hello-b.apps.wysted.dev' }] }
+const ALICE = { email: 'alice@example.com', name: 'alice', apps: [{ name: 'hello-a', initiative: 'Demo', host: 'hello-a.apps.wysted.dev' }, { name: 'hello-b', initiative: 'Other', host: 'hello-b.apps.wysted.dev' }, { name: 'grafana', initiative: 'Observability', host: 'grafana.apps.wysted.dev' }] }
+const GRAFANA = 'https://grafana.apps.wysted.dev'
 const ADMIN = { email: 'admin@example.com', name: 'admin' }
 const CAROL = { email: 'carol@example.com', name: 'carol' }
 const DATA_TIMEOUT = 15_000
 const NO_ACCESS_TEXT = 'You do not have access to administration'
 // Initiatives of the local seed (seed.sql): key -> name. The rename round trip uses demo and restores its name.
-const SEED_INITIATIVES = [{ key: 'platform', name: 'Platform' }, { key: 'demo', name: 'Demo' }, { key: 'other', name: 'Other' }]
+const SEED_INITIATIVES = [{ key: 'platform', name: 'Platform' }, { key: 'demo', name: 'Demo' }, { key: 'other', name: 'Other' }, { key: 'observability', name: 'Observability' }]
 const RENAMED = SEED_INITIATIVES[1]
 const MARKER = 'Demo (browser check)'
 // dave = manager of demo only (role "manager" with manages_access); not a platform admin; his only app is hello-a.
@@ -161,7 +162,7 @@ try {
     check(`/ (alice): card "${app.name}" links to https://${app.host}/`, href === `https://${app.host}/`, String(href))
     check(`/ (alice): card "${app.name}" shows role badge "viewer"`, (await card.innerText()).includes('viewer'))
   }
-  check('/ (alice): exactly her 2 apps (no portal card)', (await page.getByRole('heading', { level: 2 }).count()) === ALICE.apps.length, String(await page.getByRole('heading', { level: 2 }).count()))
+  check('/ (alice): exactly her 3 apps (no portal card)', (await page.getByRole('heading', { level: 2 }).count()) === ALICE.apps.length, String(await page.getByRole('heading', { level: 2 }).count()))
   check('/ (alice): no "No apps yet"', !(await bodyText()).includes('No apps yet'))
   check('/ (alice): no Administration button (not an admin, manages nothing)', (await adminButton().count()) === 0)
   await page.screenshot({ path: `${OUT}/home.png`, fullPage: true })
@@ -1193,6 +1194,23 @@ try {
   const daveOrphans = await apiCall('GET', '/health/orphan-hosts')
   check('dave: GET /health/orphan-hosts is refused by the API (403)', daveOrphans.status === 403, String(daveOrphans.status))
   reset()
+
+  // Grafana is an app of the portal like any other: the central session of the admin opens it (SSO), the JWT auth maps the
+  // grant to an org role. Grafana sets its own CSP and Nuxt's checks do not apply here: only that the home renders.
+  console.log('  -- admin: Grafana home behind ForwardAuth (SSO from the central session)')
+  await login(ADMIN.email)
+  await page.goto(`${GRAFANA}/`)
+  await page.waitForURL(`${GRAFANA}/**`, { timeout: 30_000 })
+  await page.getByText('Welcome to Grafana.').waitFor({ timeout: DATA_TIMEOUT })
+  check('grafana (admin): the home renders', true)
+  check('grafana (admin): no login form', (await page.locator('input[name=user]').count()) === 0)
+  const gUser = await page.evaluate(async () => (await fetch('/api/user')).json())
+  // Identity = sub (internal UUID) only; the assertion's email is never stored (no email_claim), so Grafana cannot match by email.
+  check('grafana (admin): login is the sub (a UUID)', /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(gUser.login), String(gUser.login))
+  check('grafana (admin): the email of the assertion is not stored', gUser.email !== ADMIN.email, String(gUser.email))
+  const gOrgs = await page.evaluate(async () => (await fetch('/api/user/orgs')).json())
+  check('grafana (admin): org role Admin', gOrgs.map((o) => o.role).join() === 'Admin', JSON.stringify(gOrgs.map((o) => o.role)))
+  await page.screenshot({ path: `${OUT}/grafana-home.png` })
 } catch (e) {
   fail(`browser scenario aborted: ${e.message.split('\n')[0]} (url ${page.url().split('?')[0]})`)
   await page.screenshot({ path: `${OUT}/aborted.png` }).catch(() => {})

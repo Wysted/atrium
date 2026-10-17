@@ -1,6 +1,9 @@
 # NetworkPolicies of the monitoring namespace. The egress rule to the Kubernetes API is rendered by up.sh from the real
 # API endpoints (networkpolicy-apiserver.tpl.yaml), not listed here.
+# Grafana behind ForwardAuth (local only): IngressRoute + the two extra Grafana policies.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../../../base/monitoring
+  - networkpolicy-grafana.yaml
+  - grafana-ingressroute.yaml

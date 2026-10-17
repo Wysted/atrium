@@ -71,11 +71,9 @@ Pending work and open questions for the portal platform. Detailed context lives 
   without it still applies the `__Host-` rules (the name starts with `__Host-`), so nothing breaks. Firefox skipped the
   HttpOnly check from 144 until 150/151 (CVE-2026-6768), so the prefix is hardening, never the only guarantee: the
   server always sets `Secure; HttpOnly; Path=/` without `Domain`.
-- [ ] **Grafana behind ForwardAuth (blocked by internal TLS for the JWKS).** Researched 2026-10-16 against Grafana 13.2
-  sources: `[auth.jwt]` verifies ES256 through a JWKS (selects the key by `kid`), checks `iss`/`aud` with
-  `expect_claims`, maps roles with `role_attribute_path` (it must return one string), and allows 60 s of clock leeway
-  (fixed, from go-jose). It ignores the JOSE `typ` and cannot require it; acceptable because the platform signing key
-  signs only `Platform-Assertion` (`internal/assertion/issuer.go`), and ForwardAuth plus a NetworkPolicy must be the only
-  way to reach Grafana. `jwk_set_url` must be `https` outside dev mode: unblocked once the JWKS listener runs with TLS (see "Internal TLS for the JWKS"; Grafana needs the CA in its trust store);
-  `jwk_set_file` works without TLS but loses automatic key rotation. Keep
-  `url_login = false` and the admin login off the public path.
+- [x] **Grafana behind ForwardAuth.** Closed 2026-10-16, local overlay only. Grafana is the app `grafana` of the initiative
+  `observability` (roles viewer/editor/admin map to the org roles), `[auth.jwt]` verifies `Platform-Assertion` through the
+  HTTPS JWKS with the local CA, the login form and basic auth are off, and a NetworkPolicy leaves Traefik as the only way in.
+  Smoke section 19b and a browser scenario cover it; adopter notes in `platform-gitops/README.md` "Grafana behind ForwardAuth".
+  Research that fed it: `[auth.jwt]` selects the key by `kid`, ignores the JOSE `typ` (acceptable: the platform key signs only
+  `Platform-Assertion`), has a fixed 60 s leeway, and needs `role_attribute_path` to return one string.

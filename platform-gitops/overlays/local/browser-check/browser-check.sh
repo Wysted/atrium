@@ -23,7 +23,7 @@ NET=portal-net
 # Unique per run, so the check proves a NEW unknown_host denial is recorded (rows live 7 days, one per host per 10 minutes). Single
 # source of truth: rendered into the fixture's Host(), passed to the container (ORPHAN_HOST, --add-host). Declared by no app: refused as unknown_host.
 ORPHAN_HOST="orphan-smoke-$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n').apps.wysted.dev"
-HOSTS=(portal.apps.wysted.dev auth.apps.wysted.dev "$ORPHAN_HOST")
+HOSTS=(portal.apps.wysted.dev auth.apps.wysted.dev grafana.apps.wysted.dev "$ORPHAN_HOST")
 
 mkdir -p "$ROOT/.tools/npm/cache" "$HERE/out" "$HERE/node_modules"
 LB_IP="$(docker inspect "$LB" --format "{{(index .NetworkSettings.Networks \"$NET\").IPAddress}}")"

@@ -5,7 +5,7 @@
 #   .tools/secrets/k3d-jwks-tls.{key,crt}  leaf (90 days) with the in-cluster service name SANs
 #
 # Cluster side: Secret platform/platform-api-jwks-tls (kubernetes.io/tls) and ConfigMap platform-jwks-ca (key ca.crt) in
-# every app namespace. Idempotent: the CA and the leaf are reused until they are close to expiry (or the leaf stops
+# every app namespace and in monitoring (Grafana verifies the assertion; monitoring is not labelled as an app namespace). Idempotent: the CA and the leaf are reused until they are close to expiry (or the leaf stops
 # verifying against the CA); the cluster objects are re-applied on every run. Key material is never printed.
 # openssl and kubectl run in the toolbox (./tk).
 set -euo pipefail
@@ -25,9 +25,9 @@ readonly CA_MARGIN_DAYS=30
 readonly CA_RENEW_BEFORE_S=$(((LEAF_DAYS + LEAF_RENEW_BEFORE_S / 86400 + CA_MARGIN_DAYS) * 86400))
 readonly SERVICE=platform-api-jwks
 readonly SANS="DNS:$SERVICE,DNS:$SERVICE.platform,DNS:$SERVICE.platform.svc,DNS:$SERVICE.platform.svc.cluster.local"
-readonly APP_NAMESPACES=(hello-a hello-b portal)
+readonly APP_NAMESPACES=(hello-a hello-b portal monitoring)
 # Verifiers load the CA once at start-up (LoadRootCAs): a new CA needs a restart. namespace/deployment pairs.
-readonly VERIFIERS=(portal/portal hello-a/hello hello-b/hello)
+readonly VERIFIERS=(portal/portal hello-a/hello hello-b/hello monitoring/monitoring-grafana)
 NEW_CA=0
 ossl() { ./tk openssl "$@"; }
 
@@ -74,10 +74,18 @@ for ns in "${APP_NAMESPACES[@]}"; do
 done
 if ((NEW_CA)); then
   echo "    jwks-tls: new CA, restarting the verifiers before the new leaf is served"
+  # A verifier that does not exist yet (fresh bring-up, monitoring not installed) has nothing to restart: it will load the
+  # new CA when it first starts.
+  present=()
   for v in "${VERIFIERS[@]}"; do
+    if out="$(./tk kubectl -n "${v%/*}" get "deployment/${v#*/}" -o name 2>&1)"; then present+=("$v")
+    elif [[ $out == *NotFound* ]]; then echo "    jwks-tls: skip $v (not deployed)"
+    else echo "jwks-tls: cannot look up $v: $out" >&2; exit 1; fi
+  done
+  for v in "${present[@]}"; do
     ./tk kubectl -n "${v%/*}" rollout restart "deployment/${v#*/}" >/dev/null
   done
-  for v in "${VERIFIERS[@]}"; do
+  for v in "${present[@]}"; do
     ./tk kubectl -n "${v%/*}" rollout status "deployment/${v#*/}" --timeout=180s >/dev/null
   done
 fi

@@ -1,0 +1,15 @@
+# Grafana (ns monitoring) verifies Platform-Assertion against the JWKS listener (8083, public keys only). The
+# `monitoring` namespace is NOT an app namespace (it must never carry the app-namespace label), so it gets this narrow rule
+# for the Grafana pods instead.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: allow-ingress-jwks-grafana, namespace: platform}
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: platform-api}}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: monitoring}}
+          podSelector: {matchLabels: {app.kubernetes.io/name: grafana}}
+      ports:
+        - {protocol: TCP, port: 8083}

@@ -1,0 +1,16 @@
+# Grafana behind the IAP: exact Host() on websecure, where ForwardAuth is entrypoint-level. The authorization of
+# grafana.apps.wysted.dev (app `grafana`, initiative `observability`) is in ../seed.sql.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: grafana
+  namespace: monitoring
+  labels: {app.kubernetes.io/name: grafana, app.kubernetes.io/part-of: portal-platform}
+spec:
+  entryPoints: [websecure]
+  routes:
+    - kind: Rule
+      match: Host(`grafana.apps.wysted.dev`)
+      services:
+        - {name: monitoring-grafana, port: 80}
+  tls: {}
