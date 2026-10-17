@@ -218,6 +218,8 @@ export interface App {
   name: string
   status: AppStatus
   created_at: string
+  /** True only for the portal's own app: the API refuses to disable it or to remove its last host (409). */
+  portal_app: boolean
   /** Ordered by host, never null. */
   deployments: Deployment[]
 }

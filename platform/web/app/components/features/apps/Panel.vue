@@ -8,8 +8,8 @@ import type { App, AppList, Deployment, PatchAppBody } from '~/types/api'
  * removes hosts.
  * - Creating an app is NOT idempotent: see `FeaturesAppsCreateDialog`. After an ambiguous failure the list is
  *   reloaded and a fixed "may have been created" alert stays until the next successful create.
- * - Disabling and removing a host ask for confirmation. The portal app cannot be told apart from the payload
- *   (no initiative key, no flag), so the Disable and Remove actions are always offered and the 409s carry fixed
+ * - Disabling and removing a host ask for confirmation. The table hides Disable and the last host's remove button
+ *   for the portal app (`portal_app`); the server stays the authority, so the 409s still carry fixed
  *   copy ("The portal app cannot be disabled." / "The portal app needs at least one host.").
  * Fixed copy only, never server detail.
  */

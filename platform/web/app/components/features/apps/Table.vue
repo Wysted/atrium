@@ -6,7 +6,8 @@ import type { TableColumn } from '~/types/ui'
  * Apps of an initiative: name (id underneath when named), status and hosts. Each host is an external link built
  * by `hostUrl()` (a value that fails the hostname check renders as plain text, never as a link). With `canEdit`
  * (platform admins) every host has a remove button and an actions column offers rename, disable/enable and add
- * host; the panel owns the dialogs and the requests. `busyId` marks the app whose request is running.
+ * host; the panel owns the dialogs and the requests. For the portal app (`portal_app`) "Disable" and the remove
+ * button of its last host are not offered (the API answers 409; the panel still handles it). `busyId` marks the app whose request is running.
  * Each host shows the stored result of its last probe (`FeaturesHealthProbeBadge`) and each app links to its health
  * page. The name cell is a focus target (`id="app-<id>"`, `tabindex="-1"`) so the panel can move focus to a new row.
  */
@@ -72,7 +73,7 @@ const columns = computed<TableColumn[]>(() => [
                 {{ formatRelative(d.last_probe_at) }}
               </BaseText>
               <BaseButton
-                v-if="canEdit"
+                v-if="canEdit && !(row.portal_app && row.deployments.length <= 1)"
                 size="sm"
                 variant="ghost"
                 :disabled="busyId === row.id"
@@ -115,6 +116,7 @@ const columns = computed<TableColumn[]>(() => [
           Rename
         </BaseButton>
         <BaseButton
+          v-if="!(row.portal_app && row.status === 'active')"
           size="sm"
           :variant="row.status === 'active' ? 'danger' : 'secondary'"
           :disabled="busyId === row.id"

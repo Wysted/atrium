@@ -10,6 +10,7 @@ defineProps<{
   selfId: string | null
   caption: string
   busyId?: string | null
+  emptyText?: string
 }>()
 
 const emit = defineEmits<{
@@ -34,7 +35,7 @@ const columns: TableColumn[] = [
     :rows="robots"
     :row-key="(row: Robot) => row.id"
     row-header="name"
-    empty-text="No robots yet."
+    :empty-text="emptyText ?? 'No robots yet.'"
   >
     <template #cell="{ row, column }">
       <BaseText v-if="column.key === 'name'" as="span" size="sm" weight="medium">

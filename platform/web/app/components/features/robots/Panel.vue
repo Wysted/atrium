@@ -1,17 +1,29 @@
 <script setup lang="ts">
 import type { PatchRobotBody, Robot, RobotList } from '~/types/api'
+import type { SelectOption } from '~/types/ui'
 import { ApiError } from '~/composables/useApi'
 
 /**
  * Robots screen (platform admins only; the page does not mount it for anyone else and the API enforces).
- * Keyset list, create / rename / change the owner (one form dialog) and disable / enable behind a confirmation.
+ * Keyset list filterable by status (`?status=`; changing it reloads from the first page), create / rename / change the owner (one form dialog) and disable / enable behind a confirmation.
  * Disabling a robot revokes all its tokens at once and enabling it does not bring them back: the dialog says so.
  * Fixed copy only.
  */
 const api = useApi()
 const access = useAdminAccess()
 const selfId = computed(() => access.me.value?.user.id ?? null)
-const list = usePagedList<RobotList, Robot>('/robots', page => page.robots)
+const STATUS_OPTIONS: SelectOption[] = [
+  { value: '', label: 'All' },
+  { value: 'active', label: 'Active' },
+  { value: 'disabled', label: 'Disabled' },
+]
+const statusFilter = ref('')
+// A cursor is only valid with the filter it came from: reload() restarts at the first page.
+const list = usePagedList<RobotList, Robot>(
+  () => (statusFilter.value ? `/robots?status=${statusFilter.value}` : '/robots'),
+  page => page.robots,
+)
+watch(statusFilter, () => void list.reload())
 
 const notice = ref('')
 const uncertain = ref('')
@@ -39,9 +51,10 @@ function onUncertain() {
 function onSaved(robot: Robot) {
   uncertain.value = ''
   notice.value = formRobot.value ? 'Robot saved.' : 'Robot created.'
-  void list.reload(true).then(() => {
-    // Keep the saved row current even when the quiet reload failed.
-    if (!list.items.value.some(r => r.id === robot.id)) list.items.value = [...list.items.value, robot]
+  void list.reload(true).then((ok) => {
+    // Keep the saved row current only when the quiet reload failed and the row belongs to the current filter.
+    const matches = !statusFilter.value || robot.status === statusFilter.value
+    if (!ok && matches && !list.items.value.some(r => r.id === robot.id)) list.items.value = [...list.items.value, robot]
   })
 }
 
@@ -71,7 +84,10 @@ async function confirmStatus() {
   statusError.value = ''
   try {
     const updated = await api.patch<Robot>(`/robots/${encodeURIComponent(robot.id)}`, body)
-    list.items.value = list.items.value.map(r => (r.id === updated.id ? updated : r))
+    // Under a status filter the row no longer matches after the change: it leaves the list.
+    list.items.value = statusFilter.value && updated.status !== statusFilter.value
+      ? list.items.value.filter(r => r.id !== updated.id)
+      : list.items.value.map(r => (r.id === updated.id ? updated : r))
     statusTarget.value = null
     notice.value = body.status === 'disabled' ? 'Robot disabled and its tokens revoked.' : 'Robot enabled.'
   }
@@ -110,6 +126,10 @@ async function confirmStatus() {
         {{ uncertain }}
       </BaseText>
 
+      <BaseField v-slot="field" label="Status">
+        <BaseSelect v-bind="field" v-model="statusFilter" :options="STATUS_OPTIONS" />
+      </BaseField>
+
       <BaseBox as="div" :aria-busy="list.loading.value">
         <BaseStack v-if="list.loading.value" :gap="3">
           <BaseText class="sr-only">
@@ -131,6 +151,7 @@ async function confirmStatus() {
             :robots="list.items.value"
             :self-id="selfId"
             :busy-id="busyId"
+            :empty-text="statusFilter ? `No ${statusFilter} robots.` : undefined"
             @edit="askEdit"
             @set-status="askStatus"
           />

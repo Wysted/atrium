@@ -28,25 +28,27 @@ export function usePagedList<TPage extends { next_cursor?: string }, TItem>(
 
   /**
    * (Re)loads the first page, replacing everything shown. `quiet` keeps the current rows on screen (no skeleton)
-   * and, if the request fails, keeps them too.
+   * and, if the request fails, keeps them too. Resolves to false when the request failed (a superseded one counts as ok).
    */
-  async function reload(quiet = false) {
+  async function reload(quiet = false): Promise<boolean> {
     const mine = ++generation
     if (!quiet) loading.value = true
     loadingMore.value = false
     error.value = null
     try {
       const page = await fetchPage(null)
-      if (mine !== generation) return
+      if (mine !== generation) return true
       items.value = select(page)
       nextCursor.value = page.next_cursor ?? null
+      return true
     }
     catch (e) {
-      if (mine !== generation) return
-      if (quiet) return
+      if (mine !== generation) return true
+      if (quiet) return false
       items.value = []
       nextCursor.value = null
       error.value = e as ApiError
+      return false
     }
     finally {
       if (mine === generation) loading.value = false
