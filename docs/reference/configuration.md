@@ -16,7 +16,7 @@ Conventions, valid for every table:
 
 ## platform-api
 
-Subcommands: `platform-api migrate` (applies migrations; reads only the `PG*` variables, as the owner role) and `platform-api serve` (everything below). Behavior: [forwardauth.md](forwardauth.md), [login.md](login.md), [keys.md](keys.md).
+Subcommands: `platform-api migrate` (applies migrations as the owner role, then the optional bootstrap; reads the `PG*` variables and the two variables marked "migrate only" below and `PLATFORM_PORTAL_APP_ID`) and `platform-api serve` (everything below). Behavior: [forwardauth.md](forwardauth.md), [login.md](login.md), [keys.md](keys.md).
 
 | Variable | Required | Default | Format and validation | Effect |
 |---|---|---|---|---|
@@ -31,7 +31,9 @@ Subcommands: `platform-api migrate` (applies migrations; reads only the `PG*` va
 | `PLATFORM_KEK_FILE` | yes | none | path of the KEK file (see below) | Key-encryption key that seals the signing keys |
 | `PLATFORM_IDLE_TIMEOUT` | no | `45m` | duration within `30m` to `60m` | Central session idle timeout |
 | `PLATFORM_FAKE_LOGIN` | no | `false` | bool | Development login that accepts any email. Needs no Google variables; ignored with a WARN when Google is configured (the two never coexist). Manifest: only `overlays/local` sets `true` |
-| `PLATFORM_PORTAL_APP_ID` | no | unset (no portal app) | `app_` plus 26 characters of Crockford base32 (`^app_[0-9A-HJKMNP-TV-Z]{26}$`) | Id of the portal app, the one app any active user may open ([api.md](api.md)). Must be an app of the `platform` initiative or the exception stays inactive (WARN at start-up) |
+| `PLATFORM_PORTAL_APP_ID` | no | unset (no portal app) | `app_` plus 26 characters of Crockford base32 (`^app_[0-9A-HJKMNP-TV-Z]{26}$`) | Id of the portal app, the one app any active user may open ([api.md](api.md)). Must be an app of the `platform` initiative or the exception stays inactive (WARN at start-up). `migrate` also reads it (with `PLATFORM_PORTAL_HOST`) to create the app |
+| `PLATFORM_PORTAL_HOST` | no (`migrate` only) | unset | valid lowercase host name (no scheme, port or path); set together with `PLATFORM_PORTAL_APP_ID` or not at all | Read by `migrate`, not `serve`. Host of the portal: `migrate` creates, if missing, the `platform` initiative, the portal app and a deployment of this host ([install.md](../install.md#9-register-the-portal-and-create-the-first-platform-admin)). Never modifies existing rows; a host already mapped to another app, or an app id living in another initiative, fails the Job |
+| `PLATFORM_BOOTSTRAP_ADMIN_EMAIL` | no (`migrate` only) | unset | email address, lowercased | Read by `migrate`, not `serve`. Grants platform admin to the one human, non-fake user with that email, only when `platform_admins` is empty (a WARN and success if the user has not signed in yet; an error if several match) |
 | `PLATFORM_GOOGLE_CLIENT_ID` | with Google | unset | non-empty, no whitespace | OAuth client id (not secret) |
 | `PLATFORM_GOOGLE_CLIENT_SECRET_FILE` | with Google | unset | path of a secret file, non-empty, at most 4 KiB | OAuth client secret |
 | `PLATFORM_ALLOWED_HD` | with Google | unset | comma-separated domains, each with a dot, host characters only, no empty entries; lowercased, duplicates collapse | Allowlist of Google `hd` values |

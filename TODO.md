@@ -35,16 +35,14 @@ Pending work and open questions for atrium. Detailed context lives in
 
 Found while writing `docs/install.md`. Adopters work around each one by hand today.
 
-- [ ] **No migration creates the `platform` initiative, the portal app and its deployment.** Without the deployment
-  row the portal host does not resolve, so the API cannot create it (chicken and egg). Only `overlays/local/seed.sql`
-  (development data) does it; adopters INSERT by hand.
 - [ ] **NetworkPolicy selectors are fixed** to `kube-system`/`k8s-app=kube-dns`, `traefik`/`app.kubernetes.io/name=traefik`,
   the Traefik pod port 8443, `platform-db` and `monitoring`/`prometheus`.
 - [ ] **Egress to Google exists only in `overlays/local-google`**, and its `except` list is k3d-specific.
 - [ ] **Hardcoded in `base/`:** `PGHOST`, `PGSSLMODE=disable`, `PORTAL_PROBE_ADDR`, `PORTAL_JWKS_URL`, and
   `storageClassName: local-path` with 2Gi.
-- [ ] **Migrate-before-platform-api ordering is not enforced in `base/`** (README "Ordering"): needs a PreSync hook or
-  `dependsOn` in the adopter's GitOps.
+- [ ] **Migrate-before-platform-api ordering is not enforced in `base/`** (README "Ordering"). Pods now stay not ready
+  with reason `migrations pending` until the Job runs (fail closed); a PreSync hook or `dependsOn` in the adopter's
+  GitOps is still needed for zero-downtime ordering.
 
 ## Next features
 

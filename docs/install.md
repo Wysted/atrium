@@ -173,13 +173,22 @@ patches:
 
 `postgres/kustomization.yaml` (Option A only): `resources: [../../../platform-gitops/base/postgres]`, plus a patch for `storageClassName` and size of the StatefulSet `volumeClaimTemplates` and an `images:` entry for `postgres`.
 
-`migrate/kustomization.yaml` (same `images:` for `platform-api` as below, no other patches):
+`migrate/kustomization.yaml` (same `images:` for `platform-api` as below, plus the bootstrap variables of [section 9](#9-register-the-portal-and-create-the-first-platform-admin)):
 
 ```yaml
 resources: [../../../platform-gitops/base/migrate]
 images:
   - {name: portal-platform-api, newName: <registry>/atrium/platform-api, newTag: v1}
   - {name: postgres, newName: <registry>/mirror/postgres}   # keeps the pinned tag and digest
+patches:
+  - target: {kind: Job, name: migrate}
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: {name: PLATFORM_PORTAL_APP_ID, value: <portal-app-id>}   # same id as in the platform and portal overlays
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: {name: PLATFORM_PORTAL_HOST, value: portal.apps.example.com}
 ```
 
 `platform/kustomization.yaml` (platform-api, Middlewares, auth-host route):
@@ -259,7 +268,7 @@ kubectl apply -k deploy/prod/namespaces
 kubectl -n platform delete job migrate --ignore-not-found
 kubectl apply -k deploy/prod/migrate
 kubectl -n platform wait --for=condition=complete job/migrate --timeout=180s
-# register the portal app (section 9), then:
+# the Job also registered the portal app (section 9), then:
 kubectl apply --dry-run=server -k deploy/prod/platform && kubectl apply -k deploy/prod/platform
 kubectl -n platform rollout status deploy/platform-api
 kubectl apply -k deploy/prod/portal
@@ -271,33 +280,24 @@ Check: `kubectl -n platform get middleware.traefik.io strip-assertion forwardaut
 
 ## 9. Register the portal and create the first platform admin
 
-**Portal app.** No migration creates the reserved initiative `platform` or the portal app; the local overlay inserts them from `seed.sql` (development data, do not use it). Run once as `platform_owner`. An app id must match `app_` + 26 characters of `[0-9A-HJKMNP-TV-Z]` (a ULID). This generates one: the `00` prefix keeps the leading timestamp characters inside the valid ULID range, and the rest is random hex, which is a subset of the allowed alphabet:
+`platform-api migrate` can do both after applying the migrations, in one transaction and idempotently. It creates only what is missing, never modifies an existing row, and fails with a clear message when a row conflicts (the app id exists in another initiative, or the host already maps to another app). Every row it creates gets an `audit_events` row with `after.actor = "bootstrap"`. Variables ([reference](reference/configuration.md#platform-api)):
+
+| Variable | Effect |
+|---|---|
+| `PLATFORM_PORTAL_APP_ID` + `PLATFORM_PORTAL_HOST` (both or neither) | Ensures the reserved initiative `platform`, the portal app with that id, and a deployment mapping the host to it |
+| `PLATFORM_BOOTSTRAP_ADMIN_EMAIL` | Grants platform admin to the human user with that email, only while `platform_admins` is empty |
+
+**Portal app.** An app id must match `app_` + 26 characters of `[0-9A-HJKMNP-TV-Z]` (a ULID). This generates one: the `00` prefix keeps the leading timestamp characters inside the valid ULID range, and the rest is random hex, which is a subset of the allowed alphabet:
 
 ```bash
 echo "app_00$(openssl rand -hex 12 | tr a-f A-F)"     # use it as <portal-app-id> in section 7
 ```
 
-```sql
--- psql -U platform_owner -d platform -v app_id=<portal-app-id> -v host=portal.apps.example.com
-BEGIN;
-INSERT INTO initiatives (key, name) VALUES ('platform', 'Platform') ON CONFLICT (key) DO NOTHING;
-INSERT INTO apps (id, initiative_id, name)
-SELECT :'app_id', id, 'portal' FROM initiatives WHERE key = 'platform' ON CONFLICT (id) DO NOTHING;
-INSERT INTO deployments (host, app_id) VALUES (:'host', :'app_id') ON CONFLICT (host) DO NOTHING;
-COMMIT;
-```
+`PLATFORM_PORTAL_HOST` must differ from the auth host (migrate cannot check it; the portal API rejects it). Set the two variables in the migrate overlay (section 7) before the first run. Without the deployment the portal host does not resolve in ForwardAuth, so nobody could create it through the API.
 
-**First admin.** There is no production tool: the portal has no endpoint to manage `platform_admins` by design ([API](reference/api.md)), and `overlays/local-google/admin.sh` is development tooling that runs `psql` through `kubectl exec postgres-0`. The equivalent is a manual SQL step as `platform_owner`. `users.email` is not unique, so run the `SELECT` first and continue only if it returns exactly one row. The user must have signed in once (users are created on first login with no grants; the portal itself is open to any allowed active user):
+**First admin.** The user must exist, and users are created by their first login. So: deploy as in section 8, sign in once at the portal (you get no grants, but the portal opens for any allowed active user), then add `PLATFORM_BOOTSTRAP_ADMIN_EMAIL` to the migrate overlay and run the Job again (`kubectl -n platform delete job migrate`, then apply it). If the user has not signed in yet the Job logs a WARN (`has not signed in yet`) and still succeeds. When `platform_admins` already has a row the step is skipped, so a deliberate revocation is never undone; if several users share the email the Job fails rather than guess. Fake-login and robot users never match. Remove the variable afterwards if you like; it is harmless.
 
-```sql
--- psql -U platform_owner -d platform -v email=you@example.com
--- first check: SELECT id, email FROM users WHERE lower(email) = lower(:'email') AND kind = 'human';  -- must be exactly one row
-INSERT INTO platform_admins (user_id)
-SELECT id FROM users WHERE lower(email) = lower(:'email') AND kind = 'human' AND google_sub NOT LIKE 'fake:%'
-ON CONFLICT DO NOTHING;
-```
-
-`admin.sh` also writes one `audit_events` row (`platform_admin.grant`, `actor_id` NULL) in the same transaction; add it if you want the trail. Revoke with `DELETE FROM platform_admins WHERE user_id = ...`. The admin then creates initiatives, apps, groups and API tokens in the portal; `portalctl` grants access with `PORTAL_URL` and `PORTAL_API_TOKEN` ([operate.md](operate.md#portalctl)). To put your own apps behind atrium: [onboard-an-app.md](onboard-an-app.md). Day-two tasks: [operate.md](operate.md).
+Revoke with `DELETE FROM platform_admins WHERE user_id = ...` as `platform_owner`. The admin then creates initiatives, apps, groups and API tokens in the portal; `portalctl` grants access with `PORTAL_URL` and `PORTAL_API_TOKEN` ([operate.md](operate.md#portalctl)). To put your own apps behind atrium: [onboard-an-app.md](onboard-an-app.md). Day-two tasks: [operate.md](operate.md).
 
 ## 10. Optional
 
@@ -307,4 +307,4 @@ ON CONFLICT DO NOTHING;
 
 ## 11. Known limitations before production
 
-Open items are tracked in [TODO.md](../TODO.md): "Before production" (Google `hd` for alias domains, suspended users, KEK in a Secret, real client IP, egress filtering, `NOTIFY` serialization) and "Adopter bootstrap gaps in `base/`" (the manual steps and hardcoded values above). Also note that `base/postgres` is a single instance without backups: plan database HA and backups yourself. Without the Google variables of section 7, platform-api refuses to start (the fake login is off by default), so a forgotten patch fails loudly instead of opening the login.
+Open items are tracked in [TODO.md](../TODO.md): "Before production" (Google `hd` for alias domains, suspended users, KEK in a Secret, real client IP, egress filtering, `NOTIFY` serialization) and "Adopter bootstrap gaps in `base/`" (hardcoded values above). Also note that `base/postgres` is a single instance without backups: plan database HA and backups yourself. Without the Google variables of section 7, platform-api refuses to start (the fake login is off by default), so a forgotten patch fails loudly instead of opening the login.
