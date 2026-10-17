@@ -812,7 +812,7 @@ the `platform_portal` role may select; no extra index is kept: `unknown_host` ro
 ### Non-browser clients
 
 Design for CLI and automation that call the portal API (phase 1 decided 2026-10-16; research notes: Engram
-`architecture/portal-non-browser-clients`). Nothing here is implemented yet. The product is multi-company: the design
+`architecture/portal-non-browser-clients`). Part 1a (schema, privileges, `kind` filters, token revocation on disable, purge) is implemented; the rest is design only. The product is multi-company: the design
 assumes no CI system, secret manager or stack on the adopter's side.
 
 | Phase | Mechanism | Status |
@@ -845,7 +845,7 @@ identity would bypass the platform's revocation and audit).
    The grant subject gains `robot_id` (exactly one of `email`, `group_id`, `robot_id`); an email resolves to exactly one
    active **human** (`FindActiveByEmail` filters `kind = 'human'`), and `robot_id` must name an active robot (422
    otherwise). Robots have no email, so they cannot be found by `GET /users?email=`.
-5. Robots are never platform admins. The permission query counts only humans, and the schema enforces it with the same
+5. Robots are never platform admins. The schema guarantees it, so the permission query needs no filter, with the same
    pattern as the composite FK of grants: `users` gets `UNIQUE (id, kind)`, and `platform_admins` and `group_members`
    get a column `kind text NOT NULL DEFAULT 'human' CHECK (kind = 'human')` with a composite FK `(user_id, kind)`
    to `users (id, kind)` (cascade kept). Neither table can reference a robot. The composite FK replaces the single-column
@@ -855,7 +855,9 @@ identity would bypass the platform's revocation and audit).
    sessions could forge one for a human just as well, so the pin would add a column and no protection.
 6. A robot may hold a role with `manages_access` (this is what lets automation replace `grant.sh`), but it is never an
    *effective* manager (last-effective-manager rule above): an initiative always keeps a human manager. The human-only
-   filter goes once into `effectiveGrantExpr` (portal repository: `u.kind = 'human'` in both `EXISTS`), which feeds the
+   filter goes once into `effectiveGrantExpr` (portal repository), only in the direct-grant branch
+   (`initiative_access.user_id` can hold a robot; the group branch needs none, because the composite foreign key of
+   `group_members` already guarantees human members), which feeds the
    last-manager rule and the integration health counts alike.
 
 #### Tokens
@@ -895,7 +897,10 @@ Rules:
    carries more than its owner can do at issuance, and what it can do later shrinks with the owner (grant revoked,
    user or robot disabled).
 5. Disabling a user or a robot revokes all their tokens (`revoked_at`) in the same transaction, like their sessions;
-   re-enabling does not bring them back. ForwardAuth also checks `status` on every request.
+   re-enabling does not bring them back. ForwardAuth also checks `status` on every request. The revocation lives in the
+   API path (`SetUserStatus` returns early when the status already matches): a user disabled by manual SQL, with no
+   revocation, and then re-enabled through the API gets their still-valid tokens back. The supported way to disable is
+   the API; after a manual disable, revoke the tokens by hand.
 6. Housekeeping (the existing job in platform-api) deletes tokens 30 days after `expires_at` or `revoked_at`, so owners
    still see recently dead tokens. It calls `purge_dead_api_tokens(grace interval)`, a SECURITY DEFINER function with a
    pinned `search_path` that only deletes rows past the grace period and refuses a grace under 7 days (same pattern
