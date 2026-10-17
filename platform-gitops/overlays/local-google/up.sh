@@ -28,6 +28,13 @@ done
 if [[ "${BUILD:-0}" == 1 ]]; then
   echo "==> building $IMAGE"
   docker build -f platform/api/Dockerfile -t "$IMAGE" platform
+# Warn (never fail) when the host image predates the build inputs: the tag never changes, so a stale image is silent.
+# Context = all of platform/ except docs and *.md (platform/.dockerignore); uncommitted changes count as newer.
+elif ! created="$(docker image inspect -f '{{.Created}}' "$IMAGE" 2>/dev/null)"; then
+  echo "WARN: $IMAGE not found on the host; run with BUILD=1" >&2
+elif [[ -n "$(git status --porcelain -- platform ':!platform/docs' ':!*.md')" ]] ||
+  (( $(date -d "$created" +%s) < $(git log -1 --format=%ct -- platform ':!platform/docs' ':!*.md' | grep . || echo 0) )); then
+  echo "WARN: $IMAGE is older than the platform/ sources (or they have uncommitted changes); run with BUILD=1 if it should include them" >&2
 fi
 echo "==> importing $IMAGE"
 ./tk k3d image import "$IMAGE" -c portal
