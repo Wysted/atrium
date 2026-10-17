@@ -38,11 +38,10 @@ Pending work and open questions for the portal platform. Detailed context lives 
   organization), pushed over SSH. Before the push: Apache-2.0 `LICENSE`, `SECURITY.md`, root `README.md`, history scanned
   with gitleaks, personal identifiers removed from the tree and the history. Private vulnerability reporting must be
   enabled in the repository settings (`SECURITY.md` points to it).
-- [ ] **Public identity.** The name is now `atrium` (github.com/Wysted/atrium); cheaper before the first adopter:
-  Go module paths (`platform/api`, `platform/sdk/go`, ... are not go-gettable; the SDK must be importable as
-  `github.com/Wysted/atrium/platform/sdk/go`), the namespace label key `atrium.wysted.dev/app-namespace`, and the local
-  domain `*.apps.wysted.dev` (its wildcard certificate needs the maintainer's Cloudflare token, so a contributor cannot
-  reproduce the local TLS setup).
+- [ ] **Local TLS for contributors.** Go modules (`github.com/Wysted/atrium/...`, go-gettable) and the namespace label
+  prefix (`atrium.wysted.dev/`) were renamed 2026-10-17. Left: the local domain `*.apps.wysted.dev` gets its wildcard
+  certificate through the maintainer's Cloudflare token, so a contributor cannot reproduce the local TLS setup. Option:
+  a self-signed local CA when no token is present.
 
 ## Next features
 
