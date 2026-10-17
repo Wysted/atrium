@@ -11,3 +11,6 @@
 /platform/examples/hello/hello
 /spikes/*/authz
 /spikes/*/app
+
+# Claude Code sub-agents of the maintainer (personal workflow, not part of the product)
+/.claude/
