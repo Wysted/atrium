@@ -13,6 +13,8 @@ patches:
             containers:
               - name: platform-api
                 env:
+                  # Development only: the fake login accepts any email.
+                  - {name: PLATFORM_FAKE_LOGIN, value: "true"}
                   - {name: PLATFORM_AUTH_HOST, value: auth.apps.wysted.dev}
                   - {name: PLATFORM_ISSUER, value: "https://auth.apps.wysted.dev"}
                   # The portal app (seed.sql, reserved initiative `platform`): any active user may open it.

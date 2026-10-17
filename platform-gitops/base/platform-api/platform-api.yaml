@@ -64,8 +64,6 @@ spec:
             # /metrics only; the default-deny NetworkPolicy keeps it closed except for the Prometheus pods (allow-ingress-metrics).
             - {name: PLATFORM_METRICS_ADDR, value: ":9090"}
             - {name: PLATFORM_KEK_FILE, value: /etc/platform/kek/kek}
-            # Development only: Google login arrives in a later part.
-            - {name: PLATFORM_FAKE_LOGIN, value: "true"}
             # Connection through libpq-style env; the password comes from PGPASSFILE. No privileged-login escape hatch.
             - {name: PGHOST, value: postgres.platform-db.svc.cluster.local}
             - {name: PGPORT, value: "5432"}
