@@ -30,7 +30,7 @@ docker push <registry>/atrium/portal:v1
 
 The platform-api image also runs the `migrate` subcommand. `base/` uses placeholder names (`portal-platform-api:dev`, `portal-portal:dev`) that your overlay rewrites with an `images:` transformer. `base/` also pulls `postgres:18.6-trixie@sha256:...` for the `wait-for-db` initContainers (only `pg_isready` is used); mirror it if your cluster cannot reach Docker Hub.
 
-To administer grants from a terminal, build the CLI: `cd platform/api && go build -o portalctl ./cmd/portalctl` (see [API](reference/api.md)).
+To administer grants from a terminal, build the CLI: `cd platform/api && go build -o portalctl ./cmd/portalctl` ([usage](operate.md#portalctl)).
 
 ## 3. Credentials
 
@@ -113,7 +113,7 @@ SQL
 - `PGSSLMODE` is `disable` in all of them. For `verify-full` also set `PGSSLROOTCERT` and mount the CA (ConfigMap) in each pod.
 - NetworkPolicy `allow-egress-dns-db` in `platform` and in `portal` allows egress only to pods `postgres` in namespace `platform-db`: replace that rule with your server's address (`ipBlock`) on port 5432. Drop `base/postgres` and the `platform-db` namespace if unused.
 
-**Migrations.** `base/migrate` is a Job that runs `platform-api migrate` as `platform_owner`. It must complete before `platform-api` and `portal` roll out on every release; `base/` has no ordering mechanism. Use an Argo CD `PreSync` hook or a Flux `dependsOn` with `wait: true`, or apply it by hand (section 8). A Job is immutable: delete the previous run before re-applying ([platform-gitops/README.md](../platform-gitops/README.md#ordering-migrate-before-platform-api-adopters)).
+**Migrations.** `base/migrate` is a Job that runs `platform-api migrate` as `platform_owner`. It must complete before `platform-api` and `portal` roll out on every release; `base/` has no ordering mechanism: apply it by hand on first install (section 8); for releases and GitOps ordering see [operate.md](operate.md#upgrade).
 
 ## 5. Google OAuth client
 
@@ -273,7 +273,7 @@ kubectl -n portal rollout status deploy/portal
 # only now enable the entrypoint chain: upgrade Traefik with the values of section 6
 ```
 
-Check: `kubectl -n platform get middleware.traefik.io strip-assertion forwardauth` lists both before the Traefik upgrade, and `kubectl -n platform logs deploy/platform-api` shows no `PLATFORM_PORTAL_APP_ID` WARN. A non-ready platform-api usually means a role privilege mismatch (migrate did not finish) or `KEKMismatch`. Then open `https://portal.apps.example.com`: you are redirected to Google, and after sign-in the portal loads. The repo's `overlays/local/smoke.sh` end-to-end suite targets the fake login of the local cluster and is not meant for your install.
+Check: `kubectl -n platform get middleware.traefik.io strip-assertion forwardauth` lists both before the Traefik upgrade, and `kubectl -n platform logs deploy/platform-api` shows no `PLATFORM_PORTAL_APP_ID` WARN. A non-ready platform-api usually means a role privilege mismatch (migrate did not finish) or a wrong KEK (readiness reason `kek mismatch`). Then open `https://portal.apps.example.com`: you are redirected to Google, and after sign-in the portal loads. The repo's `overlays/local/smoke.sh` end-to-end suite targets the fake login of the local cluster and is not meant for your install.
 
 ## 9. Register the portal and create the first platform admin
 
@@ -303,13 +303,13 @@ SELECT id FROM users WHERE lower(email) = lower(:'email') AND kind = 'human' AND
 ON CONFLICT DO NOTHING;
 ```
 
-`admin.sh` also writes one `audit_events` row (`platform_admin.grant`, `actor_id` NULL) in the same transaction; add it if you want the trail. Revoke with `DELETE FROM platform_admins WHERE user_id = ...`. The admin then creates initiatives, apps, groups and API tokens in the portal; `portalctl` grants access with `PORTAL_URL` and `PORTAL_API_TOKEN` ([API](reference/api.md)). Registering an app host for your own apps: [forwardauth.md](reference/forwardauth.md).
+`admin.sh` also writes one `audit_events` row (`platform_admin.grant`, `actor_id` NULL) in the same transaction; add it if you want the trail. Revoke with `DELETE FROM platform_admins WHERE user_id = ...`. The admin then creates initiatives, apps, groups and API tokens in the portal; `portalctl` grants access with `PORTAL_URL` and `PORTAL_API_TOKEN` ([operate.md](operate.md#portalctl)). To put your own apps behind atrium: [onboard-an-app.md](onboard-an-app.md). Day-two tasks: [operate.md](operate.md).
 
 ## 10. Optional
 
-- **Monitoring.** `platform-gitops/monitoring/` has alert rules (plain and `PrometheusRule`), `PodMonitor`s and a Grafana dashboard. Nothing there is specific to k3d; assumptions (job names, `pod` label, namespace selectors) are in the [README](../platform-gitops/README.md#monitoring), metrics in [metrics.md](reference/metrics.md). `base/monitoring` provides NetworkPolicies for a `monitoring` namespace you create.
-- **Internal TLS for the JWKS.** `base/` serves the JWKS over plain HTTP inside the cluster. Any PKI works; see [Internal TLS for the JWKS](../platform-gitops/README.md#internal-tls-for-the-jwks-optional-pki-neutral) for the env vars and the cert-manager option. Recommended for production, **Not verified outside the local cluster** with your PKI.
-- **Grafana behind ForwardAuth:** [adopter notes](../platform-gitops/README.md#grafana-behind-forwardauth-local-overlay).
+- **Monitoring.** `platform-gitops/monitoring/` has alert rules (plain and `PrometheusRule`), `PodMonitor`s and a Grafana dashboard. Nothing there is specific to k3d; assumptions (job names, `pod` label, namespace selectors) are in [operate.md](operate.md#monitoring), metrics in [metrics.md](reference/metrics.md). `base/monitoring` provides NetworkPolicies for a `monitoring` namespace you create.
+- **Internal TLS for the JWKS.** `base/` serves the JWKS over plain HTTP inside the cluster. Any PKI works; see [Internal TLS for the JWKS](operate.md#internal-tls-for-the-jwks) for the env vars and the cert-manager option. Recommended for production, **Not verified outside the local cluster** with your PKI.
+- **Grafana behind ForwardAuth:** [operate.md](operate.md#grafana-behind-forwardauth).
 
 ## 11. Known limitations before production
 

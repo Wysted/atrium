@@ -21,7 +21,7 @@ manage initiatives (groups of apps), roles, grants, API tokens and areas.
 | `platform/sdk/go` | SDK that apps use to verify the assertion |
 | `platform/examples/hello` | minimal app behind the platform, the starting point for a new app |
 | `docs` | architecture, reference pages and decision records |
-| `platform-gitops` | Kustomize manifests (`base/` for adopters, `overlays/local*` for the local cluster) and runbooks |
+| `platform-gitops` | Kustomize manifests (`base/` for adopters, `overlays/local*` for the local cluster) |
 | `local` | k3d cluster, Traefik and cert-manager setup for local development |
 | `spikes` | the ForwardAuth spike that validated the design (historical) |
 
@@ -31,9 +31,12 @@ manage initiatives (groups of apps), roles, grants, API tokens and areas.
 |---|---|
 | `docs/README.md` | index of the documentation by audience |
 | `docs/install.md` | install atrium on your cluster |
+| `docs/onboard-an-app.md` | put an internal app behind atrium end to end |
+| `docs/operate.md` | portalctl, upgrades, backup, monitoring, hardening and troubleshooting |
 | `docs/architecture.md` | components, request flow, trust model and glossary |
 | `docs/reference/` | assertion, ForwardAuth, keys, login, configuration, data model, portal API and metrics |
-| `platform-gitops/README.md` | Kubernetes manifests, overlays, the smoke test and runbooks |
+| `docs/runbooks/` | operational runbooks (Google client secret rotation) |
+| `platform-gitops/README.md` | Kubernetes manifests, the local cluster, its scripts and the smoke test |
 | `platform/examples/hello/README.md` | the minimal app behind the platform |
 | `platform/web/COMPONENTS.md` | the portal web UI components |
 | `CONTRIBUTING.md` | local development, checks and conventions |

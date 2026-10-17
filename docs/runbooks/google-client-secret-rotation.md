@@ -1,14 +1,18 @@
 # Runbook: rotate the Google OAuth client secret
 
 Scope: the `client_secret` that platform-api uses to exchange the authorization code at Google's token endpoint
-(`PLATFORM_GOOGLE_CLIENT_SECRET_FILE`). The client id does not change. Commands assume the local k3d cluster
-(`./tk`, overlay `overlays/local-google`); in another cluster, replace the Secret creation step with your secret manager
-and keep the rest.
+(`PLATFORM_GOOGLE_CLIENT_SECRET_FILE`). The client id does not change. Commands use `kubectl` and the Secret and
+Deployment names of [install.md](../install.md); if your secret comes from a secret manager, replace the Secret update in
+step 3 with it and keep the rest.
+
+> **Local cluster** (maintainer's k3d): every `kubectl` below runs as `./tk kubectl`, the secret file is
+> `.tools/secrets/google-client-secret`, and `overlays/local-google/up.sh` (with `BUILD=1`) loads it into the Secret.
+> Without `BUILD=1` that script updates the Secret but does not restart, so run the rollout restart of step 3 yourself.
 
 ## How platform-api loads the secret
 
 - Mounted from Secret `platform/platform-google-client-secret`, key `secret`, at `/etc/platform/google/secret`
-  (`fsGroup` + `defaultMode: 0440`, same policy as the KEK).
+  (`fsGroup` + `defaultMode: 0440`, same policy as the KEK; [configuration](../reference/configuration.md#secrets-and-files-platform-api)).
 - Read ONCE at start-up (`loadGoogleConfig`, trimmed of whitespace). The kubelet refreshes the mounted file after a
   Secret update, but the process never re-reads it. **A `rollout restart` is mandatory.**
 - Start-up only checks that the file is non-empty. It does not call Google, so a wrong secret still gives Ready pods and
@@ -25,7 +29,7 @@ and keep the rest.
 ## Prerequisites
 
 - A Google Cloud account with permission to edit the OAuth client (Google Auth Platform > Clients).
-- Operator with `./tk` and the repo checkout; Grafana access (admin) to read metrics.
+- `kubectl` access to the cluster, and access to Prometheus or Grafana to read metrics.
 - The new value is shown ONLY at creation (afterwards only the last 4 characters are visible), so download or copy it
   immediately. Never paste it into a command line, ticket or chat.
 
@@ -48,26 +52,24 @@ If the client already has 2 secrets, disable and delete the older one first (aft
 
 1. **Add the new secret.** Console: Google Auth Platform > Clients > the client > "Client secrets" > Add Secret. Download or
    copy it now.
-2. **Store it locally** (file only, no shell history):
+2. **Store it locally** (file only, no shell history). `google-client-secret` is the file you created the Secret from:
 
    ```bash
-   cp -p .tools/secrets/google-client-secret .tools/secrets/google-client-secret.old   # rollback copy
-   ${EDITOR:-vi} .tools/secrets/google-client-secret                                    # replace the content with the new value
-   chmod 600 .tools/secrets/google-client-secret
+   cp -p google-client-secret google-client-secret.old   # rollback copy
+   ${EDITOR:-vi} google-client-secret                    # replace the content with the new value
+   chmod 600 google-client-secret
    ```
 
-3. **Update the Secret and restart** (same command as `overlays/local-google/up.sh`):
+3. **Update the Secret and restart**:
 
    ```bash
-   ./tk sh -c "kubectl -n platform create secret generic platform-google-client-secret \
-     --from-file=secret=.tools/secrets/google-client-secret --dry-run=client -o yaml | kubectl apply -f - >/dev/null"
-   ./tk kubectl -n platform rollout restart deploy/platform-api
-   ./tk kubectl -n platform rollout status deploy/platform-api --timeout=240s
+   kubectl -n platform create secret generic platform-google-client-secret \
+     --from-file=secret=google-client-secret --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+   kubectl -n platform rollout restart deploy/platform-api
+   kubectl -n platform rollout status deploy/platform-api --timeout=240s
    ```
-
-   Do not rely on `local-google/up.sh` alone: without `BUILD=1` it updates the Secret but does not restart.
 4. **Verify a real login end to end.** In a private browser window open a protected app (for example
-   `https://hello-a.apps.wysted.dev`), sign in with a Workspace account of the allowed domain and confirm you land on the
+   `https://app.apps.example.com`), sign in with a Workspace account of the allowed domain and confirm you land on the
    app. Repeat once more (the two replicas may differ only if the rollout is incomplete; it is not at this point).
 5. **Check metrics and logs** (see [Detecting failures](#detecting-failures)): `platform_logins_total{outcome="success"}`
    increased and there is no `failed`.
@@ -78,7 +80,7 @@ If the client already has 2 secrets, disable and delete the older one first (aft
 8. **Delete the old secret** (trash icon on the disabled secret) once the window is clean. Then remove the local copy:
 
    ```bash
-   shred -u .tools/secrets/google-client-secret.old 2>/dev/null || rm -f .tools/secrets/google-client-secret.old
+   shred -u google-client-secret.old 2>/dev/null || rm -f google-client-secret.old
    ```
 
 ## Detecting failures
@@ -89,7 +91,7 @@ generic 400 page and counts it as `outcome="failed"`. A 5xx or 429 from Google c
 Logs (JSON, level WARN):
 
 ```bash
-./tk kubectl -n platform logs -l app.kubernetes.io/name=platform-api --since=30m --tail=-1 | rg 'google login failed'
+kubectl -n platform logs -l app.kubernetes.io/name=platform-api --since=30m --tail=-1 | rg 'google login failed'
 # {"level":"WARN","msg":"google login failed: rejected","error":"authorization code exchange failed: token endpoint answered 401 invalid_client"}
 ```
 
@@ -103,7 +105,7 @@ Metrics (Grafana Explore, Prometheus datasource; the metrics port is only open t
 sum by (outcome) (increase(platform_logins_total[15m]))
 ```
 
-Alerts (`monitoring/rules/portal-platform.rules.yaml`, group `portal-platform.login`, severity warning):
+Alerts (`platform-gitops/monitoring/rules/portal-platform.rules.yaml`, group `portal-platform.login`, severity warning):
 
 - `LoginsFailing`: at least 5 `outcome="failed"` in 15 minutes and no `success` in the same window, for 5 minutes. This is
   what a wrong, disabled or deleted client secret looks like: sessions that already exist keep working (so `ForwardAuthDown`
@@ -124,11 +126,11 @@ Use it when step 4 or 5 fails, or during the observation window after disabling 
 2. Restore the previous value and restart:
 
    ```bash
-   mv .tools/secrets/google-client-secret.old .tools/secrets/google-client-secret
-   ./tk sh -c "kubectl -n platform create secret generic platform-google-client-secret \
-     --from-file=secret=.tools/secrets/google-client-secret --dry-run=client -o yaml | kubectl apply -f - >/dev/null"
-   ./tk kubectl -n platform rollout restart deploy/platform-api
-   ./tk kubectl -n platform rollout status deploy/platform-api --timeout=240s
+   mv google-client-secret.old google-client-secret
+   kubectl -n platform create secret generic platform-google-client-secret \
+     --from-file=secret=google-client-secret --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+   kubectl -n platform rollout restart deploy/platform-api
+   kubectl -n platform rollout status deploy/platform-api --timeout=240s
    ```
 
 3. Verify a real login. Investigate the new secret (copy error, trailing characters, wrong client) before retrying.
@@ -153,11 +155,11 @@ until the new secret is deployed.
 
 ## Post-checks
 
-- `./tk kubectl -n platform get pods -l app.kubernetes.io/name=platform-api` shows 2/2 Ready with fresh ages.
+- `kubectl -n platform get pods -l app.kubernetes.io/name=platform-api` shows 2/2 Ready with fresh ages.
 - Exactly the intended secret is enabled in the console (the "Client secrets" list shows one enabled entry, last 4
   characters match the new one).
 - A real login works; `outcome="success"` rises, `failed` stays flat.
-- No copy of the old or new secret remains outside `.tools/secrets/google-client-secret` (downloads folder, clipboard
+- No copy of the old or new secret remains outside `google-client-secret` (downloads folder, clipboard
   history, shell history).
 - Record the rotation date (next rotation due in 12 months).
 

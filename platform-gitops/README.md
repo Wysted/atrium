@@ -1,6 +1,6 @@
 # platform-gitops
 
-Kustomize manifests of the platform for the local k3d cluster `portal`. Everything runs through `./tk`.
+Kustomize manifests of the platform and the local k3d cluster `portal`, for contributors. Everything runs through `./tk`. To install atrium on your own cluster see [docs/install.md](../docs/install.md); to operate it, [docs/operate.md](../docs/operate.md).
 
 ```
 base/namespaces    platform-db, platform, portal, hello-a, hello-b (Pod Security restricted); `monitoring` lives in overlays/local/namespaces
@@ -10,19 +10,14 @@ base/platform-api  Deployment x2, Services internal:8081 / jwks:8083 / public:80
 base/portal        Deployment x2 (cmd/portal), Service, IngressRoute (passHostHeader), NetworkPolicies
 base/hello         reference app (one instance per namespace via overlay)
 base/monitoring    NetworkPolicies of the monitoring namespace (default deny; Prometheus, Grafana)
-monitoring/        adopter artifacts: alert rules (plain + PrometheusRule), PodMonitors, Grafana dashboard, promtool tests
+monitoring/        alert rules (plain + PrometheusRule), PodMonitors, Grafana dashboard, promtool tests (adopters: docs/operate.md)
 overlays/local     domain/app-id patches, scripts, seed, traefik values (fake login), monitoring stack values
 overlays/local-google  real Google login on top of overlays/local: image tag, client secret and id, env, egress policy, admin bootstrap
 ```
 
-## Ordering: migrate before platform-api (adopters)
+## Ordering: migrate before platform-api
 
-`platform-api` and `portal` refuse to start when the database roles drift from what the binary expects (missing or extra
-privileges), so the `migrate` Job (as platform_owner) must complete BEFORE the new Deployments roll out. `base/` has no ordering
-mechanism (the `wait-for-db` initContainer only waits for `pg_isready`). `overlays/local/up.sh` does it with `kubectl wait
---for=condition=complete job/migrate` before applying platform-api. With GitOps, add it yourself: Argo CD `PreSync` hook (or
-sync-wave `-1`) on the Job, or a Flux `Kustomization` for `base/migrate` that the platform-api one `dependsOn` with
-`wait: true`. Delete the finished Job (or set `ttlSecondsAfterFinished`) so each release recreates it.
+`platform-api` and `portal` refuse to start when the database roles drift from what the binary expects, so the `migrate` Job must complete BEFORE the new Deployments roll out. `base/` has no ordering mechanism (the `wait-for-db` initContainer only waits for `pg_isready`); `overlays/local/up.sh` does it with `kubectl wait --for=condition=complete job/migrate` before applying platform-api. For GitOps ordering see [docs/operate.md](../docs/operate.md#upgrade) and [docs/install.md](../docs/install.md#4-database-and-roles).
 
 ## Scripts (overlays/local)
 
@@ -64,10 +59,19 @@ the local overlay's `seed.sql`, never in base.
   namespace (`allow-ingress-metrics`, same rule in `base/platform-api`). The metrics listener has no Service; the internal listener (8081) is reachable by Traefik only.
 - IngressRoute: exact `Host()`, `passHostHeader: true`; ForwardAuth and strip-assertion come from the entrypoint.
 
+## Notes on the local cluster
+
+- Access log: `accessLog.fields.queryParameters.defaultMode: drop` (Traefik >= 3.7.3) removes the whole query from `RequestPath`, so the login `code`, `bind` and `rd` are never logged. Tradeoff: no query at all in access logs (it also hides benign parameters). Headers (Cookie, Set-Cookie, Location) are dropped by default; keep them dropped explicitly (`accessLog.fields.headers.defaultMode: drop`, as `local/traefik-values.yaml` does): `Authorization` now carries API tokens on the portal host, and any header logging would write live secrets.
+- API tokens ([forwardauth](../docs/reference/forwardauth.md#token-path)): every route that matches a portal host must list the `strip-authorization` middleware of the `portal` namespace. Smoke section 22 checks both in the local cluster.
+- Client IP: in k3d Traefik sees `10.42.0.1` (the node's CNI gateway) for every client, because the host port goes through the k3d serverlb proxy and ServiceLB SNAT. The `/login` rate limit (last `X-Forwarded-For` entry) therefore behaves as one global bucket locally. A real load balancer that preserves the source address is needed for per-client limits.
+- Smoke and the `/login` rate limit: every login of a run (and of back-to-back runs) shares one bucket per platform-api replica (burst 30, one token per 2 s) because Traefik sees all clients as `10.42.0.1`. The smoke never raises the limit: `login()` waits out a 429 using `Retry-After` (bounded retries). At the end `smoke.sh` lists every failed check with its section.
+- platform-api and portal have a `preStop` native sleep (5 s, distroless images have no `sleep` binary): the Service rules reach Traefik after SIGTERM, and without it a deleted replica answered "connection refused" to ForwardAuth (Traefik 500 once seen in smoke section 12). `terminationGracePeriodSeconds` 30 covers 5 s + the 20 s shutdown budget.
+- A fresh pod is refused for 1-2 s when it connects to a destination protected by an ingress NetworkPolicy (kube-router has not yet synced it into the allow set): pods that talk to PostgreSQL wait with an initContainer (`pg_isready`).
+
 ## Monitoring
 
 Prometheus and Grafana for the platform, in the `monitoring` namespace of the local cluster, plus the artifacts an adopter
-takes to their own stack. The metric catalog and the cardinality rule (no client-supplied label values, no `app_id`) are in
+takes to their own stack ([docs/operate.md](../docs/operate.md#monitoring)). The metric catalog and the cardinality rule (no client-supplied label values, no `app_id`) are in
 `docs/reference/metrics.md` ("Metrics"); read the rule before adding a metric or a dashboard query.
 
 **Local stack.** `up.sh` installs `kube-prometheus-stack` 92.10.0 (Prometheus Operator v0.94.1, Prometheus v3.15.0, Grafana
@@ -110,38 +114,14 @@ other side, `allow-ingress-metrics` in `platform` and `portal` admits only pods 
 `monitoring` namespace to port 9090; the app-namespace label does NOT grant it. Anything that can run a pod with that label in
 `monitoring` joins the set: keep the namespace to the stack.
 
-**Adopter artifacts (`monitoring/`).** Nothing there is specific to k3d:
+**Adopter artifacts (`monitoring/`)** (files, assumptions, alert notes): [docs/operate.md](../docs/operate.md#monitoring). Local facts that differ:
+- Here Prometheus selects every PodMonitor, ServiceMonitor, ScrapeConfig, Probe and PrometheusRule (selectors `{}`) of the namespaces the operator reconciles (`monitoring`, `platform`, `portal`).
+- Reload latency: with `reloadStrategy: ProcessSignal` the config-reloader's first reload check after a Prometheus pod start can time out (~3 min) before it starts watching the rule files, so rules applied just after a restart load late; later changes take ~40 s. The alternative is the HTTP reload, which needs `--web.enable-lifecycle` (open `/-/quit` and `/-/reload`).
+- `monitoring/test-rules.sh` is also run by `local/lint.sh rules`.
 
-| File | Use |
-|---|---|
-| `rules/portal-platform.rules.yaml` | alert rules, plain Prometheus format (the source) |
-| `operator/prometheusrule.yaml` | the same rules as a `PrometheusRule`, generated by `gen-prometheusrule.sh` |
-| `operator/podmonitors.yaml` | scrape of `platform-api` and `portal` on the pod port named `metrics` (`job` = app name) |
-| `dashboards/portal-platform.json` | Grafana dashboard (datasource picked by variable); `dashboards/kustomization.yaml` wraps it in a ConfigMap labelled `grafana_dashboard` for a sidecar |
-| `rules/tests/portal-platform.test.yaml` | `promtool` unit tests: every rule has a firing and a not-firing case |
-| `test-rules.sh` | sync check + `promtool check rules` + `promtool test rules` (pinned `prom/prometheus` through Docker); also `local/lint.sh rules` |
+## Internal TLS for the JWKS (local overlay)
 
-Assumptions for adopters:
-- Rules and dashboard expect `job="platform-api"` and `job="portal"` (the PodMonitors set it with `jobLabel`); edit
-  `namespaceSelector` in the PodMonitors for your namespaces.
-- The per-replica rules (`SigningKeyNotLoaded`, `SigningKeyKEKMismatch`, `DBPoolSaturated`) put `{{ $labels.pod }}` in their text; the
-  PodMonitor adds `pod`. A scrape config that does not must relabel it.
-- Here Prometheus selects every PodMonitor, ServiceMonitor, ScrapeConfig, Probe and PrometheusRule (selectors `{}`) of the
-  namespaces the operator reconciles (`monitoring`, `platform`, `portal`). Anyone who can create those objects there changes what
-  is scraped or alerted: restrict creation by RBAC, or label-select in your own installation.
-- Reload latency: with `reloadStrategy: ProcessSignal` the config-reloader's first reload check after a Prometheus pod start
-  can time out (~3 min) before it starts watching the rule files, so rules applied just after a restart load late; later changes
-  take ~40 s. The alternative is the HTTP reload, which needs `--web.enable-lifecycle` (open `/-/quit` and `/-/reload`).
-- `ProbeNotWriting` fires when `time() - max(portal_probe_last_write_timestamp_seconds)` exceeds 3 x
-  `portal_probe_interval_seconds` (0 = probe disabled, never fires; missing gauges = silent), for 10 minutes. A restart
-  resets the timestamp to the process start time, so detection can be delayed by up to 3 intervals (accepted). The portal
-  rules assume one portal release per Prometheus (`job="portal"`): two releases sharing one would mask each other.
-- After changing the plain rules run `monitoring/gen-prometheusrule.sh`; `test-rules.sh` fails if the generated file is stale.
-
-## Internal TLS for the JWKS (optional, PKI-neutral)
-
-`base/` keeps the JWKS listener on plain HTTP (`:8083`, `http://` URLs): it carries no PKI, so every adopter picks its own.
-`overlays/local` turns TLS on with patches only (no base change):
+`base/` keeps the JWKS listener on plain HTTP (`:8083`, `http://` URLs). `overlays/local` turns TLS on with patches only (no base change). Adopters: [docs/operate.md](../docs/operate.md#internal-tls-for-the-jwks).
 
 | Where | Patch |
 |---|---|
@@ -156,13 +136,8 @@ must be distributed first and the verifiers restarted before the new leaf is ser
 `rollout restart` portal, hello-a, hello-b + wait -> Secret). With cert-manager/trust-manager, bundle old+new CA during the transition.
 The script renews the CA when less than 150 days remain (leaf 90 + renewal window 30 + margin 30), so no leaf outlives its CA.
 
-Adopters: only the [contract](../docs/reference/assertion.md) matters, not the script.
-- Server: any issuer that writes a PEM cert (chain allowed) and key (PKCS8/EC/RSA, mode <= 0640) at the two paths: cert-manager (`Certificate`
-  with `dnsNames` = the Service names above and `secretName: platform-api-jwks-tls`, which yields `tls.crt`/`tls.key` for the same mount),
-  a Vault agent template writing the files, or a manually created `kubernetes.io/tls` Secret. Keep the SAN equal to the name apps use.
-- Clients: distribute the issuing CA bundle (PEM) to each app namespace and point `*_JWKS_CA_FILE` (or `Config.RootCAs` in the SDK) at it:
-  cert-manager `trust-manager` Bundle, a Vault/CSI mount, or a ConfigMap per namespace. If the CA is public/system-trusted, omit the variable.
-- Switch the URLs to `https://` in the same change; an `http` URL logs a warning at verifier start-up.
+Local cluster:
+
 - Smoke section `16b` checks the SAN, CA verification (and its failure without the CA), TLS-only and TLS 1.3.
 - `overlays/local-google` builds on `overlays/local/platform`, so it inherits the TLS patches (the apps keep the CA ConfigMap from `up.sh`).
 
@@ -207,38 +182,7 @@ duration (the IngressRoute is local-overlay only and `kubectl apply -k` restores
 ./tk kubectl apply -k platform-gitops/overlays/local/monitoring   # restores the IngressRoute (also re-applies the policies)
 ```
 
-Adopters, mirroring this with their own Grafana and PKI:
-- Register in the portal an initiative with role keys equal to what your `role_attribute_path` matches, an app for Grafana, and its
-  host (`aud` = the app id). Route the host through the entrypoint that runs ForwardAuth; the Grafana Service must not be reachable
-  any other way (NetworkPolicy: ingress from the proxy only; also no LoadBalancer/NodePort), or anyone can send the header.
-- `[auth.jwt]` with `jwk_set_url` over HTTPS (mandatory outside dev mode), `tls_client_ca` for a private CA (the CA that issues the JWKS
-  certificate, see "Internal TLS for the JWKS"; omit for a public CA), `expect_claims` with the exact `PLATFORM_ISSUER` and app id,
-  `role_attribute_strict`, `url_login = false`. `GF_AUTH_JWT_*` env vars work the same as the ini.
-- Turn off every other way in (login form, basic auth, anonymous, other `[auth.*]`) and decide your break-glass path.
-- Let Grafana reach the JWKS Service (egress) and the JWKS listener admit it (ingress, by pod selector, not by the app-namespace label).
-
-## Notes
-
-- Namespaces that host apps need the label `atrium.wysted.dev/app-namespace=true`: the JWKS listener (8083) accepts them.
-- Access log: `accessLog.fields.queryParameters.defaultMode: drop` (Traefik >= 3.7.3) removes the whole query from
-  `RequestPath`, so the login `code`, `bind` and `rd` are never logged. Tradeoff: no query at all in access logs (it also
-  hides benign parameters). Headers (Cookie, Set-Cookie, Location) are dropped by default; keep them dropped
-  explicitly (`accessLog.fields.headers.defaultMode: drop`, as `local/traefik-values.yaml` does): `Authorization`
-  now carries API tokens on the portal host, and any header logging would write live secrets.
-- API tokens (`docs/reference/forwardauth.md`, "Token path"): the ForwardAuth middleware forwards `Authorization` to
-  platform-api, and every route that matches a portal host must list the `strip-authorization` middleware of the
-  `portal` namespace, so the token never reaches the portal process. Smoke section 22 checks both in the local cluster.
-- Client IP: in k3d Traefik sees `10.42.0.1` (the node's CNI gateway) for every client, because the host port goes through
-  the k3d serverlb proxy and ServiceLB SNAT. The `/login` rate limit (last `X-Forwarded-For` entry) therefore behaves as
-  one global bucket locally. A real load balancer that preserves the source address is needed for per-client limits.
-- Smoke and the `/login` rate limit: every login of a run (and of back-to-back runs) shares one bucket per platform-api replica
-  (burst 30, one token per 2 s) because Traefik sees all clients as `10.42.0.1`. The smoke never raises the limit: `login()` waits
-  out a 429 using `Retry-After` (bounded retries). At the end `smoke.sh` lists every failed check with its section.
-- platform-api and portal have a `preStop` native sleep (5 s, distroless images have no `sleep` binary): the Service rules reach
-  Traefik after SIGTERM, and without it a deleted replica answered "connection refused" to ForwardAuth (Traefik 500 once seen
-  in smoke section 12). `terminationGracePeriodSeconds` 30 covers 5 s + the 20 s shutdown budget.
-- A fresh pod is refused for 1-2 s when it connects to a destination protected by an ingress NetworkPolicy (kube-router
-  has not yet synced it into the allow set): pods that talk to PostgreSQL wait with an initContainer (`pg_isready`).
+Adopters mirroring this with their own Grafana and PKI: [docs/operate.md](../docs/operate.md#grafana-behind-forwardauth).
 
 ## Real Google login (overlays/local-google)
 
@@ -263,35 +207,18 @@ active user may open it (reserved initiative `platform`, "any active user" rule)
 `local-google/admin.sh <email>` (user must have signed in once; `--revoke` removes it; DEVELOPMENT tooling, the portal has no
 endpoint to manage platform admins).
 
-Access: users are created on their first login (JIT) with no grants (403 on every app).
-Grant and revoke through the portal API with `portalctl` (`platform/api/cmd/portalctl`; build, static Linux binary:
-`cd platform/api && ../../gk env CGO_ENABLED=0 go build -o ../../.tools/portalctl/portalctl ./cmd/portalctl`):
-`portalctl grant|revoke <email|robot:name> <initiative-key> <role-key>`. Environment: `PORTAL_URL` (https, portal host only,
-e.g. `https://portal.apps.wysted.dev`) and `PORTAL_API_TOKEN`. Who can use it: a platform admin (`admin`-scope token), a human
-initiative manager (`admin`-scope token, only the initiatives they manage) or a robot holding a `manages_access` role. A grant
-by email needs the user to have signed in once. Output is `changed` or `unchanged` plus `grant|revoke done: ...`; exit 0 ok,
-1 any runtime or API failure (unknown initiative, role or robot, a grant to a disabled robot, an expired existing grant: "revoke
-it first"), 2 usage (bad arguments, invalid `PORTAL_URL`, empty token). An existing grant with a future expiry is `unchanged`
-with a warning on stderr. It never follows redirects and honors `SSL_CERT_FILE` for a private CA. Examples:
-
-```
-export PORTAL_URL=https://portal.apps.wysted.dev
-read -rs PORTAL_API_TOKEN && export PORTAL_API_TOKEN   # paste the token: it stays out of the shell history
-.tools/portalctl/portalctl grant you@<your-workspace-domain> demo viewer
-.tools/portalctl/portalctl revoke robot:ci-deployer demo editor
-```
+Access: users are created on their first login (JIT) with no grants (403 on every app). Grant and revoke with `portalctl` ([usage](../docs/operate.md#portalctl)); build the static Linux binary into the git-ignored toolbox directory:
+`cd platform/api && ../../gk env CGO_ENABLED=0 go build -o ../../.tools/portalctl/portalctl ./cmd/portalctl`. Locally `PORTAL_URL` is `https://portal.apps.wysted.dev`, and
+`.tools/portalctl/portalctl grant you@<your-workspace-domain> demo viewer` grants the seeded initiative `demo`.
 
 Bootstrap: `local-google/admin.sh <email>` makes the first platform admin (after one sign-in); that admin grants access
-in the portal or creates the token for `portalctl`. Platform-api sees grant changes through NOTIFY, no restart.
+in the portal or creates the token for `portalctl`.
 
-Rotating the Google client secret: [docs/runbooks/google-client-secret-rotation.md](docs/runbooks/google-client-secret-rotation.md).
+Rotating the Google client secret: [docs/runbooks/google-client-secret-rotation.md](../docs/runbooks/google-client-secret-rotation.md) (its local-cluster commands go through `./tk`).
 
 ### Egress tradeoff (NetworkPolicy `allow-egress-google`)
 
-Google discovery/token/JWKS need HTTPS to accounts.google.com, oauth2.googleapis.com and www.googleapis.com. A standard
-NetworkPolicy cannot match FQDNs, so the policy allows TCP 443 from platform-api pods to `0.0.0.0/0` EXCEPT 10.0.0.0/8
+Google discovery/token/JWKS need HTTPS to accounts.google.com, oauth2.googleapis.com and www.googleapis.com. The policy allows TCP 443 from platform-api pods to `0.0.0.0/0` EXCEPT 10.0.0.0/8
 (pods 10.42.0.0/16, services 10.43.0.0/16), 172.16.0.0/12 (k3d node and Docker network 172.28.0.0/16), 192.168.0.0/16,
-100.64.0.0/10, 169.254.0.0/16 and 127.0.0.0/8. Consequence: a compromised platform-api could reach ANY public host on 443
-(exfiltration), not only Google. Narrowing it needs an egress proxy with an FQDN allowlist or a CNI with L7/FQDN policies
-(Cilium, Calico Enterprise); neither is installed (flannel + kube-router). The policy exists only in `local-google`;
-the migrate Job is not covered (it only talks to PostgreSQL). IPv4 only (the cluster is single-stack).
+100.64.0.0/10, 169.254.0.0/16 and 127.0.0.0/8. Neither an egress proxy nor an FQDN-aware CNI is installed (flannel + kube-router). The policy exists only in `local-google`;
+the migrate Job is not covered (it only talks to PostgreSQL). IPv4 only (the cluster is single-stack). The general tradeoff: [docs/operate.md](../docs/operate.md#production-hardening).

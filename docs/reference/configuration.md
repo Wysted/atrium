@@ -48,7 +48,7 @@ Rules across variables:
 | File | Variable | Format | Reloaded at runtime |
 |---|---|---|---|
 | KEK | `PLATFORM_KEK_FILE` | exactly 32 raw bytes (not hex, not base64, no trailing newline), not all zeros. Generate with `openssl rand 32 > kek` | No, read once at start-up |
-| Google client secret | `PLATFORM_GOOGLE_CLIENT_SECRET_FILE` | the secret as text; a trailing newline is trimmed | No, read once at start-up; rotation needs a restart ([runbook](../../platform-gitops/docs/runbooks/google-client-secret-rotation.md)) |
+| Google client secret | `PLATFORM_GOOGLE_CLIENT_SECRET_FILE` | the secret as text; a trailing newline is trimmed | No, read once at start-up; rotation needs a restart ([runbook](../runbooks/google-client-secret-rotation.md)) |
 | JWKS TLS certificate | `PLATFORM_JWKS_TLS_CERT_FILE` | PEM (leaf first, chain allowed), at most 256 KiB | Yes, compared every 30 s; a valid replacement is served to new handshakes without a restart |
 | JWKS TLS key | `PLATFORM_JWKS_TLS_KEY_FILE` | PEM, at most 256 KiB | Yes, together with the certificate. An invalid initial pair stops start-up; an invalid replacement keeps the last good pair and is logged once per distinct error |
 | pgpass | `PGPASSFILE` | libpq format: lines of `host:port:database:user:password`, wildcards (`*`) allowed | No. pgx reads it once when the pool config is parsed, and only if no password is set otherwise; new connections do not reread it |

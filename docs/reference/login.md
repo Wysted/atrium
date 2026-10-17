@@ -39,7 +39,7 @@ Variables, formats and files: [configuration.md](configuration.md#platform-api).
   without affecting it.
 
 `client_secret` rotation: Google allows two active secrets per OAuth client; there is no automation, only a manual runbook
-(add a secret, deploy it, disable the old one, delete it): [Google client secret rotation](../../platform-gitops/docs/runbooks/google-client-secret-rotation.md).
+(add a secret, deploy it, disable the old one, delete it): [Google client secret rotation](../runbooks/google-client-secret-rotation.md).
 
 ## Session tables
 
