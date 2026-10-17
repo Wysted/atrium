@@ -20,14 +20,11 @@ Pending work and open questions for the portal platform. Detailed context lives 
   global bucket. Verify the client IP behind the production load balancer.
 - [ ] **Egress filtering.** The `local-google` overlay allows platform-api HTTPS egress to any public address.
   FQDN-level filtering (Google endpoints only) needs an egress proxy or a CNI with L7 policies.
-- [ ] **Local Grafana restarts in a loop.** Seen 2026-10-17: 8 restarts in 16 h and an `up.sh` Grafana upgrade that timed
-  out; deleting the pod fixed it. Investigated 2026-10-17, the plugin-preinstall hypothesis is REFUTED as the cause: a forced
-  fresh start takes ~25 s and listens before any plugin work (the background installer fails in ~100 ms with `connection
-  refused` to grafana.com and blocks nothing), and the liveness probe waits 60 s + 10 x 10 s. Preinstall is now off anyway
-  (`[plugins] preinstall_disabled`, no more egress attempts). Open: the cause of the old restarts is not proven (the pod was
-  deleted, `lastState` lost). Leads: the k3d node container itself restarted at 16:06Z (Prometheus and the operator exited 255
-  at the same second, so Docker/WSL restarts explain some), and Grafana sits at ~305-317 MiB of its 384 MiB limit (OOMKilled
-  is possible). Next time it loops: capture `describe pod` `Last State` / `Reason` before deleting; if OOMKilled, raise the limit.
+- [x] **Local Grafana restarts in a loop.** Closed 2026-10-17. Cause: OOMKilled. Grafana idles at ~300 MiB and the smoke's
+  queries pushed it over its 384 MiB limit (`lastState.terminated.reason: OOMKilled` caught during a full smoke). The local
+  values now request 320 MiB with a 768 MiB limit. The plugin-preinstall hypothesis was refuted (downloads fail fast, block
+  nothing); preinstall is disabled anyway (`[plugins] preinstall_disabled`). Restarts with reason `Unknown` on every pod are
+  node restarts (WSL/Docker), not Grafana.
 - [x] **Internal TLS for the JWKS.** Closed 2026-10-16: opt-in HTTPS on the JWKS listener (`PLATFORM_JWKS_TLS_CERT_FILE` /
   `_KEY_FILE`, reloaded every 30 s) and a CA file for verifiers (`PORTAL_JWKS_CA_FILE`, SDK `RootCAs`). `base/` stays HTTP;
   the local overlay enables it with a local CA. Production adopters must supply the certificate (cert-manager, Vault or
@@ -66,11 +63,10 @@ Pending work and open questions for the portal platform. Detailed context lives 
   admin page; (5) CLI replacing `grant.sh`/`revoke.sh`. Phases 2 (workload identity) and 3 (device flow) stay open.
   Part 1 (1a schema, privileges, kind filters, purge; 1b tokens and robots API, grants by robot, revocation by
   secret) and part 2 (ForwardAuth token path, assertion claims, SDK) done 2026-10-16; part 3 (Traefik, smoke section 22), part 4 (web) and part 5 (`portalctl`, smoke section 23) done 2026-10-17: phase 1 complete.
-- [ ] **Area supervisor.** Someone who administers the robots and tokens of the people of their area (list, revoke,
-  reassign owner on offboarding) without acting as them or touching their access. Designed 2026-10-17 in
-  `platform/docs/contract.md` block 6, "Area supervisors" (local areas managed by platform admins, browser session
-  only). Parts: (1) migration 0014 + portal API (repos, adminz `scopeArea`, use cases, handlers, `/me`, audit
-  `area_id`, `portalGrants`, the required tests listed there); (2) web: area administration and supervisor screen.
+- [x] **Area supervisor.** Closed 2026-10-17. Someone who administers the robots and tokens of the people of their area
+  (list, revoke, reassign owner on offboarding) without acting as them or touching their access. Contract block 6, "Area
+  supervisors": local areas managed by platform admins (migration 0014), supervisor capacity from a browser session only,
+  web screens `/admin/areas` (admins) and `/areas` (supervisors), smoke section 24 and browser-check steps 5d-3b/5d-3c.
   Later: IdP sync of members, area hierarchy, rename, supervisor audit view, `portalctl` commands.
 - [x] **Flaky test database cleanup.** Closed 2026-10-16. Root cause: every `DROP DATABASE` makes PostgreSQL run an
   immediate checkpoint and wait for it, and the checkpoint's fsync phase covers the files of every live test database

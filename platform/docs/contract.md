@@ -446,7 +446,7 @@ Research notes: Engram `architecture/portal-web-stack-research`, `architecture/p
 | Integration health of an app | Yes | Yes, for the apps of their initiatives |
 | Orphan hosts (hosts with no deployment) | Yes | No (they belong to no initiative) |
 
-Area supervisors (designed, not implemented) are a third capacity, outside this table: from a browser session only,
+Area supervisors (implemented, part 1b) are a third capacity, outside this table: from a browser session only,
 they administer the tokens and robots of the people of their areas, never access (block 6, "Area supervisors").
 Supervising is not an admin permission at token issuance.
 
@@ -514,7 +514,7 @@ Roles, groups and hosts are the escalation paths, and they stay with platform ad
 2. On every request the portal loads the caller's permissions from the database: platform admin or not, and the
    initiatives where a non-expired grant with `manages_access` exists (directly or through a group). Implemented
    (part 1a): also the areas they supervise, empty under a token ("Area supervisors", browser session only;
-   `Service.Me` applies the token gate, `subject()` joins it in part 1b).
+   `portal.subject()` and `Service.Me` apply the token gate).
 3. A pure function `adminz.Decide(subject, action, resource)` (AuthZEN-shaped, like `access.Decide`) answers each
    call, with table tests. Actions are named `<resource>.<verb>`: `grant.create`, `app.disable`, `audit.list`.
 4. The permission check and the mutation run in the same transaction. The "last manager" rule takes a row lock on
@@ -578,7 +578,7 @@ Required tests: POST with `Sec-Fetch-Site: same-site` or `cross-site` -> 403; PO
 4. Revoking sessions and disabling users from the portal are audited too, and so are `RevokeUser`/`RevokeApp`
    from platform-api.
 5. Token-made mutations also record the token (`token_id`); token and robot actions are in "Non-browser clients".
-   Designed, not implemented (part 1b): supervisor actions also record the area (`area_id`, the column exists), see "Area supervisors".
+   Supervisor actions also record the area (`area_id`), see "Area supervisors".
 
 ### Data model changes
 
@@ -588,7 +588,7 @@ Required tests: POST with `Sec-Fetch-Site: same-site` or `cross-site` -> 403; PO
 | `apps.status` active/disabled; new decision reason `app_disabled` | Deactivate instead of delete |
 | `deployments.last_seen_at`, `last_probe_at`, `last_probe_status` | Integration health |
 | Role `platform_portal`: CRUD on authorization tables except `users` (SELECT + `UPDATE (status, updated_at)` only: humans are created just-in-time by platform-api and `google_sub` is never writable; the non-browser design adds `INSERT` without `google_sub`, so only robots, and `api_tokens` without the hashes), SELECT+INSERT on `audit_events`, SELECT on `access_denials`, DELETE plus SELECT without the token hashes on `sessions` and `app_sessions`; nothing on `signing_keys`, `oauth_flows` or `login_codes` | Least privilege for the admin process |
-| Migration 0014 (part 1a): `areas`, `area_members`, `area_supervisors` (`platform_portal`: `SELECT, INSERT, DELETE`; nothing for `platform_runtime`) and `audit_events.area_id` (not written before part 1b) | Area supervisors |
+| Migration 0014 (part 1a): `areas`, `area_members`, `area_supervisors` (`platform_portal`: `SELECT, INSERT, DELETE`; nothing for `platform_runtime`) and `audit_events.area_id` (written only by supervisor actions, part 1b) | Area supervisors |
 
 Deactivate instead of delete: initiatives through `status` (already exists); apps through `status`; a deployment is
 deleted (nothing references it, the audit keeps it); a role is deleted only without grants (the FK already blocks
@@ -615,7 +615,7 @@ human user: zero or several matches fail (`users.email` is not unique, `google_s
 | `GET /api/v1/audit?initiative_id=&cursor=` | Audit log, newest first, keyset pagination; each event carries `token_id` (the API token that made the request, `null` for a browser session) |
 | `GET /api/v1/apps/{id}/health` | Integration health of an app (admins and managers of its initiative) |
 | `GET /api/v1/health/orphan-hosts` | Hosts refused as `unknown_host` that have no deployment (platform admins only) |
-| `GET, POST /api/v1/areas`; `GET, DELETE /api/v1/areas/{id}`; members and supervisors under `/areas/{id}`; `GET /api/v1/users/{id}/tokens`, `GET /api/v1/users/{id}/robots` | `GET, POST /api/v1/areas`, `GET, DELETE /api/v1/areas/{id}` and the members and supervisors under `/areas/{id}`: implemented (part 1a, platform admins only; `GET /areas/{id}/members` stays admin-only until part 1b). `GET /api/v1/users/{id}/tokens`, `GET /api/v1/users/{id}/robots`: designed, not implemented. The design also widens, for area supervisors from a browser session only and within their scope, `GET /robots/{id}/tokens`, `DELETE /tokens/{id}` and `PATCH /robots/{id}` (`owner_user_id` only), and adds `area_id` to each `/audit` event (`null` unless a supervisor acted) |
+| `GET, POST /api/v1/areas`; `GET, DELETE /api/v1/areas/{id}`; members and supervisors under `/areas/{id}`; `GET /api/v1/users/{id}/tokens`, `GET /api/v1/users/{id}/robots` | Implemented: `GET, POST /api/v1/areas`, `GET, DELETE /api/v1/areas/{id}` and the members and supervisors under `/areas/{id}` (part 1a, platform admins; `GET /areas/{id}/members` also for the supervisors of the area, part 1b), `GET /api/v1/users/{id}/tokens`, `GET /api/v1/users/{id}/robots` (part 1b). It also widens, for area supervisors from a browser session only and within their scope, `GET /robots/{id}/tokens`, `DELETE /tokens/{id}` and `PATCH /robots/{id}` (`owner_user_id` only), and adds `area_id` to each `/audit` event (`null` unless a supervisor acted) |
 
 URLs use ids, never keys. Lists use keyset pagination with an opaque cursor.
 
@@ -858,12 +858,12 @@ identity would bypass the platform's revocation and audit).
    Robots have `email = ''` (`CHECK (kind = 'human' OR email = '')`), a `name` of 1 to 64 characters (`CHECK (kind = 'human'
    OR char_length(name) BETWEEN 1 AND 64)`; humans keep the default `''`) unique among robots (case-insensitive), `status`,
    and an optional `owner_user_id` (FK `users`, `ON DELETE SET NULL`): the accountable human, informational, not authority
-   (designed, not implemented: still no access authority, but it places the robot in its owner's area for area
-   supervisors, "Area supervisors"). The FK cannot say "active human", so the API checks it on create and on change (422 otherwise). A robot does not
+   (still no access authority, but it places the robot in its owner's area for area supervisors, "Area
+   supervisors"). The FK cannot say "active human", so the API checks it on create and on change (422 otherwise). A robot does not
    stop working when its owner is disabled; offboarding checks the owner column (the robot list shows it).
 3. Robots are global like users. Only platform admins create, rename, disable or change the owner of a robot, and issue
-   or revoke its tokens (designed, not implemented: area supervisors may also change the owner and revoke the tokens,
-   from a browser session only and within their scope, "Area supervisors"). Humans are still created only by login. The two families never mix in the API: `/users/*`
+   or revoke its tokens (area supervisors may also change the owner and revoke the tokens, from a browser session
+   only and within their scope, "Area supervisors"). Humans are still created only by login. The two families never mix in the API: `/users/*`
    (`GET`, `PATCH` status, `DELETE .../sessions`) answers 404 for a robot id and `/robots/*` answers 404 for a human id,
    filtered by `kind` in the SQL, not after loading the row. Disabling revokes the target's tokens in one repository
    function shared by both paths, in the same transaction; it records the revoked token ids. The last-admin guard
@@ -939,7 +939,7 @@ Rules:
    create a token or a robot token, so a leaked token cannot extend itself. The portal checks it, not the client.
 2. A human creates tokens only for themselves (`POST /api/v1/me/tokens`). Robot tokens are created only by platform
    admins, from a session (`POST /api/v1/robots/{id}/tokens`).
-3. The owner revokes their own tokens; a platform admin revokes any token (designed, not implemented: an area
+3. The owner revokes their own tokens; a platform admin revokes any token (and an area
    supervisor the tokens in their scope, from a browser session only, "Area supervisors"). A token may revoke tokens (own ones, or any if
    its owner is a platform admin and the scope is `admin`): containment must not require a browser.
    Revocation by secret, so a leak can be contained without knowing the token id:
@@ -1151,9 +1151,9 @@ the owner cannot hold at that moment, an `expires_in` above the cap or not posit
 a request authenticated by a token answers 403. Lists are newest first with the keyset `cursor` and include recently
 dead tokens (`last_used_at`, `revoked_at`). Revoking a token that is already revoked answers 204 and writes no audit
 row; a token that is not the caller's answers 404 (`DELETE /api/v1/tokens/{id}` too, unless the caller is a platform
-admin; designed, not implemented: or an area supervisor, from a browser session only, and the token is in their scope).
+admin, or an area supervisor from a browser session only when the token is in their scope).
 The audit action names are `token.create` and `token.revoke`; `adminz` uses `token.create_own`, `token.list_own`,
-`token.revoke_own` and `token.revoke_any` (the latter also authorizes revocation by secret). `POST /api/v1/tokens/revoke`
+`token.revoke_own`, `token.revoke_supervised` (`DELETE /tokens/{id}` of another owner; platform admins pass it) and `token.revoke_any` (revocation by secret only). `POST /api/v1/tokens/revoke`
 answers 422 for an empty or malformed `token` (the format check reveals nothing about existence, and runs after the
 authorization check and before the lookup by hash), 403 for a caller who is not a platform admin, and 204 for every well-formed secret, matched or not;
 only a match writes an audit row (`token.revoke`, the token id and its owner, never the secret).
@@ -1168,8 +1168,8 @@ reads as absent); an empty patch is 422, a patch that changes nothing writes no 
 the personal token (`expires_in` capped by `PORTAL_TOKEN_MAX_TTL_ROBOT`) and answers 201 with the secret, only from a browser
 session (403 otherwise) and only for platform admins (403); an unknown or human id is 404, a disabled robot 409, the 25
 live tokens 409, and `admin` scope for a robot without a current `manages_access` grant 422 (`not_allowed`).
-`GET /api/v1/robots/{id}/tokens` lists them (admins; designed, not implemented: also area supervisors from a browser
-session only, for robots in their scope, which makes `robot_token.list` area-scoped). The grant subject takes `robot_id` (exactly one of `email`,
+`GET /api/v1/robots/{id}/tokens` lists them (admins, and area supervisors from a browser
+session only for robots in their scope: `robot_token.list` is area-scoped, anyone else gets 404). The grant subject takes `robot_id` (exactly one of `email`,
 `group_id`, `robot_id`, otherwise 422 on the three fields); an unknown, human or disabled robot is 422 `unknown` on
 `robot_id`. `adminz` actions: `robot.list`, `robot.create`, `robot.update`, `robot_token.create`, `robot_token.list`.
 Group membership is by email, which a robot does not have, so the members endpoints cannot receive a robot id.
@@ -1179,15 +1179,15 @@ robot-owned tokens unchanged.
 Decided 2026-10-16: revocation by secret (Issuance and revocation, rule 3); an owner's departure never disables their
 robots automatically.
 
-Area supervisor: designed in "Area supervisors" below (decided 2026-10-17); the administration of areas (part 1a) is implemented, the supervisor capacity (part 1b) is not.
+Area supervisor: "Area supervisors" below (decided 2026-10-17); implemented, parts 1a (administration of areas) and 1b (the supervisor capacity).
 
 ### Area supervisors
 
 Designed 2026-10-17 (research notes: Engram `architecture/portal-area-supervisor`). **Part 1a is implemented**:
 migration 0014, the administration of areas, members and supervisors by platform admins, and `supervised_areas` in
-`/me`. **Everything else below is designed, not implemented** (part 1b: the supervisor capacity, `adminz` `Supervised`
-and `scopeArea`, the area-scoped actions, `area_id` in the audit, the two `/users/{id}/*` lists; part 2: the UI).
-Where this section says "implemented" or "part 1a" it is. An area supervisor
+`/me`. **Part 1b is implemented too**: the supervisor capacity, `adminz` `Supervised` and `scopeArea`, the
+area-scoped actions, `area_id` in the audit, the two `/users/{id}/*` lists. Part 2 (the UI) is designed, not
+implemented. An area supervisor
 administers the robots and API tokens of the people of an area, so offboarding a person's automation does not wait
 for a platform admin. Scope is a container defined in the portal (like Entra administrative units, Okta resource sets
 or Workspace OU-scoped roles), not a manager chain read from the IdP. It is a separate capacity, not the initiative
@@ -1260,7 +1260,7 @@ owner's area: setting it decides which supervisors administer the robot.
 | Action | Scope | Used by |
 |---|---|---|
 | `area.create`, `area.delete`, `area.list`, `area_member.add`, `area_member.remove`, `area_supervisor.add`, `area_supervisor.remove`, `area_supervisor.list` | global (admins) | Area administration (implemented, part 1a; `GET /areas/{id}` uses `area.list`) |
-| `area_member.list` | area (`AreaID` = the area itself) | `GET /areas/{id}/members` (part 1a: global, admins only, until the scope exists) |
+| `area_member.list` | area (`AreaID` = the area itself) | `GET /areas/{id}/members` |
 | `user_token.list`, `user_robot.list` | area | `GET /users/{id}/tokens`, `GET /users/{id}/robots` |
 | `robot_token.list` | area (was global) | `GET /robots/{id}/tokens` |
 | `token.revoke_supervised` | area | `DELETE /tokens/{id}` on a token that is not the caller's |
@@ -1349,7 +1349,7 @@ human's tokens.
 
 #### Audit
 
-Implemented (part 1a): the six administration actions below, with `area_id` NULL. Actions `area.create`, `area.delete` (target `area`, `before`/`after`: key and name), `area_member.add`,
+The six administration actions below (part 1a) write `area_id` NULL. Actions `area.create`, `area.delete` (target `area`, `before`/`after`: key and name), `area_member.add`,
 `area_member.remove`, `area_supervisor.add`, `area_supervisor.remove` (target `area`, document: area id, user id and
 email, like group members). Supervisor actions keep their names (`token.revoke`, `robot.update`) and set
 `audit_events.area_id`: the capacity, so a reader can tell "as supervisor of area X" from "as owner" or "as platform
@@ -1385,7 +1385,7 @@ no audit view in this design.
 1. Split in two. **Part 1a (implemented)**: migration 0014, `portalGrants`, the repositories and use cases of areas,
    members and supervisors, their handlers, the `adminz` actions of area administration (all global, admins only,
    `area_member.list` included until 1b), the audit events of those mutations, and `supervised_areas` in `/me` (the
-   token gate lives in `Service.Me`). **Part 1b (designed, not implemented)**: the supervisable-area resolver, the two
+   token gate lives in `Service.Me`). **Part 1b (implemented)**: the supervisable-area resolver, the two
    `/users/{id}/*` lists, `adminz` (`Supervised`, `AreaID`, `scopeArea`, the area-scoped actions, table tests), the
    supervisor paths of revoke, reassign and `GET /robots/{id}/tokens`, the `portal.subject()` gate, audit `area_id`.
    Required tests of 1b (1a already covers `/me` under a token, the 409 on a non-empty area and the 404 on the concurrent add): a supervisor who is a member of the area they supervise
@@ -1396,7 +1396,11 @@ no audit view in this design.
    `DELETE /tokens/{id}` and `PATCH /robots/{id}` in scope; with a `read` token, 404 on the area-scoped lists; a plain
    supervisor asking for an `admin` personal token gets 422; `/me` under a token has `supervised_areas: []`; a platform
    admin who also supervises the area writes `area_id` NULL; deleting a non-empty area is 409 and adding a member to
-   an area deleted concurrently is 404.
+   an area deleted concurrently is 404. Implemented as specified; behavior worth knowing: the three widened
+   endpoints changed their answer for callers who are neither platform admins nor supervisors in scope, from 403 to
+   404 (`GET /robots/{id}/tokens`, `GET /areas/{id}/members`, and `PATCH /robots/{id}` with only `owner_user_id`),
+   because the area scope hides what it refuses; a `PATCH /robots/{id}` by a non-admin that carries any other field,
+   or nothing, is 403 before anything is looked up. `GET /areas/{id}/supervisors` stays admin-only (403).
 2. Web: area administration (platform admins) and a supervisor screen (area -> members -> tokens and robots, revoke,
    reassign).
 
