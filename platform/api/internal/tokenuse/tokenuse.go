@@ -11,7 +11,7 @@ import (
 	"log/slog"
 	"time"
 
-	"platform/api/internal/touchset"
+	"github.com/Wysted/atrium/platform/api/internal/touchset"
 )
 
 // Used is the latest authorized request observed with a token.

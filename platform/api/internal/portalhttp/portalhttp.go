@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"platform/api/internal/httpx"
-	"platform/api/internal/portal"
-	platformauth "platform/sdk/go"
+	"github.com/Wysted/atrium/platform/api/internal/httpx"
+	"github.com/Wysted/atrium/platform/api/internal/portal"
+	platformauth "github.com/Wysted/atrium/platform/sdk/go"
 )
 
 // Routes of the API (contract block 6).

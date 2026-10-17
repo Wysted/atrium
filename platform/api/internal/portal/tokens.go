@@ -8,8 +8,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"platform/api/internal/adminz"
-	"platform/api/internal/apitoken"
+	"github.com/Wysted/atrium/platform/api/internal/adminz"
+	"github.com/Wysted/atrium/platform/api/internal/apitoken"
 )
 
 // API tokens (contract block 6, "Non-browser clients"). Personal tokens are created by their owner from a

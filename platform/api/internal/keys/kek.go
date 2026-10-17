@@ -12,7 +12,7 @@ import (
 	"fmt"
 	"os"
 
-	"platform/api/internal/secretfile"
+	"github.com/Wysted/atrium/platform/api/internal/secretfile"
 )
 
 // KEKSize is the key-encryption-key length in bytes (AES-256).

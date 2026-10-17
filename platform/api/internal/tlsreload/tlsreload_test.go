@@ -21,8 +21,8 @@ import (
 	"testing"
 	"time"
 
-	"platform/api/internal/httpx"
-	"platform/api/internal/tlsreload"
+	"github.com/Wysted/atrium/platform/api/internal/httpx"
+	"github.com/Wysted/atrium/platform/api/internal/tlsreload"
 )
 
 type testCA struct {

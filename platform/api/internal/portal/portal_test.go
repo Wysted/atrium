@@ -6,8 +6,8 @@ import (
 	"slices"
 	"testing"
 
-	"platform/api/internal/adminz"
-	"platform/api/internal/portal"
+	"github.com/Wysted/atrium/platform/api/internal/adminz"
+	"github.com/Wysted/atrium/platform/api/internal/portal"
 )
 
 type fakePermissions struct {

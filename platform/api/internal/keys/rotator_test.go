@@ -17,9 +17,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"platform/api/internal/keys"
-	"platform/api/internal/postgres"
-	"platform/api/internal/testdb"
+	"github.com/Wysted/atrium/platform/api/internal/keys"
+	"github.com/Wysted/atrium/platform/api/internal/postgres"
+	"github.com/Wysted/atrium/platform/api/internal/testdb"
 )
 
 const testTimeout = 30 * time.Second

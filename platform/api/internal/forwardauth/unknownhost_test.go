@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"platform/api/internal/access"
-	"platform/api/internal/assertion"
-	"platform/api/internal/audit"
+	"github.com/Wysted/atrium/platform/api/internal/access"
+	"github.com/Wysted/atrium/platform/api/internal/assertion"
+	"github.com/Wysted/atrium/platform/api/internal/audit"
 )
 
 // Stubs: an unknown host never reaches any of them but the app directory.

@@ -8,7 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"platform/api/internal/housekeeping"
+	"github.com/Wysted/atrium/platform/api/internal/housekeeping"
 )
 
 // housekeepingLockKey serializes housekeeping across replicas.

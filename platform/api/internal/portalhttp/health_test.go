@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"platform/api/internal/portal"
+	"github.com/Wysted/atrium/platform/api/internal/portal"
 )
 
 func (f *fakeAdmin) AppHealth(_ context.Context, caller, id string) (portal.AppHealth, error) {

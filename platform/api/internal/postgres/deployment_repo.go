@@ -9,7 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"platform/api/internal/lastseen"
+	"github.com/Wysted/atrium/platform/api/internal/lastseen"
 )
 
 // DeploymentRepo resolves hosts to apps.

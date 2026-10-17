@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"platform/api/internal/httpx"
-	"platform/api/internal/portal"
-	"platform/api/internal/webui"
+	"github.com/Wysted/atrium/platform/api/internal/httpx"
+	"github.com/Wysted/atrium/platform/api/internal/portal"
+	"github.com/Wysted/atrium/platform/api/internal/webui"
 )
 
 // Environment variables read by "serve". The database comes from the standard PG* variables, connecting

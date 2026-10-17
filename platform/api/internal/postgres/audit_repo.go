@@ -6,7 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"platform/api/internal/audit"
+	"github.com/Wysted/atrium/platform/api/internal/audit"
 )
 
 // AuditRepo appends to audit_events (the runtime role has INSERT and SELECT only).

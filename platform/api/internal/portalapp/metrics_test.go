@@ -11,8 +11,8 @@ import (
 
 	dto "github.com/prometheus/client_model/go"
 
-	"platform/api/internal/portalapp"
-	"platform/api/internal/probe"
+	"github.com/Wysted/atrium/platform/api/internal/portalapp"
+	"github.com/Wysted/atrium/platform/api/internal/probe"
 )
 
 // sample returns the value of name{labels} (a histogram: its sample count) and whether the series exists.

@@ -15,10 +15,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 
-	"platform/api/internal/access"
-	"platform/api/internal/authhost"
-	"platform/api/internal/forwardauth"
-	"platform/api/internal/probe"
+	"github.com/Wysted/atrium/platform/api/internal/access"
+	"github.com/Wysted/atrium/platform/api/internal/authhost"
+	"github.com/Wysted/atrium/platform/api/internal/forwardauth"
+	"github.com/Wysted/atrium/platform/api/internal/probe"
 )
 
 // family returns the gathered family called name, or nil.

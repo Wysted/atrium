@@ -12,12 +12,12 @@ import (
 	"testing"
 	"time"
 
-	"platform/api/internal/assertion"
-	"platform/api/internal/jwks"
-	"platform/api/internal/keys"
-	"platform/api/internal/postgres"
-	"platform/api/internal/testdb"
-	platformauth "platform/sdk/go"
+	"github.com/Wysted/atrium/platform/api/internal/assertion"
+	"github.com/Wysted/atrium/platform/api/internal/jwks"
+	"github.com/Wysted/atrium/platform/api/internal/keys"
+	"github.com/Wysted/atrium/platform/api/internal/postgres"
+	"github.com/Wysted/atrium/platform/api/internal/testdb"
+	platformauth "github.com/Wysted/atrium/platform/sdk/go"
 )
 
 // These tests wire the real stack: PostgreSQL key store -> rotator -> keyring -> issuer -> JWKS handler

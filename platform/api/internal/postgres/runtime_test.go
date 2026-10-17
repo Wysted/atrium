@@ -11,9 +11,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"platform/api/internal/audit"
-	"platform/api/internal/postgres"
-	"platform/api/internal/testdb"
+	"github.com/Wysted/atrium/platform/api/internal/audit"
+	"github.com/Wysted/atrium/platform/api/internal/postgres"
+	"github.com/Wysted/atrium/platform/api/internal/testdb"
 )
 
 // runtimePool opens a runtime-role pool over the same test database as owner.

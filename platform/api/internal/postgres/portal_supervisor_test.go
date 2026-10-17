@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"platform/api/internal/portal"
+	"github.com/Wysted/atrium/platform/api/internal/portal"
 )
 
 // supWorld is the cast of the supervisor tests (contract block 6, "Area supervisors"):

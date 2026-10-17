@@ -10,7 +10,7 @@ import (
 	"log/slog"
 	"time"
 
-	"platform/api/internal/touchset"
+	"github.com/Wysted/atrium/platform/api/internal/touchset"
 )
 
 // Seen is the latest authorized request observed on a host.

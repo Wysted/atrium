@@ -14,14 +14,14 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
 
-	"platform/api/internal/health"
-	"platform/api/internal/httpx"
-	"platform/api/internal/metrics"
-	"platform/api/internal/portal"
-	"platform/api/internal/portalhttp"
-	"platform/api/internal/postgres"
-	"platform/api/internal/probe"
-	platformauth "platform/sdk/go"
+	"github.com/Wysted/atrium/platform/api/internal/health"
+	"github.com/Wysted/atrium/platform/api/internal/httpx"
+	"github.com/Wysted/atrium/platform/api/internal/metrics"
+	"github.com/Wysted/atrium/platform/api/internal/portal"
+	"github.com/Wysted/atrium/platform/api/internal/portalhttp"
+	"github.com/Wysted/atrium/platform/api/internal/postgres"
+	"github.com/Wysted/atrium/platform/api/internal/probe"
+	platformauth "github.com/Wysted/atrium/platform/sdk/go"
 )
 
 // ExemptPath is the health path handed to the SDK in place of its default "/healthz". The SDK lets that one path

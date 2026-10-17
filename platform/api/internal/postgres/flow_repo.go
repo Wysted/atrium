@@ -8,7 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"platform/api/internal/googlelogin"
+	"github.com/Wysted/atrium/platform/api/internal/googlelogin"
 )
 
 // FlowRepo implements googlelogin.FlowStore on oauth_flows. Expiry uses the database clock.

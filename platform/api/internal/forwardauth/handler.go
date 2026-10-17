@@ -15,13 +15,13 @@ import (
 	"strings"
 	"time"
 
-	"platform/api/internal/access"
-	"platform/api/internal/assertion"
-	"platform/api/internal/audit"
-	"platform/api/internal/hostname"
-	"platform/api/internal/httpx"
-	"platform/api/internal/keys"
-	"platform/api/internal/session"
+	"github.com/Wysted/atrium/platform/api/internal/access"
+	"github.com/Wysted/atrium/platform/api/internal/assertion"
+	"github.com/Wysted/atrium/platform/api/internal/audit"
+	"github.com/Wysted/atrium/platform/api/internal/hostname"
+	"github.com/Wysted/atrium/platform/api/internal/httpx"
+	"github.com/Wysted/atrium/platform/api/internal/keys"
+	"github.com/Wysted/atrium/platform/api/internal/session"
 )
 
 // Request headers read from Traefik (contract block 2). Everything else is ignored.

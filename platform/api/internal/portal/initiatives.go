@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"platform/api/internal/adminz"
+	"github.com/Wysted/atrium/platform/api/internal/adminz"
 )
 
 // Bounds of the free-text inputs of the catalog. The schema only limits the role key (32); the others follow

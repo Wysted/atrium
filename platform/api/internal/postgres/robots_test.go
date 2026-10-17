@@ -10,11 +10,11 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"platform/api/internal/adminz"
-	"platform/api/internal/audit"
-	"platform/api/internal/portal"
-	"platform/api/internal/postgres"
-	"platform/api/internal/testdb"
+	"github.com/Wysted/atrium/platform/api/internal/adminz"
+	"github.com/Wysted/atrium/platform/api/internal/audit"
+	"github.com/Wysted/atrium/platform/api/internal/portal"
+	"github.com/Wysted/atrium/platform/api/internal/postgres"
+	"github.com/Wysted/atrium/platform/api/internal/testdb"
 )
 
 const (

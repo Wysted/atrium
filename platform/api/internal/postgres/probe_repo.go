@@ -8,7 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"platform/api/internal/probe"
+	"github.com/Wysted/atrium/platform/api/internal/probe"
 )
 
 // probeLockKey serializes probe rounds across portal replicas ("platprob").

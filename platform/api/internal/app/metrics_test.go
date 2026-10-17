@@ -10,8 +10,8 @@ import (
 
 	dto "github.com/prometheus/client_model/go"
 
-	"platform/api/internal/jwks"
-	"platform/api/internal/keys"
+	"github.com/Wysted/atrium/platform/api/internal/jwks"
+	"github.com/Wysted/atrium/platform/api/internal/keys"
 )
 
 // sample returns the value of the series name{labels} of the app's registry (a histogram: its sample count), and

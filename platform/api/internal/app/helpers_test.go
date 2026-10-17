@@ -16,15 +16,15 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"platform/api/internal/access"
-	"platform/api/internal/app"
-	"platform/api/internal/forwardauth"
-	"platform/api/internal/jwks"
-	"platform/api/internal/keys"
-	"platform/api/internal/postgres"
-	"platform/api/internal/session"
-	"platform/api/internal/testdb"
-	platformauth "platform/sdk/go"
+	"github.com/Wysted/atrium/platform/api/internal/access"
+	"github.com/Wysted/atrium/platform/api/internal/app"
+	"github.com/Wysted/atrium/platform/api/internal/forwardauth"
+	"github.com/Wysted/atrium/platform/api/internal/jwks"
+	"github.com/Wysted/atrium/platform/api/internal/keys"
+	"github.com/Wysted/atrium/platform/api/internal/postgres"
+	"github.com/Wysted/atrium/platform/api/internal/session"
+	"github.com/Wysted/atrium/platform/api/internal/testdb"
+	platformauth "github.com/Wysted/atrium/platform/sdk/go"
 )
 
 const (

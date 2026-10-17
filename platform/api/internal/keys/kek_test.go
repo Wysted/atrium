@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"platform/api/internal/keys"
+	"github.com/Wysted/atrium/platform/api/internal/keys"
 )
 
 func TestKEKSealOpen(t *testing.T) {

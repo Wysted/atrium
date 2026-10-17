@@ -3,7 +3,7 @@ package postgres
 import (
 	"context"
 
-	"platform/api/internal/portal"
+	"github.com/Wysted/atrium/platform/api/internal/portal"
 )
 
 // HousekeepingLockKey exposes the housekeeping advisory lock key to the external tests.

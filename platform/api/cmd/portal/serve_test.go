@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"platform/api/internal/postgres"
+	"github.com/Wysted/atrium/platform/api/internal/postgres"
 )
 
 func TestCheckLoginRole(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"platform/api/internal/apitoken"
+	"github.com/Wysted/atrium/platform/api/internal/apitoken"
 )
 
 func TestGenerate(t *testing.T) {

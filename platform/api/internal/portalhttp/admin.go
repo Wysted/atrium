@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"time"
 
-	"platform/api/internal/portal"
+	"github.com/Wysted/atrium/platform/api/internal/portal"
 )
 
 // AdminService is the use-case port of the administration endpoints (implemented by portal.Service). Every

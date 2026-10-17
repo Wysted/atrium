@@ -21,7 +21,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"platform/api/internal/postgres"
+	"github.com/Wysted/atrium/platform/api/internal/postgres"
 )
 
 const (

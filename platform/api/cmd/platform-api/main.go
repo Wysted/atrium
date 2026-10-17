@@ -12,7 +12,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"platform/api/internal/postgres"
+	"github.com/Wysted/atrium/platform/api/internal/postgres"
 )
 
 const usage = "usage: platform-api migrate|serve"

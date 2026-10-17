@@ -13,7 +13,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
-	platformauth "platform/sdk/go"
+	platformauth "github.com/Wysted/atrium/platform/sdk/go"
 )
 
 const asyncTimeout = 5 * time.Second

@@ -5,9 +5,9 @@ import (
 	"slices"
 	"testing"
 
-	"platform/api/internal/access"
-	"platform/api/internal/postgres"
-	"platform/api/internal/testdb"
+	"github.com/Wysted/atrium/platform/api/internal/access"
+	"github.com/Wysted/atrium/platform/api/internal/postgres"
+	"github.com/Wysted/atrium/platform/api/internal/testdb"
 )
 
 // The home invariant (contract block 6): a deployment appears in /me/apps for a user if and only if

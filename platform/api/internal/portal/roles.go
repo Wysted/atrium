@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"platform/api/internal/adminz"
+	"github.com/Wysted/atrium/platform/api/internal/adminz"
 )
 
 // roleDoc is the audit document of a role.

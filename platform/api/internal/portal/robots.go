@@ -8,7 +8,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"platform/api/internal/adminz"
+	"github.com/Wysted/atrium/platform/api/internal/adminz"
 )
 
 // Robots (contract block 6, "Non-browser clients"): users of kind 'robot', created and administered by platform

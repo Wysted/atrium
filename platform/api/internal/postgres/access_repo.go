@@ -8,7 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"platform/api/internal/access"
+	"github.com/Wysted/atrium/platform/api/internal/access"
 )
 
 // AccessRepository implements access.FactsReader.

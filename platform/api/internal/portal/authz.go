@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"platform/api/internal/adminz"
-	"platform/api/internal/audit"
+	"github.com/Wysted/atrium/platform/api/internal/adminz"
+	"github.com/Wysted/atrium/platform/api/internal/audit"
 )
 
 // subject loads the caller's permissions through the transaction and builds the adminz subject. An unknown or

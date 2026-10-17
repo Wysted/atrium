@@ -21,11 +21,11 @@ import (
 	"strings"
 	"time"
 
-	"platform/api/internal/audit"
-	"platform/api/internal/googlelogin"
-	"platform/api/internal/httpx"
-	"platform/api/internal/ratelimit"
-	"platform/api/internal/session"
+	"github.com/Wysted/atrium/platform/api/internal/audit"
+	"github.com/Wysted/atrium/platform/api/internal/googlelogin"
+	"github.com/Wysted/atrium/platform/api/internal/httpx"
+	"github.com/Wysted/atrium/platform/api/internal/ratelimit"
+	"github.com/Wysted/atrium/platform/api/internal/session"
 )
 
 const (

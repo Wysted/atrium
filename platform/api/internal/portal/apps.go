@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"regexp"
 
-	"platform/api/internal/adminz"
+	"github.com/Wysted/atrium/platform/api/internal/adminz"
 )
 
 // appIDPattern mirrors the apps.id CHECK.

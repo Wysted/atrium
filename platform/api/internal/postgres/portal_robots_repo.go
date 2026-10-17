@@ -8,8 +8,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"platform/api/internal/adminz"
-	"platform/api/internal/portal"
+	"github.com/Wysted/atrium/platform/api/internal/adminz"
+	"github.com/Wysted/atrium/platform/api/internal/portal"
 )
 
 // RobotsRepo implements portal.RobotRepo. Every statement filters kind = 'robot' in SQL, so a human id is as

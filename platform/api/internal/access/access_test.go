@@ -5,7 +5,7 @@ import (
 	"slices"
 	"testing"
 
-	"platform/api/internal/access"
+	"github.com/Wysted/atrium/platform/api/internal/access"
 )
 
 func TestDecide(t *testing.T) {

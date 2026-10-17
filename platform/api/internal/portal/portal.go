@@ -21,8 +21,8 @@ import (
 	"strings"
 	"time"
 
-	"platform/api/internal/adminz"
-	"platform/api/internal/audit"
+	"github.com/Wysted/atrium/platform/api/internal/adminz"
+	"github.com/Wysted/atrium/platform/api/internal/audit"
 )
 
 // ErrUserInactive means the caller does not exist or is disabled. The assertion outlives a disable by up to

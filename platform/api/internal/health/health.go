@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"time"
 
-	"platform/api/internal/httpx"
-	"platform/api/internal/keys"
+	"github.com/Wysted/atrium/platform/api/internal/httpx"
+	"github.com/Wysted/atrium/platform/api/internal/keys"
 )
 
 const (

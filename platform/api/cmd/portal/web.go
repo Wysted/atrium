@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"platform/api/internal/webui"
+	"github.com/Wysted/atrium/platform/api/internal/webui"
 )
 
 // webHandler builds the handler of the embedded SPA. A binary without it (a development or test build that never

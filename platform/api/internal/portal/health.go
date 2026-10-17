@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"platform/api/internal/adminz"
+	"github.com/Wysted/atrium/platform/api/internal/adminz"
 )
 
 // Results of the last probe of a deployment (mirror the deployments.last_probe_status CHECK).

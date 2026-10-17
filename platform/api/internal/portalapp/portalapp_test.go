@@ -19,8 +19,8 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"platform/api/internal/portalapp"
-	"platform/api/internal/testdb"
+	"github.com/Wysted/atrium/platform/api/internal/portalapp"
+	"github.com/Wysted/atrium/platform/api/internal/testdb"
 )
 
 const (

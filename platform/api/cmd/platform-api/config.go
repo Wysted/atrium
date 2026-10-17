@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"platform/api/internal/httpx"
-	"platform/api/internal/keys"
-	"platform/api/internal/secretfile"
-	"platform/api/internal/session"
+	"github.com/Wysted/atrium/platform/api/internal/httpx"
+	"github.com/Wysted/atrium/platform/api/internal/keys"
+	"github.com/Wysted/atrium/platform/api/internal/secretfile"
+	"github.com/Wysted/atrium/platform/api/internal/session"
 )
 
 // Environment variables read by "serve". The database comes from the standard PG* variables.

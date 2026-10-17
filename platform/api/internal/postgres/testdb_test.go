@@ -7,7 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"platform/api/internal/testdb"
+	"github.com/Wysted/atrium/platform/api/internal/testdb"
 )
 
 const testTimeout = 30 * time.Second

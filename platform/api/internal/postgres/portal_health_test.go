@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"platform/api/internal/portal"
+	"github.com/Wysted/atrium/platform/api/internal/portal"
 )
 
 // The grant numbers of the health report use the definition of the last-manager rule: a manages_access grant is

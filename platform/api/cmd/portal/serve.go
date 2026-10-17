@@ -10,10 +10,10 @@ import (
 	"sync"
 	"time"
 
-	"platform/api/internal/access"
-	"platform/api/internal/httpx"
-	"platform/api/internal/portalapp"
-	"platform/api/internal/postgres"
+	"github.com/Wysted/atrium/platform/api/internal/access"
+	"github.com/Wysted/atrium/platform/api/internal/httpx"
+	"github.com/Wysted/atrium/platform/api/internal/portalapp"
+	"github.com/Wysted/atrium/platform/api/internal/postgres"
 )
 
 // shutdownTimeout is the single budget for the whole shutdown (both listeners, the probe and the pool), kept under the

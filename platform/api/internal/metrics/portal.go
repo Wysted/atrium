@@ -9,8 +9,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
 
-	"platform/api/internal/portalhttp"
-	"platform/api/internal/probe"
+	"github.com/Wysted/atrium/platform/api/internal/portalhttp"
+	"github.com/Wysted/atrium/platform/api/internal/probe"
 )
 
 // probeBuckets (seconds) cover a round from one host up to a full round of slow hosts (10 s each, 8 at a time).

@@ -4,7 +4,7 @@ import (
 	"slices"
 	"testing"
 
-	"platform/api/internal/adminz"
+	"github.com/Wysted/atrium/platform/api/internal/adminz"
 )
 
 const (

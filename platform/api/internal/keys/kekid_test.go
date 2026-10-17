@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"platform/api/internal/keys"
+	"github.com/Wysted/atrium/platform/api/internal/keys"
 )
 
 func TestKEKIDIsStableDistinctAndOpaque(t *testing.T) {

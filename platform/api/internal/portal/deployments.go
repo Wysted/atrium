@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	"platform/api/internal/adminz"
-	"platform/api/internal/hostname"
+	"github.com/Wysted/atrium/platform/api/internal/adminz"
+	"github.com/Wysted/atrium/platform/api/internal/hostname"
 )
 
 // deploymentDoc is the audit document of a deployment.

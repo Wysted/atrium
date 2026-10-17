@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"platform/api/internal/portal"
-	platformauth "platform/sdk/go"
+	"github.com/Wysted/atrium/platform/api/internal/portal"
+	platformauth "github.com/Wysted/atrium/platform/sdk/go"
 )
 
 // seenRequest is one request as the Observer received it.

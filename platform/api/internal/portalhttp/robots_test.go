@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"platform/api/internal/portal"
+	"github.com/Wysted/atrium/platform/api/internal/portal"
 )
 
 const robotID = "01a14296-1449-7be0-957b-4b1ad8d7a0bb"

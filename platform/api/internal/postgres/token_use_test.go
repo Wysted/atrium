@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"platform/api/internal/postgres"
-	"platform/api/internal/tokenuse"
+	"github.com/Wysted/atrium/platform/api/internal/postgres"
+	"github.com/Wysted/atrium/platform/api/internal/tokenuse"
 )
 
 func TestMarkUsed(t *testing.T) {

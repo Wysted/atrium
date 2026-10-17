@@ -9,7 +9,7 @@ import (
 	"log/slog"
 	"time"
 
-	"platform/api/internal/session"
+	"github.com/Wysted/atrium/platform/api/internal/session"
 )
 
 const (

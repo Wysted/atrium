@@ -9,10 +9,10 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"platform/api/internal/lastseen"
-	"platform/api/internal/postgres"
-	"platform/api/internal/probe"
-	"platform/api/internal/testdb"
+	"github.com/Wysted/atrium/platform/api/internal/lastseen"
+	"github.com/Wysted/atrium/platform/api/internal/postgres"
+	"github.com/Wysted/atrium/platform/api/internal/probe"
+	"github.com/Wysted/atrium/platform/api/internal/testdb"
 )
 
 // listenAccessChanged returns a function that reports the payload of the next access_changed notification.

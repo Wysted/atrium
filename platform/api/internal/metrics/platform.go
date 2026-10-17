@@ -8,10 +8,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
 
-	"platform/api/internal/access"
-	"platform/api/internal/authhost"
-	"platform/api/internal/forwardauth"
-	"platform/api/internal/httpx"
+	"github.com/Wysted/atrium/platform/api/internal/access"
+	"github.com/Wysted/atrium/platform/api/internal/authhost"
+	"github.com/Wysted/atrium/platform/api/internal/forwardauth"
+	"github.com/Wysted/atrium/platform/api/internal/httpx"
 )
 
 // Listeners of platform-api, the label of the JWKS counter.

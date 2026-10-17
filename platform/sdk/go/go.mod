@@ -1,4 +1,4 @@
-module platform/sdk/go
+module github.com/Wysted/atrium/platform/sdk/go
 
 go 1.27
 

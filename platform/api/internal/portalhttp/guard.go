@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"platform/api/internal/httpx"
+	"github.com/Wysted/atrium/platform/api/internal/httpx"
 )
 
 const (

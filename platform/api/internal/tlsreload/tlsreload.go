@@ -17,7 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"platform/api/internal/secretfile"
+	"github.com/Wysted/atrium/platform/api/internal/secretfile"
 )
 
 const (

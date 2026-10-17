@@ -8,7 +8,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
-	"platform/api/internal/assertion"
+	"github.com/Wysted/atrium/platform/api/internal/assertion"
 )
 
 // forgeUnknownKID signs a well-formed assertion with a random key published nowhere, under a made-up kid.

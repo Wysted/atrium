@@ -13,9 +13,9 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"platform/api/internal/postgres"
-	"platform/api/internal/session"
-	"platform/api/internal/testdb"
+	"github.com/Wysted/atrium/platform/api/internal/postgres"
+	"github.com/Wysted/atrium/platform/api/internal/session"
+	"github.com/Wysted/atrium/platform/api/internal/testdb"
 )
 
 const (

@@ -6,7 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"platform/api/internal/access"
+	"github.com/Wysted/atrium/platform/api/internal/access"
 )
 
 // DenialRepo records deny decisions in access_denials.

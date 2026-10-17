@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"platform/api/internal/httpx"
+	"github.com/Wysted/atrium/platform/api/internal/httpx"
 )
 
 // dist holds the output of `nuxt generate` (copied by Dockerfile.portal). Only .gitkeep is tracked, so a plain

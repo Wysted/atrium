@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"unicode/utf8"
 
-	"platform/api/internal/adminz"
+	"github.com/Wysted/atrium/platform/api/internal/adminz"
 )
 
 // keyPattern mirrors the key CHECK of groups, initiatives and initiative roles.

@@ -11,7 +11,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
-	"platform/api/internal/keys"
+	"github.com/Wysted/atrium/platform/api/internal/keys"
 )
 
 const (

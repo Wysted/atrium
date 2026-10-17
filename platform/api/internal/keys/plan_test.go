@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"platform/api/internal/keys"
+	"github.com/Wysted/atrium/platform/api/internal/keys"
 )
 
 var t0 = time.Date(2026, 10, 14, 0, 0, 0, 0, time.UTC)

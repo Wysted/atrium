@@ -15,8 +15,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"platform/api/internal/postgres"
-	"platform/api/internal/probe"
+	"github.com/Wysted/atrium/platform/api/internal/postgres"
+	"github.com/Wysted/atrium/platform/api/internal/probe"
 )
 
 // Environment variables of the integration probe (contract block 6, "Observability").

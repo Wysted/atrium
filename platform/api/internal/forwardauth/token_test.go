@@ -11,10 +11,10 @@ import (
 	"sync"
 	"testing"
 
-	"platform/api/internal/access"
-	"platform/api/internal/apitoken"
-	"platform/api/internal/assertion"
-	"platform/api/internal/session"
+	"github.com/Wysted/atrium/platform/api/internal/access"
+	"github.com/Wysted/atrium/platform/api/internal/apitoken"
+	"github.com/Wysted/atrium/platform/api/internal/assertion"
+	"github.com/Wysted/atrium/platform/api/internal/session"
 )
 
 const (

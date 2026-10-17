@@ -9,7 +9,7 @@ import (
 	"regexp"
 	"testing"
 
-	"platform/api/internal/keys"
+	"github.com/Wysted/atrium/platform/api/internal/keys"
 )
 
 // RFC 7515 appendix A.3 ES256 key. The expected thumbprint was computed independently:

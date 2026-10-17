@@ -10,14 +10,14 @@ import (
 	"sync"
 	"time"
 
-	"platform/api/internal/access"
-	"platform/api/internal/app"
-	"platform/api/internal/googlelogin"
-	"platform/api/internal/housekeeping"
-	"platform/api/internal/httpx"
-	"platform/api/internal/keys"
-	"platform/api/internal/postgres"
-	"platform/api/internal/tlsreload"
+	"github.com/Wysted/atrium/platform/api/internal/access"
+	"github.com/Wysted/atrium/platform/api/internal/app"
+	"github.com/Wysted/atrium/platform/api/internal/googlelogin"
+	"github.com/Wysted/atrium/platform/api/internal/housekeeping"
+	"github.com/Wysted/atrium/platform/api/internal/httpx"
+	"github.com/Wysted/atrium/platform/api/internal/keys"
+	"github.com/Wysted/atrium/platform/api/internal/postgres"
+	"github.com/Wysted/atrium/platform/api/internal/tlsreload"
 )
 
 // shutdownTimeout is the single budget for the whole shutdown (all listeners, background jobs and the pool),

@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"time"
 
-	"platform/api/internal/portal"
+	"github.com/Wysted/atrium/platform/api/internal/portal"
 )
 
 func (a *api) catalogRoutes(mux *http.ServeMux) {

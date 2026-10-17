@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"platform/api/internal/keys"
+	"github.com/Wysted/atrium/platform/api/internal/keys"
 )
 
 // flakyStore wraps a Store to fail LoadAll on demand and to hold the first LoadAll after its read.

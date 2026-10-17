@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"platform/api/internal/adminz"
+	"github.com/Wysted/atrium/platform/api/internal/adminz"
 )
 
 // grantDoc is the audit document of a grant (before for a revocation, after for a creation).

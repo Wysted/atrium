@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"platform/api/internal/access"
-	"platform/api/internal/adminz"
+	"github.com/Wysted/atrium/platform/api/internal/access"
+	"github.com/Wysted/atrium/platform/api/internal/adminz"
 )
 
 // PlatformInitiativeKey is the reserved initiative that owns the portal app (see access.PlatformInitiativeKey).

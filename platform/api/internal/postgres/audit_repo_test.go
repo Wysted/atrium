@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"platform/api/internal/audit"
-	"platform/api/internal/postgres"
+	"github.com/Wysted/atrium/platform/api/internal/audit"
+	"github.com/Wysted/atrium/platform/api/internal/postgres"
 )
 
 func TestAuditRepoInitiativeID(t *testing.T) {

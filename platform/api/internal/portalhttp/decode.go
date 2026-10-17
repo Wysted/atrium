@@ -7,7 +7,7 @@ import (
 	"io"
 	"net/http"
 
-	"platform/api/internal/httpx"
+	"github.com/Wysted/atrium/platform/api/internal/httpx"
 )
 
 // MaxBodyBytes bounds a request body. API payloads are a handful of short fields.

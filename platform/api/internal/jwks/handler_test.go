@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"platform/api/internal/jwks"
-	"platform/api/internal/keys"
+	"github.com/Wysted/atrium/platform/api/internal/jwks"
+	"github.com/Wysted/atrium/platform/api/internal/keys"
 )
 
 type fakeSource []keys.PublicKey

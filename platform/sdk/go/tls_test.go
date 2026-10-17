@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	platformauth "platform/sdk/go"
+	platformauth "github.com/Wysted/atrium/platform/sdk/go"
 )
 
 // testCA is an ephemeral CA that can issue a loopback server certificate.

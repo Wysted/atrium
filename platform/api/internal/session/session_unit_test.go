@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"platform/api/internal/session"
+	"github.com/Wysted/atrium/platform/api/internal/session"
 )
 
 type fakeHosts struct {

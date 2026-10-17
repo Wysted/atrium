@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"platform/api/internal/postgres"
+	"github.com/Wysted/atrium/platform/api/internal/postgres"
 )
 
 // hungConn is a connection whose Close blocks until its context ends (a dead peer).

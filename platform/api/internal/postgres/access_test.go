@@ -5,8 +5,8 @@ import (
 	"slices"
 	"testing"
 
-	"platform/api/internal/access"
-	"platform/api/internal/postgres"
+	"github.com/Wysted/atrium/platform/api/internal/access"
+	"github.com/Wysted/atrium/platform/api/internal/postgres"
 )
 
 func TestEvaluate(t *testing.T) {

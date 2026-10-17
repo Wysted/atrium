@@ -12,9 +12,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
-	"platform/api/internal/adminz"
-	"platform/api/internal/audit"
-	"platform/api/internal/portal"
+	"github.com/Wysted/atrium/platform/api/internal/adminz"
+	"github.com/Wysted/atrium/platform/api/internal/audit"
+	"github.com/Wysted/atrium/platform/api/internal/portal"
 )
 
 // SQLSTATE codes the administration repositories translate.

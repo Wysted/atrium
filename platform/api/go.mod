@@ -1,4 +1,4 @@
-module platform/api
+module github.com/Wysted/atrium/platform/api
 
 go 1.27
 

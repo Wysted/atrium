@@ -32,7 +32,7 @@ import (
 	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
 
-	"platform/api/internal/session"
+	"github.com/Wysted/atrium/platform/api/internal/session"
 )
 
 const (

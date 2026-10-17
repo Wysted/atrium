@@ -8,8 +8,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"platform/api/internal/hostname"
-	"platform/api/internal/testdb"
+	"github.com/Wysted/atrium/platform/api/internal/hostname"
+	"github.com/Wysted/atrium/platform/api/internal/testdb"
 )
 
 // hostCases is shared by hostname.Valid and the deployments.host CHECK: both must agree on every entry.

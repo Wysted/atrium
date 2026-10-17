@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"platform/api/internal/portal"
+	"github.com/Wysted/atrium/platform/api/internal/portal"
 )
 
 const (

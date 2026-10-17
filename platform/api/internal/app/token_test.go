@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"platform/api/internal/apitoken"
-	"platform/api/internal/forwardauth"
+	"github.com/Wysted/atrium/platform/api/internal/apitoken"
+	"github.com/Wysted/atrium/platform/api/internal/forwardauth"
 )
 
 const (

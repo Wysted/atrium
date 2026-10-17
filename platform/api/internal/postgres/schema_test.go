@@ -10,8 +10,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 
-	"platform/api/internal/postgres"
-	"platform/api/internal/testdb"
+	"github.com/Wysted/atrium/platform/api/internal/postgres"
+	"github.com/Wysted/atrium/platform/api/internal/testdb"
 )
 
 // pgErrCode extracts the SQLSTATE of err ("" if it is not a PostgreSQL error).

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"platform/api/internal/adminz"
+	"github.com/Wysted/atrium/platform/api/internal/adminz"
 )
 
 // Areas (contract block 6, "Area supervisors"): the administration of areas, their members and their supervisors,

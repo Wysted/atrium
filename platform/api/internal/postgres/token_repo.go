@@ -9,9 +9,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"platform/api/internal/access"
-	"platform/api/internal/apitoken"
-	"platform/api/internal/tokenuse"
+	"github.com/Wysted/atrium/platform/api/internal/access"
+	"github.com/Wysted/atrium/platform/api/internal/apitoken"
+	"github.com/Wysted/atrium/platform/api/internal/tokenuse"
 )
 
 // TokenRepo is the platform_runtime view of api_tokens: lookup by hash and last_used_at.

@@ -18,7 +18,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
-	"platform/api/internal/session"
+	"github.com/Wysted/atrium/platform/api/internal/session"
 )
 
 var ipCounter atomic.Int64

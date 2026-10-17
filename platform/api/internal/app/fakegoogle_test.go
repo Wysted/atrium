@@ -19,7 +19,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
-	"platform/api/internal/googlelogin"
+	"github.com/Wysted/atrium/platform/api/internal/googlelogin"
 )
 
 const (

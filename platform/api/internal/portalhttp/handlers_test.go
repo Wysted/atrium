@@ -12,8 +12,8 @@ import (
 	"strings"
 	"testing"
 
-	"platform/api/internal/portal"
-	platformauth "platform/sdk/go"
+	"github.com/Wysted/atrium/platform/api/internal/portal"
+	platformauth "github.com/Wysted/atrium/platform/sdk/go"
 )
 
 const callerID = "01a14296-1449-7be0-957b-4b1ad8d7a267"

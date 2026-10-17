@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"platform/api/internal/probe"
+	"github.com/Wysted/atrium/platform/api/internal/probe"
 )
 
 // writeCA writes a self-signed certificate as a PEM file and returns its path.

@@ -16,10 +16,10 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"platform/api/internal/app"
-	"platform/api/internal/keys"
-	"platform/api/internal/postgres"
-	"platform/api/internal/session"
+	"github.com/Wysted/atrium/platform/api/internal/app"
+	"github.com/Wysted/atrium/platform/api/internal/keys"
+	"github.com/Wysted/atrium/platform/api/internal/postgres"
+	"github.com/Wysted/atrium/platform/api/internal/session"
 )
 
 const sqlstateInsufficientPrivilege = "42501"

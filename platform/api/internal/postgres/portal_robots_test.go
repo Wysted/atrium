@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"platform/api/internal/apitoken"
-	"platform/api/internal/portal"
+	"github.com/Wysted/atrium/platform/api/internal/apitoken"
+	"github.com/Wysted/atrium/platform/api/internal/portal"
 )
 
 func ptr[T any](v T) *T { return &v }

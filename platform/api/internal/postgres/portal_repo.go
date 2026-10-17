@@ -9,8 +9,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"platform/api/internal/access"
-	"platform/api/internal/portal"
+	"github.com/Wysted/atrium/platform/api/internal/access"
+	"github.com/Wysted/atrium/platform/api/internal/portal"
 )
 
 // dbtx is the part of a pool or a transaction the portal repositories use, so the same repository serves

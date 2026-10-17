@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"platform/api/internal/access"
+	"github.com/Wysted/atrium/platform/api/internal/access"
 )
 
 // Recording of unknown_host denials (contract block 2). The host comes straight from the network, so the

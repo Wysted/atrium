@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	platformauth "platform/sdk/go"
+	platformauth "github.com/Wysted/atrium/platform/sdk/go"
 )
 
 const (

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"platform/api/internal/adminz"
+	"github.com/Wysted/atrium/platform/api/internal/adminz"
 )
 
 // ListAudit lists audit events newest first (keyset on occurred_at and id). Platform admins see everything, or

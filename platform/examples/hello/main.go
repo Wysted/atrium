@@ -14,7 +14,7 @@ import (
 	"syscall"
 	"time"
 
-	platformauth "platform/sdk/go"
+	platformauth "github.com/Wysted/atrium/platform/sdk/go"
 )
 
 // HTTP server limits. Requests are tiny, so these are tight.

@@ -9,7 +9,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"platform/api/internal/adminz"
+	"github.com/Wysted/atrium/platform/api/internal/adminz"
 )
 
 // Errors of the administration use cases. The HTTP layer maps them to problem documents; none of them carries

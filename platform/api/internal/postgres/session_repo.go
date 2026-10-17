@@ -10,7 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"platform/api/internal/session"
+	"github.com/Wysted/atrium/platform/api/internal/session"
 )
 
 // SessionRepo implements the session stores on PostgreSQL. Every time comparison uses now() of the

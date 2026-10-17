@@ -6,11 +6,11 @@ import (
 	"net/http"
 	"strings"
 
-	"platform/api/internal/access"
-	"platform/api/internal/apitoken"
-	"platform/api/internal/assertion"
-	"platform/api/internal/httpx"
-	"platform/api/internal/keys"
+	"github.com/Wysted/atrium/platform/api/internal/access"
+	"github.com/Wysted/atrium/platform/api/internal/apitoken"
+	"github.com/Wysted/atrium/platform/api/internal/assertion"
+	"github.com/Wysted/atrium/platform/api/internal/httpx"
+	"github.com/Wysted/atrium/platform/api/internal/keys"
 )
 
 // Token path (contract block 6, "Non-browser clients", "ForwardAuth token path"). On a portal host an

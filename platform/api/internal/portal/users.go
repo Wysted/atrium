@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"platform/api/internal/adminz"
+	"github.com/Wysted/atrium/platform/api/internal/adminz"
 )
 
 // MaxUserMatches bounds the users returned for one email (the email is not unique).

@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"platform/api/internal/apitoken"
-	"platform/api/internal/portal"
-	"platform/api/internal/testdb"
+	"github.com/Wysted/atrium/platform/api/internal/apitoken"
+	"github.com/Wysted/atrium/platform/api/internal/portal"
+	"github.com/Wysted/atrium/platform/api/internal/testdb"
 )
 
 // lastAuditToken returns the token_id of the newest audit row (empty: NULL).

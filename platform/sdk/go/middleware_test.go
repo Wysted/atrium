@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	platformauth "platform/sdk/go"
+	platformauth "github.com/Wysted/atrium/platform/sdk/go"
 )
 
 func TestMiddleware(t *testing.T) {

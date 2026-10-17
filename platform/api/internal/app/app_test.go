@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"platform/api/internal/keys"
-	"platform/api/internal/session"
+	"github.com/Wysted/atrium/platform/api/internal/keys"
+	"github.com/Wysted/atrium/platform/api/internal/session"
 )
 
 const userEmail = "ana@example.test"
