@@ -33,3 +33,7 @@ providers:
 
 accessLog:
   enabled: true
+  fields:
+    headers:
+      # Explicit: headers (Authorization, Cookie, Set-Cookie) are dropped. Contract block 6 rule 7: never relax.
+      defaultMode: drop

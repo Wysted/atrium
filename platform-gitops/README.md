@@ -222,7 +222,12 @@ Adopters, mirroring this with their own Grafana and PKI:
 - Namespaces that host apps need the label `portal.wysted.dev/app-namespace=true`: the JWKS listener (8083) accepts them.
 - Access log: `accessLog.fields.queryParameters.defaultMode: drop` (Traefik >= 3.7.3) removes the whole query from
   `RequestPath`, so the login `code`, `bind` and `rd` are never logged. Tradeoff: no query at all in access logs (it also
-  hides benign parameters). Headers (Cookie, Set-Cookie, Location) are dropped by default.
+  hides benign parameters). Headers (Cookie, Set-Cookie, Location) are dropped by default; keep them dropped
+  explicitly (`accessLog.fields.headers.defaultMode: drop`, as `local/traefik-values.yaml` does): `Authorization`
+  now carries API tokens on the portal host, and any header logging would write live secrets.
+- API tokens (contract block 6, "Non-browser clients"): the ForwardAuth middleware forwards `Authorization` to
+  platform-api, and every route that matches a portal host must list the `strip-authorization` middleware of the
+  `portal` namespace, so the token never reaches the portal process. Smoke section 22 checks both in the local cluster.
 - Client IP: in k3d Traefik sees `10.42.0.1` (the node's CNI gateway) for every client, because the host port goes through
   the k3d serverlb proxy and ServiceLB SNAT. The `/login` rate limit (last `X-Forwarded-For` entry) therefore behaves as
   one global bucket locally. A real load balancer that preserves the source address is needed for per-client limits.

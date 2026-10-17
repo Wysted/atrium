@@ -34,6 +34,8 @@ spec:
       - Access-Control-Request-Headers
       - X-Requested-With
       - User-Agent
+      # Read by platform-api only on the portal host (contract block 6, "Non-browser clients"); apps keep their own.
+      - Authorization
     # Bytes read from the auth response; larger -> 401 (default is unlimited).
     maxResponseBodySize: 4096
     authResponseHeaders: [Platform-Assertion]

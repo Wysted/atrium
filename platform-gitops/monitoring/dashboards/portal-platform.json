@@ -902,8 +902,8 @@
   {
    "id": 17,
    "type": "timeseries",
-   "title": "last_seen_at pending hosts and flush errors",
-   "description": "Hosts waiting in memory for the once-a-minute flush; flush errors keep the batch for the next tick.",
+   "title": "last_seen_at and token last_used_at: pending, drops and flush errors",
+   "description": "Hosts (last_seen_at) and API tokens (last_used_at) waiting in memory for the once-a-minute flush; flush errors keep the batch for the next tick; drops are observations lost beyond the in-memory bound (10 000 per replica).",
    "datasource": {
     "type": "prometheus",
     "uid": "${datasource}"
@@ -933,6 +933,46 @@
      "expr": "sum(rate(platform_lastseen_flush_errors_total[$__rate_interval]))",
      "legendFormat": "flush errors/s",
      "refId": "B",
+     "range": true
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "sum by (pod) (platform_token_use_pending_tokens)",
+     "legendFormat": "token pending {{pod}}",
+     "refId": "C",
+     "range": true
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "sum(rate(platform_token_use_flush_errors_total[$__rate_interval]))",
+     "legendFormat": "token flush errors/s",
+     "refId": "D",
+     "range": true
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "sum(rate(platform_lastseen_dropped_total[$__rate_interval]))",
+     "legendFormat": "last_seen dropped/s",
+     "refId": "E",
+     "range": true
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${datasource}"
+     },
+     "expr": "sum(rate(platform_token_use_dropped_total[$__rate_interval]))",
+     "legendFormat": "token dropped/s",
+     "refId": "F",
      "range": true
     }
    ],

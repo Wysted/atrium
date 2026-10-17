@@ -23,6 +23,7 @@ PORTAL_APP_ID=app_01HQ3PD7RTA5M2XKWV9N8B4CYE # seed.sql, PORTAL_APP_ID and PLATF
 PROBE_DEADLINE_S=300 # the local portal probes every minute (PORTAL_PROBE_INTERVAL)
 CURL_IMG=curlimages/curl:8.11.1
 REVOKE_DEADLINE_MS=5000
+LAST_USED_DEADLINE_S=150 # token last_used_at: throttled to once a minute per replica and flushed once a minute
 WORK="$(mktemp -d)"
 mkdir -p "$ROOT/.tools/tmp"
 GW="$(mktemp -d -p "$ROOT/.tools/tmp")" # shared with the toolbox container (/workspace): Grafana checks and its credentials file
@@ -87,13 +88,20 @@ drop_smoke_groups() {
   $K -n platform-db exec postgres-0 -- psql -q -U platform_owner -d platform \
     -c "DELETE FROM groups WHERE key IN ('smoke-group-ok', 'smoke-group-rejected')" >/dev/null 2>&1
 }
+# Token cleanup as the owner (the trap must not depend on a session): revokes every live smoke token and disables the robot.
+drop_smoke_tokens() {
+  $K -n platform-db exec postgres-0 -- psql -q -U platform_owner -d platform \
+    -c "UPDATE api_tokens SET revoked_at = now() WHERE name LIKE 'smoke-%' AND revoked_at IS NULL" \
+    -c "UPDATE users SET status = 'disabled' WHERE kind = 'robot' AND name = 'smoke-robot'" >/dev/null 2>&1
+}
 cleanup() {
   $K delete pod probe-default --ignore-not-found --wait=false >/dev/null 2>&1
   $K -n hello-a delete pod probe-hello --ignore-not-found --wait=false >/dev/null 2>&1
   $K -n traefik delete pod probe-traefik --ignore-not-found --wait=false >/dev/null 2>&1
   $K delete namespace smoke-app --ignore-not-found --wait=false >/dev/null 2>&1
-  $K delete -f "$REL/smoke-whoami.yaml" --ignore-not-found --wait=false >/dev/null 2>&1
+  $K delete -f "$REL/smoke-whoami.yaml" -f "$REL/smoke-whoami-portal.yaml" --ignore-not-found --wait=false >/dev/null 2>&1
   drop_smoke_groups
+  drop_smoke_tokens
   $K -n monitoring delete pod probe-prom probe-grafana probe-other --ignore-not-found --wait=false >/dev/null 2>&1
   $K -n monitoring delete networkpolicy smoke-allow-egress --ignore-not-found >/dev/null 2>&1
   rm -rf "$WORK" "$GW"
@@ -950,6 +958,231 @@ else
     pass "browser check finished with $(grep -c '^  PASS:' "$WORK/browser.log") passing checks"
   fi
 fi
+
+section "22. API tokens end to end (contract block 6, part 3): Authorization reaches platform-api on the portal host only and never the portal"
+SINCE_22="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+# Bearer values never reach stdout, argv or $WORK/b-derived output: they live in header files (curl -H @file) and are
+# compared by grep -F -f; a failing check never prints a body that carries one (see body_clean). The whole section follows the contract's checks (a)-(g) of "Implementation parts", item 3.
+tokfile() { echo "$WORK/auth.$1"; }
+# bcall <token name> <curl args...>: portal-style API call carrying that token and NO cookie.
+bcall() { local n="$1"; shift; req "$WORK/tok-none" -H 'Accept: application/json' -H 'Sec-Fetch-Mode: cors' -H @"$(tokfile "$n")" "$@"; }
+# mk_token <jar> <url> <token name> <scope>: creates a token through the real portal API with a browser-like session.
+mk_token() {
+  local code; code=$(mutate "$1" POST "$2" same-origin application/json "{\"name\":\"smoke-$3\",\"scope\":\"$4\",\"expires_in\":3600}")
+  if [[ "$code" != 201 ]]; then fail "create token $3 ($4): status $code"; return 1; fi
+  printf 'Authorization: Bearer %s\n' "$(json_get "$WORK/b" 'd["secret"]')" > "$(tokfile "$3")"
+  cut -d' ' -f3 "$(tokfile "$3")" >> "$WORK/secrets.txt"
+  printf '%s' "$(json_get "$WORK/b" 'd["id"]')" > "$WORK/tid.$3"
+  pass "token $3 ($4) created"
+}
+tid() { cat "$WORK/tid.$1"; }
+# body_clean: the last body without Authorization lines (a whoami echo holds the Bearer that was sent), for check/check_not.
+body_clean() { grep -vi '^authorization:' "$WORK/b"; }
+# leaks <file>: true if the file holds any Bearer value of this section (secrets.txt).
+leaks() { grep -qF -f "$WORK/secrets.txt" "$1"; }
+: > "$WORK/secrets.txt"
+
+JTA="$WORK/tok-alice"; JTM="$WORK/tok-admin"; JTH="$WORK/tok-hello" # no earlier hello-a jar of alice is still valid here (section 11's session is gone by now)
+echo "  -- setup: sessions, fixtures, tokens"
+$K apply -f "$REL/smoke-whoami.yaml" -f "$REL/smoke-whoami-portal.yaml" >/dev/null
+login "$JTA" alice@example.com "$P" >/dev/null; login "$JTM" admin@example.com "$P" >/dev/null; login "$JTH" alice@example.com "$A" >/dev/null
+# Re-runnable: revoke leftovers of an interrupted run (the robot's live tokens too) and re-enable the robot.
+drop_smoke_tokens
+api "$JTA" "$P/api/v1/me/tokens" >/dev/null
+for old in $(json_get "$WORK/b" '" ".join(t["id"] for t in d["tokens"] if t["name"].startswith("smoke-") and not t["revoked_at"])'); do
+  mutate "$JTA" DELETE "$P/api/v1/me/tokens/$old" same-origin application/json >/dev/null
+done
+code=$(mutate "$JTM" POST "$P/api/v1/robots" same-origin application/json '{"name":"smoke-robot"}')
+if [[ "$code" == 409 ]]; then
+  api "$JTM" "$P/api/v1/robots" >/dev/null; RID="$(json_get "$WORK/b" '[r["id"] for r in d["robots"] if r["name"] == "smoke-robot"][0]')"
+  code=$(mutate "$JTM" PATCH "$P/api/v1/robots/$RID" same-origin application/json '{"status":"active"}'); check "existing smoke-robot re-enabled" "$code" 200
+else
+  check "robot created by a platform admin" "$code" 201; RID="$(json_get "$WORK/b" 'd["id"]')"
+fi
+mk_token "$JTA" "$P/api/v1/me/tokens" alice-read read
+mk_token "$JTA" "$P/api/v1/me/tokens" alice-del read
+mk_token "$JTA" "$P/api/v1/me/tokens" alice-sec read
+mk_token "$JTM" "$P/api/v1/robots/$RID/tokens" robot read
+code=$(mutate "$JTM" POST "$P/api/v1/robots/$RID/tokens" same-origin application/json '{"name":"smoke-robot-admin","scope":"admin"}')
+check "robot admin token without a manages_access grant is refused" "$code" 422
+code=$(bcall alice-read -X POST -H 'Content-Type: application/json' -d '{"name":"smoke-minted","scope":"read"}' "$P/api/v1/me/tokens")
+check "a token cannot mint tokens (403)" "$code" 403
+$K -n portal rollout status deploy/smoke-whoami-portal --timeout=120s >/dev/null
+$K -n hello-a rollout status deploy/smoke-whoami --timeout=120s >/dev/null
+sleep 15 # kube-router needs a moment before a fresh pod is covered consistently
+
+echo "  -- middleware wiring"
+check "forwardauth allowlist carries Authorization" "$($K -n platform get middleware.traefik.io forwardauth -o jsonpath='{.spec.forwardAuth.authRequestHeaders}')" Authorization
+# Fail closed: a listing that fails or a script that cannot parse it is a failure, never an empty (passing) invariant.
+if $K get ingressroute.traefik.io -A -o json > "$WORK/routes.json" && $K get ingress.networking.k8s.io -A -o json > "$WORK/ingresses.json"; then
+  inv="$(python3 - "$WORK/routes.json" "$WORK/ingresses.json" "$P_HOST" <<'PY'
+import json, sys
+routes = json.load(open(sys.argv[1]))["items"]
+ingresses = json.load(open(sys.argv[2]))["items"]
+host = sys.argv[3].lower()
+STRIP = "strip-authorization"
+# Deterministic here: every route of this cluster is `Host(...)` on websecure. So a route reachable from a public entrypoint
+# (websecure, web or none listed = all) that has no Host( or uses HostRegexp could match the portal host without being
+# recognizable: it is flagged SUSPICIOUS and fails the check. Standard Ingress objects reach the portal host only with the
+# router.middlewares annotation naming portal-strip-authorization@kubernetescrd; one without Host rules is SUSPICIOUS too.
+def public(eps): return not eps or any(e in ("web", "websecure") for e in eps)
+chains = {}
+for ir in routes:
+    ns, name, spec = ir["metadata"]["namespace"], ir["metadata"]["name"], ir["spec"]
+    for i, r in enumerate(spec.get("routes", [])):
+        m = r["match"].lower()
+        chain = [(x["name"], x.get("namespace", ns)) for x in r.get("middlewares", [])]
+        chains[(ns, name, i)] = chain
+        if public(spec.get("entryPoints", [])) and ("hostregexp(" in m or "host(" not in m):
+            print(f"{ns}/{name} SUSPICIOUS (no Host() or HostRegexp: {r['match']})")
+        elif host in m:
+            print(f"{ns}/{name} {'ok' if (STRIP, ns) in chain else 'MISSING'}")
+for ing in ingresses:
+    ns, name = ing["metadata"]["namespace"], ing["metadata"]["name"]
+    rules = ing["spec"].get("rules", [])
+    ann = ing["metadata"].get("annotations", {}).get("traefik.ingress.kubernetes.io/router.middlewares", "")
+    if not rules or any(not r.get("host") for r in rules):
+        print(f"{ns}/{name} SUSPICIOUS (Ingress without a host rule)")
+    elif any(r["host"].lower() == host for r in rules):
+        print(f"{ns}/{name} {'ok' if 'portal-strip-authorization@kubernetescrd' in ann else 'MISSING'} (Ingress)")
+# Same chain (order, names, namespaces) on the real route and on the smoke fixture, or (g) proves nothing about the portal.
+real, fixture = chains.get(("portal", "portal", 0)), chains.get(("portal", "smoke-whoami-portal", 0))
+print("CHAIN", "equal" if real is not None and real == fixture else f"DIFFERENT real={real} fixture={fixture}")
+PY
+)" || inv="ERROR"
+else
+  inv="ERROR listing"
+fi
+echo "  portal-host routes and flags: $(echo "$inv" | tr '\n' ';')"
+check_not "the listings and the invariant script ran" "$inv" ERROR
+check "the portal route is among them" "$inv" "portal/portal ok"
+check_not "every route matching the portal host references strip-authorization (same namespace)" "$inv" MISSING
+check_not "no route that could match the portal host unnoticed (HostRegexp, no Host(), host-less Ingress)" "$inv" SUSPICIOUS
+check "the fixture runs the same middleware chain as the real portal route (order, names, namespaces)" "$inv" "CHAIN equal"
+
+echo "  -- (a) token accepted on the portal host"
+code=$(api "$JTA" "$P/api/v1/me"); ALICE_ID="$(json_get "$WORK/b" 'd["user"]["id"]')"
+code=$(bcall alice-read "$P/api/v1/me"); check "human token: GET /api/v1/me" "$code" 200
+check "identity is alice (email)" "$(json_get "$WORK/b" 'd["user"]["email"]')" alice@example.com
+check "identity is alice (same id as the session)" "$(json_get "$WORK/b" 'd["user"]["id"]')" "$ALICE_ID"
+check_not "no Set-Cookie on a token response" "$(header set-cookie)" "="
+code=$(bcall robot "$P/api/v1/me"); check "robot token: GET /api/v1/me" "$code" 200
+check "identity is the robot (id)" "$(json_get "$WORK/b" 'd["user"]["id"]')" "$RID"
+check "identity is the robot (name)" "$(json_get "$WORK/b" 'd["user"]["name"]')" smoke-robot
+check "robot has no email" "[$(json_get "$WORK/b" 'd["user"]["email"]')]" "[]"
+sed 's/^Authorization: Bearer /Authorization: bearer /' "$(tokfile alice-read)" > "$(tokfile lower)"
+code=$(bcall lower "$P/api/v1/me"); check "scheme is case-insensitive" "$code" 200
+code=$(bcall alice-read "$P/api/v1/me/apps"); check "token reads another endpoint (apps)" "$code" 200
+
+echo "  -- scope"
+code=$(bcall alice-read -X POST -H 'Content-Type: application/json' -d '{"key":"smoke-group-rejected","name":"Smoke"}' "$P/api/v1/groups")
+check "read token: POST -> 403" "$code" 403
+check "403 challenge (e)" "$(header www-authenticate)" 'Bearer error="insufficient_scope"'
+check_not "scope 403 is not a redirect" "$(header location)" "http"
+
+echo "  -- (c, e) invalid, unknown and wrong-scheme credentials on the portal host"
+UNK_BODY="ptk_$(python3 -c 'import base64,os;print(base64.urlsafe_b64encode(os.urandom(32)).decode().rstrip("="))')"
+UNK="$UNK_BODY$(python3 -c 'import sys,zlib;print("%08x" % zlib.crc32(sys.argv[1].encode()))' "$UNK_BODY")"
+printf 'Authorization: Bearer %s\n' "$UNK" > "$(tokfile unknown)"; printf '%s\n' "$UNK" >> "$WORK/secrets.txt"
+printf 'Authorization: Bearer ptk_not-a-token\n' > "$(tokfile malformed)"
+printf 'Authorization: Basic dXNlcjpwYXNz\n' > "$(tokfile basic)"
+printf 'Authorization: Bearer\n' > "$(tokfile empty)"
+for n in malformed unknown; do
+  code=$(bcall $n "$P/api/v1/me"); check "$n Bearer -> 401" "$code" 401
+  check "$n challenge reaches the client" "$(header www-authenticate)" 'Bearer error="invalid_token"'
+  check_not "$n: no redirect" "$(header location)" "http"
+  check_not "$n: no Set-Cookie" "$(header set-cookie)" "="
+  check "$n: problem+json" "$(header content-type)" application/problem+json
+  check_not "$n: no login_url" "$(cat "$WORK/b")" login_url
+done
+for n in basic empty; do
+  code=$(bcall $n "$P/api/v1/me"); check "$n -> 401" "$code" 401
+  [[ "$(header www-authenticate)" == "Bearer" ]] && pass "$n: bare Bearer challenge, no error" || fail "$n: challenge is '$(header www-authenticate)'"
+  check_not "$n: no redirect" "$(header location)" "http"
+done
+code=$(nav "$WORK/tok-none" -H @"$(tokfile malformed)" "$P/"); check "navigation with a bad Bearer is a 401, not a login redirect" "$code" 401
+
+echo "  -- (c) valid cookie + invalid Authorization on the portal host: no fallback to the cookie"
+code=$(api "$JTA" "$P/api/v1/me"); check "control: the cookie alone works" "$code" 200
+code=$(api "$JTA" -H @"$(tokfile malformed)" "$P/api/v1/me"); check "cookie + malformed Bearer -> 401" "$code" 401
+check "challenge" "$(header www-authenticate)" 'Bearer error="invalid_token"'
+code=$(api "$JTA" -H @"$(tokfile basic)" "$P/api/v1/me"); check "cookie + Basic -> 401" "$code" 401
+code=$(api "$JTA" -H @"$(tokfile unknown)" "$P/api/v1/me"); check "cookie + unknown Bearer -> 401" "$code" 401
+
+echo "  -- (b) token ignored on another host, and the app keeps its own Authorization"
+code=$(api "$WORK/tok-none" -H @"$(tokfile alice-read)" "$A/api/whoami"); check "valid token without cookie on hello-a -> 401 (session path decides)" "$code" 401
+check "login_url as for any unauthenticated request" "$(cat "$WORK/b")" login_url
+check_not "no Bearer challenge on an app host" "$(header www-authenticate)" Bearer
+code=$(nav "$WORK/tok-none" -H @"$(tokfile alice-read)" "$A/"); check "navigation with a valid token on hello-a -> login redirect" "$code" 302
+code=$(api "$JTH" -H 'Authorization: Bearer garbage' "$A/api/whoami"); check "valid cookie + garbage Authorization on hello-a -> 200" "$code" 200
+code=$(api "$JTH" -H @"$(tokfile alice-read)" "$A/__smoke_whoami"); check "valid cookie + token on hello-a -> 200" "$code" 200
+if [[ "$(grep -i '^Authorization:' "$WORK/b" | tr -d '\r')" == "$(tr -d '\r\n' < "$(tokfile alice-read)")" ]]; then pass "hello-a still receives its own Authorization header, unchanged"; else fail "hello-a did not receive the Authorization header it was sent"; fi
+check "assertion issued for the app (session path)" "$(body_clean)" "Platform-Assertion: ey"
+
+echo "  -- (g) the secret never reaches the portal: fixture with the portal host rule and the portal middleware list"
+code=$(bcall alice-read "$P/__smoke_whoami"); check "fixture reached with a token" "$code" 200
+check "request really got through the portal host rule" "$(body_clean)" "Host: $P_HOST"
+check "assertion arrives (ForwardAuth accepted the token)" "$(body_clean)" "Platform-Assertion: ey"
+check_not "no Authorization header at the portal side" "$(tr 'A-Z' 'a-z' < "$WORK/b")" "authorization"
+if leaks "$WORK/b"; then fail "a Bearer value is in the portal fixture echo"; else pass "the secret is not in the echo"; fi
+code=$(bcall robot "$P/__smoke_whoami"); check "fixture reached with the robot token" "$code" 200
+check_not "no Authorization header at the portal side (robot)" "$(tr 'A-Z' 'a-z' < "$WORK/b")" "authorization"
+if leaks "$WORK/b"; then fail "a Bearer value is in the portal fixture echo (robot)"; else pass "the robot secret is not in the echo"; fi
+code=$(api "$JTA" -H 'Authorization: Bearer garbage' "$P/__smoke_whoami"); check "cookie + garbage Authorization is refused before the fixture" "$code" 401
+
+echo "  -- revocation: the very next request fails (no cache on the token row)"
+code=$(bcall alice-del "$P/api/v1/me"); check "before revoke (DELETE /me/tokens/{id})" "$code" 200
+code=$(mutate "$JTA" DELETE "$P/api/v1/me/tokens/$(tid alice-del)" same-origin application/json); check "owner revokes the token" "$code" 204
+code=$(bcall alice-del "$P/api/v1/me"); check "next request -> 401" "$code" 401
+check "revoked challenge" "$(header www-authenticate)" 'Bearer error="invalid_token"'
+code=$(api "$JTA" -H @"$(tokfile alice-del)" "$P/api/v1/me"); check "cookie + revoked token -> 401" "$code" 401
+code=$(bcall alice-sec "$P/api/v1/me"); check "before revoke by secret" "$code" 200
+printf '{"token":"%s"}' "$(cut -d' ' -f3 "$(tokfile alice-sec)")" > "$WORK/revoke.json"
+code=$(api "$JTM" -X POST -H "Origin: $P" -H 'Sec-Fetch-Site: same-origin' -H 'Content-Type: application/json' --data-binary @"$WORK/revoke.json" "$P/api/v1/tokens/revoke")
+check "platform admin revokes by secret" "$code" 204
+code=$(bcall alice-sec "$P/api/v1/me"); check "next request -> 401" "$code" 401
+bad=0; for _ in $(seq 1 10); do [[ "$(bcall alice-sec "$P/api/v1/me")" == 401 ]] || bad=$((bad + 1)); done
+if (( bad == 0 )); then pass "10/10 following requests 401"; else fail "$bad of 10 following requests were not 401"; fi
+code=$(mutate "$JTM" PATCH "$P/api/v1/robots/$RID" same-origin application/json '{"status":"disabled"}'); check "admin disables the robot" "$code" 200
+code=$(bcall robot "$P/api/v1/me"); check "robot token dies with the robot -> 401" "$code" 401
+code=$(bcall alice-read "$P/api/v1/me"); check "the other tokens are untouched" "$code" 200
+
+echo "  -- last_used_at is set after the throttled flush (once a minute per replica)"
+idA="$(tid alice-read)"; end=$(( $(date +%s) + LAST_USED_DEADLINE_S )); lu=""
+while (( $(date +%s) < end )); do
+  api "$JTA" "$P/api/v1/me/tokens" >/dev/null
+  lu="$(json_get "$WORK/b" '[t["last_used_at"] for t in d["tokens"] if t["id"] == "'"$idA"'"][0] or ""')"
+  [[ -n "$lu" ]] && break; sleep 5
+done
+if [[ -n "$lu" ]]; then pass "last_used_at of the used token is set ($lu)"; else fail "last_used_at still empty after ${LAST_USED_DEADLINE_S}s"; fi
+api "$JTM" "$P/api/v1/robots/$RID/tokens" >/dev/null
+check "robot token last_used_at is set too" "$(json_get "$WORK/b" '[t["last_used_at"] is not None for t in d["tokens"] if t["name"] == "smoke-robot"][0]')" True
+
+echo "  -- (f) no Bearer value in any log (read from the start of this section; a log that cannot be read or holds none of its traffic fails)"
+sleep 2
+readlog() { # readlog <file> <label> <kubectl logs args...>
+  local f="$1" label="$2"; shift 2
+  if $K logs "$@" --since-time="$SINCE_22" > "$WORK/$f.log" 2>/dev/null; then pass "$label log read ($(wc -l < "$WORK/$f.log") lines)"; else fail "kubectl logs failed for $label"; fi
+}
+readlog tr Traefik -n traefik deploy/traefik
+readlog pa platform-api -n platform -l app.kubernetes.io/name=platform-api --prefix=false --tail=-1
+readlog pt portal -n portal -l app.kubernetes.io/name=portal -c portal --prefix=false --tail=-1
+# Traffic of this section must be in each log, or "no secret found" proves nothing. The portal does not log requests: its log
+# only proves the process was read (probe rounds), the secret scan is what matters there.
+grep -q '/__smoke_whoami' "$WORK/tr.log" && pass "Traefik log holds this section's requests (/__smoke_whoami)" || fail "Traefik log lacks the section's requests"
+grep -q 'token_' "$WORK/pa.log" && pass "platform-api log holds token decisions of this section" || fail "platform-api log lacks token decisions"
+[[ -s "$WORK/pt.log" ]] && pass "portal log is not empty" || fail "portal log is empty"
+for l in tr:Traefik pa:platform-api pt:portal; do
+  if leaks "$WORK/${l%%:*}.log"; then fail "a Bearer value sent by this section is in the ${l#*:} logs"; else pass "no Bearer value in the ${l#*:} logs"; fi
+  if grep -q 'ptk_' "$WORK/${l%%:*}.log"; then fail "a 'ptk_' string is in the ${l#*:} logs"; else pass "no 'ptk_' string in the ${l#*:} logs"; fi
+done
+for r in token_malformed token_unknown token_revoked token_no_bearer token_scope; do
+  if grep -q "$r" "$WORK/pa.log"; then pass "decision log carries reason $r"; else fail "decision log lacks reason $r"; fi
+done
+
+echo "  -- cleanup: remaining token revoked, fixtures removed (the robot stays, disabled)"
+code=$(mutate "$JTA" DELETE "$P/api/v1/me/tokens/$idA" same-origin application/json); check "last token revoked" "$code" 204
+$K delete -f "$REL/smoke-whoami.yaml" -f "$REL/smoke-whoami-portal.yaml" --wait=false >/dev/null
 
 echo
 if (( FAILS == 0 )); then echo "ALL CHECKS PASSED${BROWSER_SKIPPED:+ (browser check SKIPPED)}"; else
