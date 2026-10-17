@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # End-to-end smoke of the platform in the k3d cluster, with curl from the HOST
 # (*.apps.wysted.dev -> 127.0.0.1 through public DNS; Traefik serves the real wildcard certificate).
-# Needs: up.sh already run, python3 on the host. Cluster access goes through ./tk.
+# Needs: up.sh already run, python3 on the host, ./gk (Docker) to build portalctl. Cluster access goes through ./tk.
 # Leaves the cluster as found (temporary pods and fixtures are removed; alice's revoked grant is re-seeded).
 set -uo pipefail
 
@@ -88,6 +88,11 @@ drop_smoke_groups() {
   $K -n platform-db exec postgres-0 -- psql -q -U platform_owner -d platform \
     -c "DELETE FROM groups WHERE key IN ('smoke-group-ok', 'smoke-group-rejected')" >/dev/null 2>&1
 }
+# Grants section 23 creates (carol and the smoke robot, viewer on demo), as the owner like drop_smoke_groups.
+drop_smoke_grants() {
+  $K -n platform-db exec postgres-0 -- psql -q -U platform_owner -d platform \
+    -c "DELETE FROM initiative_access a USING users u, initiative_roles r, initiatives i WHERE a.user_id = u.id AND r.id = a.role_id AND i.id = a.initiative_id AND i.key = 'demo' AND r.key = 'viewer' AND (u.email = 'carol@example.com' OR (u.kind = 'robot' AND u.name = 'smoke-robot'))" >/dev/null 2>&1
+}
 # Token cleanup as the owner (the trap must not depend on a session): revokes every live smoke token and disables the robot.
 drop_smoke_tokens() {
   $K -n platform-db exec postgres-0 -- psql -q -U platform_owner -d platform \
@@ -102,6 +107,7 @@ cleanup() {
   $K delete -f "$REL/smoke-whoami.yaml" -f "$REL/smoke-whoami-portal.yaml" --ignore-not-found --wait=false >/dev/null 2>&1
   drop_smoke_groups
   drop_smoke_tokens
+  drop_smoke_grants
   $K -n monitoring delete pod probe-prom probe-grafana probe-other --ignore-not-found --wait=false >/dev/null 2>&1
   $K -n monitoring delete networkpolicy smoke-allow-egress --ignore-not-found >/dev/null 2>&1
   rm -rf "$WORK" "$GW"
@@ -1183,6 +1189,100 @@ done
 echo "  -- cleanup: remaining token revoked, fixtures removed (the robot stays, disabled)"
 code=$(mutate "$JTA" DELETE "$P/api/v1/me/tokens/$idA" same-origin application/json); check "last token revoked" "$code" 204
 $K delete -f "$REL/smoke-whoami.yaml" -f "$REL/smoke-whoami-portal.yaml" --wait=false >/dev/null
+
+section "23. portalctl (contract block 6, part 5): grant and revoke through the API with a token"
+# The host reaches the portal like curl does: public DNS -> 127.0.0.1 and the real Let's Encrypt wildcard, so no
+# --resolve and no SSL_CERT_FILE are needed (the CLI uses the system roots).
+CTL="$ROOT/.tools/portalctl/portalctl"
+rm -f "$CTL" # a broken build must never run against a binary left by a previous run
+if (cd platform/api && ../../gk env CGO_ENABLED=0 go build -o ../../.tools/portalctl/portalctl ./cmd/portalctl) >"$WORK/ctl-build.log" 2>&1; then
+  pass "portalctl built (static, under .tools/portalctl)"
+else
+  fail "portalctl build failed: $(tail -n 5 "$WORK/ctl-build.log")"
+fi
+if [[ -x "$CTL" ]]; then
+  CTL_SUBJECT=carol@example.com # seeded, holds no grant on demo
+  : > "$WORK/ctl-all.out"
+  # ctl <token name> <args...>: runs the CLI with that token from its Authorization file; output in $WORK/ctl.out (and
+  # appended to ctl-all.out, scanned for the secrets at the end), exit code in $CTL_RC.
+  ctl() {
+    { set +x; } 2>/dev/null
+    local n="$1"; shift
+    PORTAL_URL="$P" PORTAL_API_TOKEN="$(cut -d' ' -f3 "$(tokfile "$n")")" "$CTL" "$@" > "$WORK/ctl.out" 2>&1; CTL_RC=$?
+    cat "$WORK/ctl.out" >> "$WORK/ctl-all.out"
+  }
+  # demo_viewer <email|robot id>: whether that user holds a direct viewer grant on demo, read through the admin session.
+  demo_viewer() {
+    api "$JTM" "$P/api/v1/initiatives/$DEMO_ID/grants" >/dev/null
+    json_get "$WORK/b" 'any(g["user"] and g["role"]["key"] == "viewer" and "'"$1"'" in (g["user"]["id"], g["user"]["email"]) for g in d["grants"])'
+  }
+  # drop_ctl_grants: removes carol's and the robot's direct viewer grants on demo through the admin session (not through the CLI under test).
+  drop_ctl_grants() {
+    api "$JTM" "$P/api/v1/initiatives/$DEMO_ID/grants" >/dev/null
+    local g
+    for g in $(json_get "$WORK/b" '" ".join(g["id"] for g in d["grants"] if g["user"] and g["role"]["key"] == "viewer" and (g["user"]["id"] == "'"$RID"'" or g["user"]["email"] == "'"$CTL_SUBJECT"'"))'); do
+      mutate "$JTM" DELETE "$P/api/v1/grants/$g" same-origin application/json >/dev/null
+    done
+  }
+  # Re-runnable: drop leftovers of an interrupted run, and bring the robot back (section 22 disabled it).
+  code=$(mutate "$JTM" PATCH "$P/api/v1/robots/$RID" same-origin application/json '{"status":"active"}'); check "smoke-robot active again" "$code" 200
+  mk_token "$JTM" "$P/api/v1/me/tokens" ctl-admin admin
+  mk_token "$JTM" "$P/api/v1/me/tokens" ctl-read read
+  drop_ctl_grants
+
+  echo "  -- grant and revoke by email"
+  ctl ctl-admin grant "$CTL_SUBJECT" demo viewer; check "grant exits 0" "$CTL_RC" 0
+  check "first grant changed" "$(head -n 1 "$WORK/ctl.out")" changed
+  check "grant done line" "$(cat "$WORK/ctl.out")" "grant done: $CTL_SUBJECT -> demo/viewer"
+  check "the grant is visible through the API" "$(demo_viewer "$CTL_SUBJECT")" True
+  ctl ctl-admin grant "$CTL_SUBJECT" demo viewer; check "second grant exits 0" "$CTL_RC" 0
+  check "second grant unchanged" "$(head -n 1 "$WORK/ctl.out")" unchanged
+  ctl ctl-admin revoke "$CTL_SUBJECT" demo viewer; check "revoke exits 0" "$CTL_RC" 0
+  check "first revoke changed" "$(head -n 1 "$WORK/ctl.out")" changed
+  check "revoke done line" "$(cat "$WORK/ctl.out")" "revoke done: $CTL_SUBJECT -> demo/viewer"
+  check "the grant is gone through the API" "$(demo_viewer "$CTL_SUBJECT")" False
+  ctl ctl-admin revoke "$CTL_SUBJECT" demo viewer; check "second revoke exits 0" "$CTL_RC" 0
+  check "second revoke unchanged" "$(head -n 1 "$WORK/ctl.out")" unchanged
+
+  echo "  -- robot subject"
+  ctl ctl-admin grant robot:smoke-robot demo viewer; check "robot grant exits 0" "$CTL_RC" 0
+  check "robot grant changed" "$(head -n 1 "$WORK/ctl.out")" changed
+  check "robot grant done line" "$(cat "$WORK/ctl.out")" "grant done: robot:smoke-robot -> demo/viewer"
+  check "the robot grant is visible through the API" "$(demo_viewer "$RID")" True
+  ctl ctl-admin grant robot:smoke-robot demo viewer; check "robot grant again: unchanged" "$(head -n 1 "$WORK/ctl.out")" unchanged
+  ctl ctl-admin revoke robot:smoke-robot demo viewer; check "robot revoke exits 0" "$CTL_RC" 0
+  check "robot revoke changed" "$(head -n 1 "$WORK/ctl.out")" changed
+  check "the robot grant is gone through the API" "$(demo_viewer "$RID")" False
+  ctl ctl-admin revoke robot:smoke-robot demo viewer; check "robot revoke again: unchanged" "$(head -n 1 "$WORK/ctl.out")" unchanged
+
+  echo "  -- failures"
+  ctl ctl-read grant "$CTL_SUBJECT" demo viewer; check "read-scope token: write fails with exit 1" "$CTL_RC" 1
+  check "403 reported" "$(cat "$WORK/ctl.out")" "403 Forbidden"
+  check "and nothing was granted" "$(demo_viewer "$CTL_SUBJECT")" False
+  ctl ctl-admin grant "$CTL_SUBJECT" no-such-initiative viewer; check "unknown initiative: exit 1" "$CTL_RC" 1
+  check "  (message)" "$(cat "$WORK/ctl.out")" 'unknown initiative "no-such-initiative"'
+  ctl ctl-admin grant robot:no-such-robot demo viewer; check "unknown robot: exit 1" "$CTL_RC" 1
+  check "  (message)" "$(cat "$WORK/ctl.out")" 'unknown robot "no-such-robot"'
+  PORTAL_URL="${P/https:/http:}" PORTAL_API_TOKEN="$(cut -d' ' -f3 "$(tokfile ctl-admin)")" "$CTL" grant "$CTL_SUBJECT" demo viewer > "$WORK/ctl.out" 2>&1; CTL_RC=$?
+  cat "$WORK/ctl.out" >> "$WORK/ctl-all.out"
+  check "PORTAL_URL over http: exit 2" "$CTL_RC" 2
+  PORTAL_URL="$P" PORTAL_API_TOKEN="" "$CTL" grant "$CTL_SUBJECT" demo viewer > "$WORK/ctl.out" 2>&1; CTL_RC=$?
+  check "no token: exit 2" "$CTL_RC" 2
+  PORTAL_URL="$P" PORTAL_API_TOKEN=x "$CTL" grant not-an-email demo viewer > "$WORK/ctl.out" 2>&1; CTL_RC=$?
+  check "bad subject: exit 2" "$CTL_RC" 2
+
+  echo "  -- cleanup: tokens revoked, the robot disabled (a grant to it is then refused)"
+  drop_ctl_grants
+  for n in ctl-admin ctl-read; do
+    code=$(mutate "$JTM" DELETE "$P/api/v1/me/tokens/$(tid $n)" same-origin application/json); check "$n token revoked" "$code" 204
+  done
+  code=$(mutate "$JTM" PATCH "$P/api/v1/robots/$RID" same-origin application/json '{"status":"disabled"}'); check "smoke-robot disabled again" "$code" 200
+  mk_token "$JTM" "$P/api/v1/me/tokens" ctl-last admin
+  ctl ctl-last grant robot:smoke-robot demo viewer; check "grant to a disabled robot: exit 1" "$CTL_RC" 1
+  check "  (message)" "$(cat "$WORK/ctl.out")" "is disabled"
+  code=$(mutate "$JTM" DELETE "$P/api/v1/me/tokens/$(tid ctl-last)" same-origin application/json); check "ctl-last token revoked" "$code" 204
+  if leaks "$WORK/ctl-all.out"; then fail "a Bearer value is in the portalctl output"; else pass "no Bearer value in any portalctl output ($(wc -l < "$WORK/ctl-all.out") lines, success and failure paths)"; fi
+fi
 
 echo
 if (( FAILS == 0 )); then echo "ALL CHECKS PASSED${BROWSER_SKIPPED:+ (browser check SKIPPED)}"; else
