@@ -7,6 +7,7 @@ defineProps<{
   groups: Group[]
   caption: string
   busyId?: string | null
+  emptyText?: string
 }>()
 
 const emit = defineEmits<{ remove: [group: Group] }>()
@@ -26,7 +27,7 @@ const columns: TableColumn[] = [
     :rows="groups"
     :row-key="(row: Group) => row.id"
     row-header="key"
-    empty-text="No groups yet."
+    :empty-text="emptyText ?? 'No groups yet.'"
   >
     <template #cell="{ row, column }">
       <BaseLink v-if="column.key === 'key'" :to="`/admin/groups/${encodeURIComponent(row.id)}`">

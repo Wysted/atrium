@@ -35,8 +35,8 @@ Pending work and open questions for the portal platform. Detailed context lives 
   a startup-computed CSP. The local smoke checks it in a real browser (Playwright, `overlays/local/browser-check/`).
 - [ ] **Retire `grant.sh` and `revoke.sh`.** The portal replaces `platform-gitops/overlays/local-google/grant.sh` and
   `revoke.sh`; remove them after granting and revoking once through the portal with a real Google login.
-- [ ] **Portal web follow-ups.** Done in the API (2026-10-16): `GET /api/v1/groups?q=` (group picker search) and
-  `GET /api/v1/groups/{id}` (group page name); the web still has to use them. Open by decision: the apps payload
+- [ ] **Portal web follow-ups.** Done 2026-10-16: group search (`GET /api/v1/groups?q=`) in the grant dialog and on
+  the groups page, and the group page shows the group's name (`GET /api/v1/groups/{id}`). Open by decision: the apps payload
   carries no portal-app flag, so the UI shows Disable and Remove host on the portal app and relies on the 409.
   `npm audit` reports high advisories in Nuxt's build tooling (`braces`, `node-forge` via nitropack/listhen) with no
   upstream fix; they never reach the embedded output. Recheck on each Nuxt upgrade.

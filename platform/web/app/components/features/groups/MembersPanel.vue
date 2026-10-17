@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { GroupMember, GroupMemberList } from '~/types/api'
+import type { Group, GroupMember, GroupMemberList } from '~/types/api'
 
 /**
  * Members of one group (platform admins only; the API enforces). Keyset list with "Load more", add by email and
@@ -63,12 +63,15 @@ function onAdded() {
   void list.reload(true)
 }
 
-const notFound = computed(() => list.error.value?.kind === 'not_found')
+// The group itself (heading). A failure here only costs the name: the members list has its own error states.
+const group = useApiData<Group>(`group-${props.groupId}`, `/groups/${encodeURIComponent(props.groupId)}`)
+const notFound = computed(() => list.error.value?.kind === 'not_found' || group.error.value?.kind === 'not_found')
+const heading = computed(() => (group.data.value ? groupLabel(group.data.value) : 'Group'))
 </script>
 
 <template>
   <BaseStack :gap="4">
-    <BasePageHeader title="Group members" description="Groups are global: membership changes reach every initiative that grants to this group.">
+    <BasePageHeader :title="heading" description="Groups are global: membership changes reach every initiative that grants to this group.">
       <BaseButton variant="secondary" to="/admin/groups">
         All groups
       </BaseButton>
@@ -82,6 +85,10 @@ const notFound = computed(() => list.error.value?.kind === 'not_found')
       {{ notice }}
     </BaseText>
 
+    <BaseHeading v-if="!notFound" :level="2" size="xl">
+      Group members
+    </BaseHeading>
+
     <BaseBox as="div" :aria-busy="list.loading.value">
       <BaseStack v-if="list.loading.value" :gap="3">
         <BaseText class="sr-only">
@@ -93,6 +100,7 @@ const notFound = computed(() => list.error.value?.kind === 'not_found')
       </BaseStack>
       <BaseEmptyState
         v-else-if="notFound"
+        :level="2"
         title="Group not found"
         description="It may have been deleted."
       >

@@ -30,3 +30,11 @@ export function validateGroupKey(key: string): string | null {
 export function validateGroupName(name: string): string | null {
   return new TextEncoder().encode(name).length > GROUP_NAME_MAX_BYTES ? GROUP_NAME_TOO_LONG : null
 }
+
+/** `GET /groups?q=` accepts at most 64 characters (longer is a 422); the search box caps the input to match. */
+export const GROUP_SEARCH_MAX = 64
+
+/** List path for a (trimmed) search text; the same `q` must be sent on every page, which `usePagedList` does by calling this again. */
+export function groupsPath(query: string): string {
+  return query ? `/groups?q=${encodeURIComponent(query)}` : '/groups'
+}

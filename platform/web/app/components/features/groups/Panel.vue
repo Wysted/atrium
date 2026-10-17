@@ -7,7 +7,20 @@ import type { Group, GroupList } from '~/types/api'
  * 409 on delete = the group still has members or grants (Go refuses it). Fixed copy only.
  */
 const api = useApi()
-const list = usePagedList<GroupList, Group>('/groups', page => page.groups)
+const search = useGroupSearch()
+const list = usePagedList<GroupList, Group>(search.path, page => page.groups)
+watch(search.query, () => void list.reload())
+
+// Polite live region: the result count after each (re)load.
+const announcement = ref('')
+watch(list.loading, (now, was) => {
+  if (was && !now && !list.error.value) {
+    const n = list.items.value.length
+    announcement.value = n === 0
+      ? 'No groups found'
+      : `${n} ${n === 1 ? 'group' : 'groups'} found${list.hasMore.value ? ', more available' : ''}`
+  }
+})
 
 const createOpen = ref(false)
 const removing = ref<Group | null>(null)
@@ -74,6 +87,20 @@ function onCreated() {
       {{ notice }}
     </BaseText>
 
+    <BaseText role="status" class="sr-only">
+      {{ announcement }}
+    </BaseText>
+
+    <BaseField v-slot="field" label="Search groups" hint="Matches the key or the name.">
+      <BaseInput
+        v-bind="field"
+        v-model="search.input.value"
+        type="search"
+        autocomplete="off"
+        :maxlength="GROUP_SEARCH_MAX"
+      />
+    </BaseField>
+
     <BaseBox as="div" :aria-busy="list.loading.value">
       <BaseStack v-if="list.loading.value" :gap="3">
         <BaseText class="sr-only">
@@ -91,7 +118,12 @@ function onCreated() {
         @retry="list.reload()"
       />
       <BaseStack v-else :gap="4">
-        <FeaturesGroupsTable caption="Groups" :groups="list.items.value" @remove="askRemove" />
+        <FeaturesGroupsTable
+          caption="Groups"
+          :groups="list.items.value"
+          :empty-text="search.query.value ? 'No groups match your search.' : undefined"
+          @remove="askRemove"
+        />
         <BaseCluster v-if="list.error.value" :gap="2">
           <BaseText role="alert" size="sm" tone="danger">
             Could not load more groups.
