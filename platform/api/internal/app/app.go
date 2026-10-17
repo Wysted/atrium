@@ -180,7 +180,8 @@ func New(cfg Config) (*App, error) {
 	internal := http.NewServeMux()
 	internal.Handle("/forwardauth", fa) // Traefik always uses GET, but any method must reach the decision code
 	internal.Handle("GET "+health.PathLive, health.Live())
-	internal.Handle("GET "+health.PathReady, health.Ready(cfg.Pool, cfg.Keyring, log))
+	pending := func(ctx context.Context) ([]string, error) { return postgres.Pending(ctx, cfg.Pool) }
+	internal.Handle("GET "+health.PathReady, health.Ready(cfg.Pool, pending, cfg.Keyring, log))
 	jwksMux := http.NewServeMux()
 	jwksMux.Handle(jwks.Route, pm.CountJWKS(metrics.ListenerJWKS, jwks.Handler(cfg.Keyring)))
 	mux := http.NewServeMux()

@@ -3,6 +3,7 @@
 package portalapp
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -156,7 +157,8 @@ func New(cfg Config) (*App, error) {
 
 	internal := http.NewServeMux()
 	internal.Handle("GET "+health.PathLive, health.Live())
-	internal.Handle("GET "+health.PathReady, health.ReadyDB(cfg.Pool, log))
+	pending := func(ctx context.Context) ([]string, error) { return postgres.Pending(ctx, cfg.Pool) }
+	internal.Handle("GET "+health.PathReady, health.ReadyDB(cfg.Pool, pending, log))
 	mux := http.NewServeMux()
 	mux.Handle(metrics.Route, metrics.Handler(reg))
 

@@ -30,6 +30,21 @@ type Signing interface {
 	KEKMismatch() bool
 }
 
+// PendingFunc lists the embedded migrations the database has not applied (postgres.Pending).
+type PendingFunc func(ctx context.Context) ([]string, error)
+
+// migrationsReason returns the readiness failure reason for the schema state, "" when every embedded migration
+// is applied. Migrations newer than the binary never block.
+func migrationsReason(ctx context.Context, pending PendingFunc) string {
+	switch p, err := pending(ctx); {
+	case err != nil:
+		return "migrations check failed"
+	case len(p) > 0:
+		return "migrations pending"
+	}
+	return ""
+}
+
 // Live answers 200 while the process runs.
 func Live() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -38,14 +53,17 @@ func Live() http.Handler {
 	})
 }
 
-// Ready answers 200 only with a reachable database, a loaded signer and no KEK mismatch; otherwise 503.
+// Ready answers 200 only with a reachable database, every embedded migration applied, a loaded signer and no KEK mismatch; otherwise 503.
 // The body names no detail; the reason goes to the log.
-func Ready(db Pinger, signing Signing, log *slog.Logger) http.Handler {
+func Ready(db Pinger, pending PendingFunc, signing Signing, log *slog.Logger) http.Handler {
 	return readiness(log, func(ctx context.Context) string {
-		switch {
-		case db.Ping(ctx) != nil:
+		if db.Ping(ctx) != nil {
 			return "database unreachable"
-		case signing.KEKMismatch():
+		}
+		if reason := migrationsReason(ctx, pending); reason != "" {
+			return reason
+		}
+		if signing.KEKMismatch() {
 			return "kek mismatch"
 		}
 		if _, err := signing.Signer(); err != nil {
@@ -55,14 +73,14 @@ func Ready(db Pinger, signing Signing, log *slog.Logger) http.Handler {
 	})
 }
 
-// ReadyDB answers 200 only with a reachable database; otherwise 503. It is the readiness of processes that
+// ReadyDB answers 200 only with a reachable database and every embedded migration applied; otherwise 503. It is the readiness of processes that
 // hold no signing keys (the portal).
-func ReadyDB(db Pinger, log *slog.Logger) http.Handler {
+func ReadyDB(db Pinger, pending PendingFunc, log *slog.Logger) http.Handler {
 	return readiness(log, func(ctx context.Context) string {
 		if db.Ping(ctx) != nil {
 			return "database unreachable"
 		}
-		return ""
+		return migrationsReason(ctx, pending)
 	})
 }
 

@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -24,6 +25,8 @@ const (
 	migrationsDir = "migrations"
 	// migrationsLockKey is the advisory lock key serializing concurrent migrators.
 	migrationsLockKey int64 = 0x706c6174666d6967 // "platfmig"
+	// sqlStateUndefinedFunction is SQLSTATE 42883, raised while applied_migrations (0015) does not exist yet.
+	sqlStateUndefinedFunction = "42883"
 )
 
 // NewPool builds a pool from the standard PG* environment variables (PGHOST, PGPASSFILE, ...).
@@ -49,6 +52,39 @@ func migrationNames() ([]string, error) {
 	}
 	sort.Strings(names)
 	return names, nil
+}
+
+// Pending lists the embedded migrations that applied_migrations (0015) does not report as applied. Versions
+// applied but unknown to this binary (a newer release) are ignored. Until 0015 itself is applied the function
+// does not exist, which counts as every migration pending. It works under the least-privilege roles, which
+// cannot read schema_migrations.
+func Pending(ctx context.Context, db querier) ([]string, error) {
+	names, err := migrationNames()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.Query(ctx, "SELECT applied_migrations()")
+	var applied []string
+	if err == nil {
+		applied, err = pgx.CollectRows(rows, pgx.RowTo[string])
+	}
+	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok && pgErr.Code == sqlStateUndefinedFunction {
+		return names, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("list applied migrations: %w", err)
+	}
+	done := make(map[string]bool, len(applied))
+	for _, v := range applied {
+		done[v] = true
+	}
+	var pending []string
+	for _, name := range names {
+		if !done[name] {
+			pending = append(pending, name)
+		}
+	}
+	return pending, nil
 }
 
 // MigrationsFingerprint returns a hex SHA-256 over the names and bodies of the embedded migrations.
