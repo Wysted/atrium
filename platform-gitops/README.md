@@ -51,7 +51,7 @@ the local overlay's `seed.sql`, never in base.
 
 ## Portal (base/portal)
 
-- Namespace `portal`, labelled `portal.wysted.dev/app-namespace=true` like any app namespace: platform-api's JWKS listener
+- Namespace `portal`, labelled `atrium.wysted.dev/app-namespace=true` like any app namespace: platform-api's JWKS listener
   (8083) already accepts it; the internal listener (8081) admits only Traefik. `platform-db` accepts it too (`allow-ingress-platform` selects `platform` and `portal`).
 - Database: login role `portal_app`, member only of `platform_portal`; password in `.tools/secrets/k3d-pg-portal-password`, pgpass
   Secret `portal/portal-pgpass` (`fsGroup` + `defaultMode: 0440`, like platform-api). The role is created by `roles.sh`, not by
@@ -219,7 +219,7 @@ Adopters, mirroring this with their own Grafana and PKI:
 
 ## Notes
 
-- Namespaces that host apps need the label `portal.wysted.dev/app-namespace=true`: the JWKS listener (8083) accepts them.
+- Namespaces that host apps need the label `atrium.wysted.dev/app-namespace=true`: the JWKS listener (8083) accepts them.
 - Access log: `accessLog.fields.queryParameters.defaultMode: drop` (Traefik >= 3.7.3) removes the whole query from
   `RequestPath`, so the login `code`, `bind` and `rd` are never logged. Tradeoff: no query at all in access logs (it also
   hides benign parameters). Headers (Cookie, Set-Cookie, Location) are dropped by default; keep them dropped

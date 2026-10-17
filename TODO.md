@@ -40,7 +40,7 @@ Pending work and open questions for the portal platform. Detailed context lives 
   enabled in the repository settings (`SECURITY.md` points to it).
 - [ ] **Public identity.** The name is now `atrium` (github.com/Wysted/atrium); cheaper before the first adopter:
   Go module paths (`platform/api`, `platform/sdk/go`, ... are not go-gettable; the SDK must be importable as
-  `github.com/Wysted/atrium/platform/sdk/go`), the namespace label key `portal.wysted.dev/app-namespace`, and the local
+  `github.com/Wysted/atrium/platform/sdk/go`), the namespace label key `atrium.wysted.dev/app-namespace`, and the local
   domain `*.apps.wysted.dev` (its wildcard certificate needs the maintainer's Cloudflare token, so a contributor cannot
   reproduce the local TLS setup).
 

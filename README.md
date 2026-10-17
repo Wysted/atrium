@@ -1,9 +1,10 @@
-# portal
+# atrium
 
-A self-hosted platform for a company's internal apps ("initiatives"): Google Workspace sign-in, per-app authorization
-kept in PostgreSQL, and an identity-aware proxy in front of every app through Traefik ForwardAuth. Each request that
-passes reaches the app with a short-lived signed JWT whose audience is that app; the app verifies it with a small Go SDK.
-A web portal lists each user's apps and lets administrators manage initiatives, roles, grants and API tokens.
+One entrance to a company's internal apps. atrium is self-hosted: Google Workspace sign-in, per-app authorization kept
+in PostgreSQL, and an identity-aware proxy in front of every app through Traefik ForwardAuth. Each request that passes
+reaches the app with a short-lived signed JWT whose audience is that app; the app verifies it with a small Go SDK
+(`go get github.com/Wysted/atrium/platform/sdk/go`). Its web portal lists each user's apps and lets administrators
+manage initiatives (groups of apps), roles, grants, API tokens and areas.
 
 Status: pre-release. It runs end to end in a local k3d cluster; see `TODO.md` for what is still missing before production.
 
