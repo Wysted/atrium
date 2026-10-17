@@ -41,7 +41,7 @@ Pending work and open questions for the portal platform. Detailed context lives 
   the k3d deploy and the embedded Nuxt 4 SPA (`platform/web/`: home, administration, integration health) served with
   a startup-computed CSP. The local smoke checks it in a real browser (Playwright, `overlays/local/browser-check/`).
 - [ ] **Retire `grant.sh` and `revoke.sh`.** The portal replaces `platform-gitops/overlays/local-google/grant.sh` and
-  `revoke.sh`; remove them after granting and revoking once through the portal with a real Google login.
+  `revoke.sh`; remove them after granting and revoking once through the portal (web or `portalctl`) with a real Google login.
 - [ ] **Portal web follow-ups.** Done 2026-10-16: group search (`GET /api/v1/groups?q=`) in the grant dialog and on
   the groups page, and the group page shows the group's name (`GET /api/v1/groups/{id}`). Open by decision: the apps payload
   carries no portal-app flag, so the UI shows Disable and Remove host on the portal app and relies on the 409.
@@ -53,7 +53,7 @@ Pending work and open questions for the portal platform. Detailed context lives 
   (`Authorization` in `authRequestHeaders`, strip on the portal route) + smoke checks (done); (4) web: tokens page and robots
   admin page; (5) CLI replacing `grant.sh`/`revoke.sh`. Phases 2 (workload identity) and 3 (device flow) stay open.
   Part 1 (1a schema, privileges, kind filters, purge; 1b tokens and robots API, grants by robot, revocation by
-  secret) and part 2 (ForwardAuth token path, assertion claims, SDK) done 2026-10-16; part 3 (Traefik, smoke section 22) done 2026-10-17; part 4 (web) next.
+  secret) and part 2 (ForwardAuth token path, assertion claims, SDK) done 2026-10-16; part 3 (Traefik, smoke section 22), part 4 (web) and part 5 (`portalctl`, smoke section 23) done 2026-10-17: phase 1 complete.
 - [ ] **Area supervisor (design).** Someone who administers the robots and tokens of the people of their area (list,
   revoke, reassign owner on offboarding) without acting as them or touching their access. Needs a person hierarchy;
   see the open point at the end of contract block 6, "Non-browser clients".

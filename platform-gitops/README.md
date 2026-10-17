@@ -261,10 +261,27 @@ active user may open it (reserved initiative `platform`, "any active user" rule)
 endpoint to manage platform admins).
 
 Access: users are created on their first login (JIT) with no grants (403 on every app).
-`local-google/grant.sh <email> <initiative-key> <role-key>` (as platform_owner via the postgres pod) inserts a direct
-`initiative_access` row for an EXISTING user, idempotently, with an `audit_events` row (`access.grant`, `after.actor = "cli"`).
-`revoke.sh` (or `grant.sh --revoke`) removes it. Platform-api sees the change through NOTIFY, no restart. Example:
-`grant.sh you@example.com demo viewer` (demo = hello-a).
+Grant and revoke through the portal API with `portalctl` (`platform/api/cmd/portalctl`; build, static Linux binary:
+`cd platform/api && ../../gk env CGO_ENABLED=0 go build -o ../../.tools/portalctl/portalctl ./cmd/portalctl`):
+`portalctl grant|revoke <email|robot:name> <initiative-key> <role-key>`. Environment: `PORTAL_URL` (https, portal host only,
+e.g. `https://portal.apps.wysted.dev`) and `PORTAL_API_TOKEN`. Who can use it: a platform admin (`admin`-scope token), a human
+initiative manager (`admin`-scope token, only the initiatives they manage) or a robot holding a `manages_access` role. A grant
+by email needs the user to have signed in once. Output is `changed` or `unchanged` plus `grant|revoke done: ...`; exit 0 ok,
+1 any runtime or API failure (unknown initiative, role or robot, a grant to a disabled robot, an expired existing grant: "revoke
+it first"), 2 usage (bad arguments, invalid `PORTAL_URL`, empty token). An existing grant with a future expiry is `unchanged`
+with a warning on stderr. It never follows redirects and honors `SSL_CERT_FILE` for a private CA. Examples:
+
+```
+export PORTAL_URL=https://portal.apps.wysted.dev
+read -rs PORTAL_API_TOKEN && export PORTAL_API_TOKEN   # paste the token: it stays out of the shell history
+.tools/portalctl/portalctl grant you@example.com demo viewer
+.tools/portalctl/portalctl revoke robot:ci-deployer demo editor
+```
+
+Bootstrap fallback until `grant.sh` and `revoke.sh` are retired (no token yet, e.g. to make the first admin's access):
+`local-google/grant.sh <email> <initiative-key> <role-key>` (as platform_owner via the postgres pod; `revoke.sh` or
+`grant.sh --revoke` removes it) inserts a direct `initiative_access` row for an EXISTING user, with an `audit_events` row
+(`access.grant`, `after.actor = "cli"`). Platform-api sees the change through NOTIFY, no restart.
 
 Rotating the Google client secret: [docs/runbooks/google-client-secret-rotation.md](docs/runbooks/google-client-secret-rotation.md).
 

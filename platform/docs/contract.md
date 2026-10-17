@@ -826,7 +826,7 @@ the `platform_portal` role may select; no extra index is kept: `unknown_host` ro
 ### Non-browser clients
 
 Design for CLI and automation that call the portal API (phase 1 decided 2026-10-16; research notes: Engram
-`architecture/portal-non-browser-clients`). Part 1a (schema, privileges, `kind` filters, token revocation on disable, purge), part 1b-1 (token secret package, scope middleware, `token_id` in the audit, personal token endpoints and the `PORTAL_TOKEN_MAX_TTL_*` settings below; revocation by secret included, through the function of migration 0013) and part 1b-2 (robots API, robot tokens, grants by `robot_id`) are implemented, which completes part 1; part 2 (ForwardAuth token path, assertion claims, SDK fields) and part 3 (Traefik and smoke checks) are implemented too, and the rest is design only. The product is multi-company: the design
+`architecture/portal-non-browser-clients`). Part 1a (schema, privileges, `kind` filters, token revocation on disable, purge), part 1b-1 (token secret package, scope middleware, `token_id` in the audit, personal token endpoints and the `PORTAL_TOKEN_MAX_TTL_*` settings below; revocation by secret included, through the function of migration 0013) and part 1b-2 (robots API, robot tokens, grants by `robot_id`) are implemented, which completes part 1; part 2 (ForwardAuth token path, assertion claims, SDK fields) and part 3 (Traefik and smoke checks) are implemented too, as are part 4 (web screens) and part 5 (the `portalctl` CLI), which completes phase 1. The product is multi-company: the design
 assumes no CI system, secret manager or stack on the adopter's side.
 
 | Phase | Mechanism | Status |
@@ -1118,8 +1118,11 @@ email today).
    with the same host rule and the same middleware list as the portal route (not a longer `PathPrefix` router that skips
    it), with its own NetworkPolicy ingress from Traefik, echoes the headers it receives. A rate limit on failed tokens
    per client IP waits for the real client IP item of `TODO.md` (k3d shows every client as `10.42.0.1`).
-4. Web: tokens page for humans, robots admin page.
-5. CLI replacing `grant.sh`/`revoke.sh` (Go, uses a token, talks only to the portal host).
+4. (Implemented.) Web: tokens page for humans, robots admin page.
+5. (Implemented.) CLI replacing `grant.sh`/`revoke.sh` (Go, uses a token, talks only to the portal host):
+   `platform/api/cmd/portalctl`, usage in `platform-gitops/README.md`, smoke section 23. It resolves keys and robot names
+   by listing (the API has no filter by key), treats a 409 on create as `unchanged` only when the existing direct grant
+   is in effect (an expired one is an error: the unique key ignores `expires_at`) and refuses any redirect.
 
 Configuration (portal process; both optional Go durations above zero, an invalid value fails start-up):
 
