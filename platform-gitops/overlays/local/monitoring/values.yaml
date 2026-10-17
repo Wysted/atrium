@@ -162,6 +162,10 @@ grafana:
       provisioning: /etc/grafana/provisioning
     unified_storage:
       index_path: /var/lib/grafana-search/bleve
+    # No start-up downloads: Grafana's default preinstall list (grafana.com) is pointless behind a default-deny egress
+    # policy and only produces "connection refused" errors in the log.
+    plugins:
+      preinstall_disabled: true
     analytics:
       check_for_updates: false
       check_for_plugin_updates: false
