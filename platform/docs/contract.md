@@ -418,7 +418,7 @@ Research notes: Engram `architecture/portal-web-stack-research`, `architecture/p
   (platform-api) must hold the same id. `access_changed` is emitted by
   `deployments` only on INSERT, DELETE or a change of host or app_id; telemetry columns do not emit it.
 - JSON API first (`/api/v1/*`, `application/problem+json` errors), web UI on top. The API also replaces
-  `grant.sh`/`revoke.sh`. Permissions are always resolved by the API; the UI only hides what the caller cannot do.
+  `grant.sh`/`revoke.sh` (removed 2026-10-17; `portalctl` is the CLI). Permissions are always resolved by the API; the UI only hides what the caller cannot do.
 - Go tooling (build, test, vet, lint) always runs in workspace mode (`platform/go.work`): `cmd/portal` imports
   `sdk/go` without a `require`/`replace`, exactly like `examples/hello`. A build of `platform/api` outside the
   workspace does not resolve the SDK.

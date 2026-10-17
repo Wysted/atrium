@@ -40,8 +40,8 @@ Pending work and open questions for the portal platform. Detailed context lives 
 - [x] **Portal app.** Closed 2026-10-16. Contract block 6: schema, API, integration health, `/metrics`, the probe,
   the k3d deploy and the embedded Nuxt 4 SPA (`platform/web/`: home, administration, integration health) served with
   a startup-computed CSP. The local smoke checks it in a real browser (Playwright, `overlays/local/browser-check/`).
-- [ ] **Retire `grant.sh` and `revoke.sh`.** The portal replaces `platform-gitops/overlays/local-google/grant.sh` and
-  `revoke.sh`; remove them after granting and revoking once through the portal (web or `portalctl`) with a real Google login.
+- [x] **Retire `grant.sh` and `revoke.sh`.** Removed 2026-10-17 after a grant and a revoke through `portalctl` with a
+  real Google login (audit rows `grant.create`/`grant.delete` with the token id). Bootstrap is `local-google/admin.sh`.
 - [ ] **Portal web follow-ups.** Done 2026-10-16: group search (`GET /api/v1/groups?q=`) in the grant dialog and on
   the groups page, and the group page shows the group's name (`GET /api/v1/groups/{id}`). Open by decision: the apps payload
   carries no portal-app flag, so the UI shows Disable and Remove host on the portal app and relies on the 409.

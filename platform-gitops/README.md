@@ -278,10 +278,8 @@ read -rs PORTAL_API_TOKEN && export PORTAL_API_TOKEN   # paste the token: it sta
 .tools/portalctl/portalctl revoke robot:ci-deployer demo editor
 ```
 
-Bootstrap fallback until `grant.sh` and `revoke.sh` are retired (no token yet, e.g. to make the first admin's access):
-`local-google/grant.sh <email> <initiative-key> <role-key>` (as platform_owner via the postgres pod; `revoke.sh` or
-`grant.sh --revoke` removes it) inserts a direct `initiative_access` row for an EXISTING user, with an `audit_events` row
-(`access.grant`, `after.actor = "cli"`). Platform-api sees the change through NOTIFY, no restart.
+Bootstrap: `local-google/admin.sh <email>` makes the first platform admin (after one sign-in); that admin grants access
+in the portal or creates the token for `portalctl`. Platform-api sees grant changes through NOTIFY, no restart.
 
 Rotating the Google client secret: [docs/runbooks/google-client-secret-rotation.md](docs/runbooks/google-client-secret-rotation.md).
 
