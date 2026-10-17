@@ -68,7 +68,7 @@ the local overlay's `seed.sql`, never in base.
 
 Prometheus and Grafana for the platform, in the `monitoring` namespace of the local cluster, plus the artifacts an adopter
 takes to their own stack. The metric catalog and the cardinality rule (no client-supplied label values, no `app_id`) are in
-`platform/docs/contract.md`, block 6 "Metrics"; read the rule before adding a metric or a dashboard query.
+`docs/reference/metrics.md` ("Metrics"); read the rule before adding a metric or a dashboard query.
 
 **Local stack.** `up.sh` installs `kube-prometheus-stack` 92.10.0 (Prometheus Operator v0.94.1, Prometheus v3.15.0, Grafana
 13.2.4) as release `monitoring`, with values in `overlays/local/monitoring/values.yaml`. Chosen over the plain prometheus +
@@ -156,7 +156,7 @@ must be distributed first and the verifiers restarted before the new leaf is ser
 `rollout restart` portal, hello-a, hello-b + wait -> Secret). With cert-manager/trust-manager, bundle old+new CA during the transition.
 The script renews the CA when less than 150 days remain (leaf 90 + renewal window 30 + margin 30), so no leaf outlives its CA.
 
-Adopters: only the contract matters, not the script.
+Adopters: only the [contract](../docs/reference/assertion.md) matters, not the script.
 - Server: any issuer that writes a PEM cert (chain allowed) and key (PKCS8/EC/RSA, mode <= 0640) at the two paths: cert-manager (`Certificate`
   with `dnsNames` = the Service names above and `secretName: platform-api-jwks-tls`, which yields `tls.crt`/`tls.key` for the same mount),
   a Vault agent template writing the files, or a manually created `kubernetes.io/tls` Secret. Keep the SAN equal to the name apps use.
@@ -180,11 +180,11 @@ Grafana is registered as an app of the portal model and reached only through Tra
 | NetworkPolicies | `overlays/local/monitoring/networkpolicy-grafana.yaml`: ingress to Grafana :3000 from Traefik only; egress to platform-api :8083. `overlays/local/platform/networkpolicy-jwks-grafana.yaml`: platform-api admits :8083 from the Grafana pods (the `monitoring` namespace is NOT labelled as an app namespace) |
 | Local login off | `[auth] disable_login_form`, `disable_signout_menu`, `[auth.basic] enabled=false`, anonymous off, `root_url` = the public URL, `cookie_secure` |
 
-Properties worth knowing: Grafana ignores the JOSE `typ` (the contract's `platform-assertion+jwt`) and cannot require it, which is
+Properties worth knowing: Grafana ignores the JOSE `typ` (`platform-assertion+jwt`, see [assertion](../docs/reference/assertion.md)) and cannot require it, which is
 acceptable because the platform signing key signs only `Platform-Assertion`; the 60 s clock leeway is fixed (go-jose); the header is
 checked on every request, so revocation takes effect on the next request (ForwardAuth answers 403; there is no Grafana-side session
-to outlive it). `cache_ttl` (5m) only bounds how long a rotated JWKS key takes to be seen: the contract publishes the `next` key at
-least 1 h before it signs and keeps the retired one 1 h, and the emergency window is 5 min (block 3, same as the JWKS `max-age`),
+to outlive it). `cache_ttl` (5m) only bounds how long a rotated JWKS key takes to be seen: the platform ([keys](../docs/reference/keys.md)) publishes the `next` key at
+least 1 h before it signs and keeps the retired one 1 h, and the emergency window is 5 min (`docs/reference/keys.md`, same as the JWKS `max-age`),
 so 5m never rejects a legitimate token. Grafana has no display-name claim in `[auth.jwt]`, so users show as their UUID login with
 an empty email. A client-sent `Platform-Assertion` never reaches Grafana: strip-assertion removes it and ForwardAuth re-issues a
 genuine one (proven at the auth host and on hello-a, smoke section 7; smoke 19b checks the Grafana-side consequences, an assertion
@@ -225,7 +225,7 @@ Adopters, mirroring this with their own Grafana and PKI:
   hides benign parameters). Headers (Cookie, Set-Cookie, Location) are dropped by default; keep them dropped
   explicitly (`accessLog.fields.headers.defaultMode: drop`, as `local/traefik-values.yaml` does): `Authorization`
   now carries API tokens on the portal host, and any header logging would write live secrets.
-- API tokens (contract block 6, "Non-browser clients"): the ForwardAuth middleware forwards `Authorization` to
+- API tokens (`docs/reference/forwardauth.md`, "Token path"): the ForwardAuth middleware forwards `Authorization` to
   platform-api, and every route that matches a portal host must list the `strip-authorization` middleware of the
   `portal` namespace, so the token never reaches the portal process. Smoke section 22 checks both in the local cluster.
 - Client IP: in k3d Traefik sees `10.42.0.1` (the node's CNI gateway) for every client, because the host port goes through

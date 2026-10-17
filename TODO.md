@@ -1,7 +1,7 @@
 # TODO
 
 Pending work and open questions for atrium. Detailed context lives in
-`platform/docs/contract.md` (block 5 "Open items"). History of closed items lives in git.
+`docs/reference/login.md` ("Limitations"). History of closed items lives in git.
 
 ## Before production
 
@@ -17,7 +17,7 @@ Pending work and open questions for atrium. Detailed context lives in
   unseal every signing key. Production should keep the KEK in an external KMS (envelope decryption via the KMS API),
   or at least audit which ClusterRoles can read Secrets in `platform`.
 - [ ] **Real client IP.** In k3d, Traefik sees every client as `10.42.0.1`, so the `/login` rate limit acts as a
-  global bucket. Verify the client IP behind the production load balancer.
+  global bucket. Verify the client IP behind the production load balancer. The per-IP rate limit on failed API tokens also waits for it.
 - [ ] **Egress filtering.** The `local-google` overlay allows platform-api HTTPS egress to any public address.
   FQDN-level filtering (Google endpoints only) needs an egress proxy or a CNI with L7 policies.
 - [ ] **NOTIFY commit serialization.** The `access_changed` and `signing_keys_changed` triggers use NOTIFY, and
@@ -36,4 +36,4 @@ Pending work and open questions for atrium. Detailed context lives in
 - [ ] **`npm audit` in the web build tooling.** High advisories in Nuxt's build tooling (`braces`, `node-forge` via
   nitropack/listhen) have no upstream fix; they never reach the embedded output. Recheck on each Nuxt upgrade.
 - [ ] **Non-browser clients, phases 2 and 3.** Phase 1 (personal and robot tokens, `portalctl`) is implemented; see
-  `platform/docs/contract.md` block 6, "Non-browser clients". Open: phase 2 (workload identity) and phase 3 (device flow).
+  `docs/architecture.md` ("Non-browser clients") and `docs/decisions/0008-opaque-api-tokens-and-robots.md`. Open: phase 2 (workload identity) and phase 3 (device flow).

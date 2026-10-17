@@ -20,7 +20,7 @@ manage initiatives (groups of apps), roles, grants, API tokens and areas.
 | `platform/web` | Nuxt 4 SPA of the portal, embedded in the `portal` binary |
 | `platform/sdk/go` | SDK that apps use to verify the assertion |
 | `platform/examples/hello` | minimal app behind the platform, the starting point for a new app |
-| `platform/docs/contract.md` | the contract: assertion, ForwardAuth, keys, data model, login, portal API |
+| `docs` | architecture, reference pages and decision records |
 | `platform-gitops` | Kustomize manifests (`base/` for adopters, `overlays/local*` for the local cluster) and runbooks |
 | `local` | k3d cluster, Traefik and cert-manager setup for local development |
 | `spikes`, `reports`, `research_notes` | the ForwardAuth spike and the research behind the design |
@@ -29,7 +29,9 @@ manage initiatives (groups of apps), roles, grants, API tokens and areas.
 
 | Document | What it covers |
 |---|---|
-| `platform/docs/contract.md` | the contract: assertion, ForwardAuth, keys, data model, login, portal API |
+| `docs/README.md` | index of the documentation by audience |
+| `docs/architecture.md` | components, request flow, trust model and glossary |
+| `docs/reference/` | assertion, ForwardAuth, keys, login, data model, portal API and metrics |
 | `platform-gitops/README.md` | Kubernetes manifests, overlays, the smoke test and runbooks |
 | `platform/examples/hello/README.md` | the minimal app behind the platform |
 | `platform/web/COMPONENTS.md` | the portal web UI components |
