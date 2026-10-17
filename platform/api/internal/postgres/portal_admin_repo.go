@@ -559,7 +559,8 @@ func (r AuditLogRepo) ListAudit(ctx context.Context, scope adminz.Scope, q porta
 	all, ids := scopeArgs(scope)
 	rows, err := r.db.Query(ctx, `
 SELECT a.id::text, a.occurred_at, COALESCE(a.actor_id::text, ''), COALESCE(u.email, ''), COALESCE(u.name, ''),
-       COALESCE(a.initiative_id::text, ''), a.action, a.target_type, a.target_id, a.before, a.after
+       COALESCE(a.initiative_id::text, ''), a.action, a.target_type, a.target_id, a.before, a.after,
+       COALESCE(a.token_id::text, '')
 FROM audit_events a
 LEFT JOIN users u ON u.id = a.actor_id
 WHERE ($1::bool OR a.initiative_id = ANY($2::uuid[]))
@@ -575,7 +576,7 @@ LIMIT $5`, all, ids, afterTime(q.After), afterID(q.After), q.Limit)
 			before, after []byte
 		)
 		err := row.Scan(&e.ID, &e.OccurredAt, &e.ActorID, &e.ActorEmail, &e.ActorName, &e.InitiativeID, &e.Action, &e.TargetType,
-			&e.TargetID, &before, &after)
+			&e.TargetID, &before, &after, &e.TokenID)
 		e.Before, e.After = json.RawMessage(before), json.RawMessage(after)
 		return e, err
 	})

@@ -17,6 +17,7 @@ const (
 func (a *api) robotRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET "+PathRobots, a.listRobots)
 	mux.HandleFunc("POST "+PathRobots, a.createRobot)
+	mux.HandleFunc("GET "+PathRobot, a.getRobot)
 	mux.HandleFunc("PATCH "+PathRobot, a.patchRobot)
 	mux.HandleFunc("GET "+PathRobotTokens, a.listRobotTokens)
 	mux.HandleFunc("POST "+PathRobotTokens, a.createRobotToken)
@@ -40,6 +41,8 @@ type robotJSON struct {
 	Name        string     `json:"name"`
 	Status      string     `json:"status"`
 	OwnerUserID *string    `json:"owner_user_id"`
+	OwnerEmail  *string    `json:"owner_email"`
+	OwnerName   *string    `json:"owner_name"`
 	CreatedAt   time.Time  `json:"created_at"`
 	LastUsedAt  *time.Time `json:"last_used_at"`
 }
@@ -56,7 +59,8 @@ func robotToJSON(r portal.Robot) any {
 		return robotRefJSON{ID: r.ID, Name: r.Name, Status: r.Status}
 	}
 	return robotJSON{
-		ID: r.ID, Name: r.Name, Status: r.Status, OwnerUserID: nilIfEmpty(r.OwnerUserID), CreatedAt: r.CreatedAt, LastUsedAt: r.LastUsedAt,
+		ID: r.ID, Name: r.Name, Status: r.Status, OwnerUserID: nilIfEmpty(r.OwnerUserID),
+		OwnerEmail: nilIfEmpty(r.OwnerEmail), OwnerName: nilIfEmpty(r.OwnerName), CreatedAt: r.CreatedAt, LastUsedAt: r.LastUsedAt,
 	}
 }
 
@@ -75,6 +79,19 @@ func (a *api) listRobots(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	WriteJSON(w, http.StatusOK, listResponse("robots", mapSlice(p.Items, robotToJSON), p.NextCursor))
+}
+
+func (a *api) getRobot(w http.ResponseWriter, r *http.Request) {
+	uid, ok := a.caller(w, r)
+	if !ok {
+		return
+	}
+	rb, err := a.admin.GetRobot(r.Context(), uid, r.PathValue("id"))
+	if err != nil {
+		a.fail(w, r, "robot_get", err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, robotToJSON(rb))
 }
 
 func (a *api) createRobot(w http.ResponseWriter, r *http.Request) {

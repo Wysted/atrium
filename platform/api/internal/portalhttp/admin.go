@@ -53,6 +53,7 @@ type AdminService interface {
 	RevokeBySecret(ctx context.Context, callerID, secret string) error
 
 	ListRobots(ctx context.Context, callerID string, req portal.PageRequest) (portal.Page[portal.Robot], error)
+	GetRobot(ctx context.Context, callerID, robotID string) (portal.Robot, error)
 	CreateRobot(ctx context.Context, callerID string, in portal.NewRobot) (portal.Robot, error)
 	UpdateRobot(ctx context.Context, callerID, robotID string, p portal.RobotPatch) (portal.Robot, error)
 	CreateRobotToken(ctx context.Context, callerID, robotID string, in portal.NewToken) (portal.CreatedToken, error)
@@ -216,6 +217,7 @@ type auditEventJSON struct {
 	TargetID     string          `json:"target_id"`
 	Before       json.RawMessage `json:"before"`
 	After        json.RawMessage `json:"after"`
+	TokenID      *string         `json:"token_id"` // the API token that made the request; null for a browser session
 }
 
 // listResponse is {"<name>": [...], "next_cursor": "..."} with the list under a per-endpoint name.
@@ -491,7 +493,7 @@ func eventToJSON(e portal.AuditEvent) auditEventJSON {
 		ID: e.ID, OccurredAt: e.OccurredAt, ActorID: nilIfEmpty(e.ActorID), ActorEmail: nilIfEmpty(e.ActorEmail),
 		ActorName:    nilIfEmpty(e.ActorName),
 		InitiativeID: nilIfEmpty(e.InitiativeID), Action: e.Action, TargetType: e.TargetType, TargetID: e.TargetID,
-		Before: rawOrNull(e.Before), After: rawOrNull(e.After),
+		Before: rawOrNull(e.Before), After: rawOrNull(e.After), TokenID: nilIfEmpty(e.TokenID),
 	}
 }
 

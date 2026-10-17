@@ -379,7 +379,7 @@ func TestListResponsesCarryTheNextCursor(t *testing.T) {
 		events: portal.Page[portal.AuditEvent]{Items: []portal.AuditEvent{{
 			ID: grantID, OccurredAt: at, ActorID: callerID, Action: "grant.create", TargetType: "grant", TargetID: grantID,
 			After: json.RawMessage(`{"k":"v"}`),
-		}}},
+		}, {ID: tokenID, OccurredAt: at, ActorID: callerID, Action: "token.revoke", TargetType: "token", TargetID: tokenID, TokenID: tokenID}}},
 	}
 	h := newTestHandler(t, fakeService{}, fake, nil)
 	w := do(h, http.MethodGet, "/api/v1/groups", "", nil)
@@ -390,7 +390,10 @@ func TestListResponsesCarryTheNextCursor(t *testing.T) {
 	w = do(h, http.MethodGet, "/api/v1/audit", "", nil)
 	const wantAudit = `{"events":[{"id":"` + grantID + `","occurred_at":"2030-01-02T03:04:05Z","actor_id":"` + callerID +
 		`","actor_email":null,"actor_name":null,"initiative_id":null,"action":"grant.create","target_type":"grant","target_id":"` + grantID +
-		`","before":null,"after":{"k":"v"}}]}`
+		`","before":null,"after":{"k":"v"},"token_id":null},` +
+		`{"id":"` + tokenID + `","occurred_at":"2030-01-02T03:04:05Z","actor_id":"` + callerID +
+		`","actor_email":null,"actor_name":null,"initiative_id":null,"action":"token.revoke","target_type":"token","target_id":"` + tokenID +
+		`","before":null,"after":null,"token_id":"` + tokenID + `"}]}`
 	if strings.TrimSpace(w.Body.String()) != wantAudit {
 		t.Fatalf("audit = %s\nwant    %s", w.Body.String(), wantAudit)
 	}

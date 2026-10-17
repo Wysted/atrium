@@ -155,10 +155,13 @@ func TestListRobots(t *testing.T) {
 		for _, r := range p.Items {
 			byID[r.ID] = r
 		}
+		if r := byID[a]; r.OwnerEmail != "" || r.OwnerName != "" {
+			t.Errorf("a has no owner but shows %q %q", r.OwnerEmail, r.OwnerName)
+		}
 		if r := byID[a]; !r.Detail || r.Name != "a-bot" || r.Status != "active" || r.LastUsedAt == nil || r.LastUsedAt.Year() != 2030 {
 			t.Errorf("a = %+v", r)
 		}
-		if r := byID[b]; r.OwnerUserID != owner || r.Status != "disabled" || r.LastUsedAt != nil {
+		if r := byID[b]; r.OwnerUserID != owner || r.OwnerEmail != e.email(owner) || r.OwnerName != "n" || r.Status != "disabled" || r.LastUsedAt != nil {
 			t.Errorf("b = %+v", r)
 		}
 		if _, ok := byID[c]; !ok {
@@ -211,6 +214,61 @@ func TestListRobots(t *testing.T) {
 	})
 }
 
+func TestGetRobot(t *testing.T) {
+	t.Parallel()
+	e := newRobotEnv(t)
+	ctx := e.ctx()
+	admin := e.admin()
+	alpha := e.initiative("alpha")
+	mgr := e.manager(alpha.id, alpha.manager)
+	plain := e.w.user(t, "active")
+	owner := e.w.user(t, "active")
+	bot := e.w.robot(t, "bot")
+	mustExec(t, e.owner, `UPDATE users SET owner_user_id = $2 WHERE id = $1`, bot, owner)
+	tok := e.w.apiToken(t, bot, "-1 hour", "1 hour", "")
+	mustExec(t, e.owner, `UPDATE api_tokens SET last_used_at = '2030-01-01T00:00:00Z' WHERE id = $1`, tok)
+
+	t.Run("admins see every field with the owner", func(t *testing.T) {
+		r, err := e.svc.GetRobot(ctx, admin, bot)
+		if err != nil || !r.Detail || r.Name != "bot" || r.OwnerUserID != owner || r.OwnerEmail != e.email(owner) || r.OwnerName != "n" ||
+			r.LastUsedAt == nil || r.LastUsedAt.Year() != 2030 || r.CreatedAt.IsZero() {
+			t.Fatalf("robot = %+v, %v", r, err)
+		}
+	})
+	t.Run("a manager gets id, name and status only", func(t *testing.T) {
+		r, err := e.svc.GetRobot(ctx, mgr, bot)
+		if err != nil || r != (portal.Robot{ID: bot, Name: "bot", Status: "active"}) {
+			t.Fatalf("robot = %+v, %v", r, err)
+		}
+	})
+	t.Run("others are refused", func(t *testing.T) {
+		if _, err := e.svc.GetRobot(ctx, plain, bot); !errors.Is(err, portal.ErrForbidden) {
+			t.Fatalf("err = %v", err)
+		}
+	})
+	t.Run("a human, an unknown and a malformed id are not found", func(t *testing.T) {
+		for _, id := range []string{owner, "01a14296-1449-7be0-957b-4b1ad8d7a0bb", "nope"} {
+			if _, err := e.svc.GetRobot(ctx, admin, id); !errors.Is(err, portal.ErrNotFound) {
+				t.Errorf("%s: err = %v", id, err)
+			}
+		}
+	})
+}
+
+func TestListAuditTokenID(t *testing.T) {
+	t.Parallel()
+	e := newRobotEnv(t)
+	admin := e.admin()
+	bot := e.w.robot(t, "bot")
+	tok := e.w.apiToken(t, bot, "-1 hour", "1 hour", "")
+	mustExec(t, e.owner, `INSERT INTO audit_events (actor_id, action, target_type, target_id, token_id, occurred_at)
+		VALUES ($1, 'with.token', 't', '1', $2, now() + interval '1 minute'), ($1, 'no.token', 't', '2', NULL, now())`, bot, tok)
+	p, err := e.svc.ListAudit(e.ctx(), admin, portal.AuditQuery{})
+	if err != nil || len(p.Items) < 2 || p.Items[0].Action != "with.token" || p.Items[0].TokenID != tok || p.Items[1].Action != "no.token" || p.Items[1].TokenID != "" {
+		t.Fatalf("events = %+v, %v", p.Items, err)
+	}
+}
+
 func TestUpdateRobot(t *testing.T) {
 	t.Parallel()
 	e := newRobotEnv(t)
@@ -226,7 +284,8 @@ func TestUpdateRobot(t *testing.T) {
 
 	t.Run("rename, owner change and clear are audited with before and after", func(t *testing.T) {
 		got, err := e.svc.UpdateRobot(ctx, admin, r, portal.RobotPatch{Name: ptr(" Renamed "), OwnerUserID: ptr(human)})
-		if err != nil || got.Name != "Renamed" || got.OwnerUserID != human || got.Status != "active" || !got.Detail {
+		if err != nil || got.Name != "Renamed" || got.OwnerUserID != human || got.OwnerEmail != e.email(human) || got.OwnerName != "n" ||
+			got.Status != "active" || !got.Detail {
 			t.Fatalf("robot = %+v, %v", got, err)
 		}
 		a := e.lastAudit()
@@ -235,7 +294,13 @@ func TestUpdateRobot(t *testing.T) {
 			a.After["tokens_revoked"] != nil {
 			t.Fatalf("audit = %+v", a)
 		}
-		if got, err = e.svc.UpdateRobot(ctx, admin, r, portal.RobotPatch{OwnerUserID: ptr("")}); err != nil || got.OwnerUserID != "" {
+		other := e.w.user(t, "active")
+		if got, err = e.svc.UpdateRobot(ctx, admin, r, portal.RobotPatch{OwnerUserID: ptr(other)}); err != nil || got.OwnerUserID != other ||
+			got.OwnerEmail != e.email(other) || got.OwnerName != "n" {
+			t.Fatalf("change owner: %+v, %v", got, err)
+		}
+		if got, err = e.svc.UpdateRobot(ctx, admin, r, portal.RobotPatch{OwnerUserID: ptr("")}); err != nil || got.OwnerUserID != "" ||
+			got.OwnerEmail != "" || got.OwnerName != "" {
 			t.Fatalf("clear owner: %+v, %v", got, err)
 		}
 		if scalar[*string](t, e.owner, `SELECT owner_user_id::text FROM users WHERE id = $1`, r) != nil {

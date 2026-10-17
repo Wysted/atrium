@@ -24,6 +24,13 @@ func (f *fakeAdmin) ListRobots(_ context.Context, caller string, req portal.Page
 	return f.robots, f.note(caller, "")
 }
 
+func (f *fakeAdmin) GetRobot(_ context.Context, caller, id string) (portal.Robot, error) {
+	return portal.Robot{
+		ID: id, Name: "ci", Status: "active", Detail: true, OwnerUserID: callerID, OwnerEmail: "o@example.com", OwnerName: "Owner",
+		CreatedAt: time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC),
+	}, f.note(caller, id)
+}
+
 func (f *fakeAdmin) CreateRobot(_ context.Context, caller string, in portal.NewRobot) (portal.Robot, error) {
 	f.newRobot = in
 	return portal.Robot{ID: robotID, Name: in.Name, Status: "active", Detail: true, OwnerUserID: in.OwnerUserID}, f.note(caller, "")
@@ -63,7 +70,7 @@ func TestRobotRoutes(t *testing.T) {
 		{"patch", http.MethodPatch, rp, `{"status":"disabled"}`, http.StatusOK},
 		{"list tokens", http.MethodGet, rp + "/tokens", "", http.StatusOK},
 		{"create token", http.MethodPost, rp + "/tokens", `{"name":"n","scope":"read"}`, http.StatusCreated},
-		{"no GET of one robot", http.MethodGet, rp, "", http.StatusNotFound},
+		{"get one", http.MethodGet, rp, "", http.StatusOK},
 		{"no DELETE of a robot", http.MethodDelete, rp, "{}", http.StatusNotFound},
 		{"no PUT of the collection", http.MethodPut, PathRobots, "{}", http.StatusNotFound},
 	}
@@ -89,10 +96,17 @@ func TestRobotRequestsAndResponses(t *testing.T) {
 
 	w := do(h, http.MethodGet, PathRobots+"?limit=7&cursor=abc", "", nil)
 	const want = `{"robots":[{"id":"` + robotID + `","name":"ci","status":"active","owner_user_id":"` + callerID +
-		`","created_at":"2030-01-01T00:00:00Z","last_used_at":null},` +
+		`","owner_email":null,"owner_name":null,"created_at":"2030-01-01T00:00:00Z","last_used_at":null},` +
 		`{"id":"01a14296-1449-7be0-957b-4b1ad8d7a0cc","name":"bot","status":"disabled"}]}`
 	if w.Code != http.StatusOK || strings.TrimSpace(w.Body.String()) != want || fake.req.Limit != 7 || fake.req.Cursor != "abc" {
 		t.Fatalf("status %d body %s req %+v", w.Code, w.Body.String(), fake.req)
+	}
+
+	w = do(h, http.MethodGet, robotPath(), "", nil)
+	const wantOne = `{"id":"` + robotID + `","name":"ci","status":"active","owner_user_id":"` + callerID +
+		`","owner_email":"o@example.com","owner_name":"Owner","created_at":"2030-01-01T00:00:00Z","last_used_at":null}`
+	if w.Code != http.StatusOK || strings.TrimSpace(w.Body.String()) != wantOne {
+		t.Fatalf("get = %d %s\nwant    %s", w.Code, w.Body.String(), wantOne)
 	}
 
 	do(h, http.MethodPost, PathRobots, `{"name":"ci","owner_user_id":"`+callerID+`"}`, nil)
@@ -158,6 +172,7 @@ func TestRobotErrorMapping(t *testing.T) {
 			h := newTestHandler(t, fakeService{}, &fakeAdmin{err: tt.err}, nil)
 			for _, req := range []struct{ method, path, body string }{
 				{http.MethodGet, PathRobots, ""},
+				{http.MethodGet, robotPath(), ""},
 				{http.MethodPost, PathRobots, `{"name":"ci"}`},
 				{http.MethodPatch, robotPath(), `{"status":"active"}`},
 				{http.MethodGet, robotPath() + "/tokens", ""},

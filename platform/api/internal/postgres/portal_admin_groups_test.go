@@ -480,6 +480,9 @@ func TestListAudit(t *testing.T) {
 				t.Fatalf("order differs at %d", i)
 			}
 		}
+		if all[0].TokenID != "" {
+			t.Fatalf("a browser-session event shows token %q", all[0].TokenID)
+		}
 		if all[0].Before != nil || string(all[0].After) != `{"secret": "hidden"}` || all[0].ActorEmail != e.email(admin) {
 			t.Fatalf("event = %+v", all[0])
 		}

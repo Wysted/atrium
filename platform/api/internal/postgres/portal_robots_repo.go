@@ -21,13 +21,14 @@ var _ portal.RobotRepo = RobotsRepo{}
 // robotColumns are the columns of a robot without its last use; lastUsedSQL is the newest use of any of the
 // robot's tokens (the portal role may select it), computed only where it is returned.
 const (
-	robotColumns = `u.id::text, u.name, u.status, COALESCE(u.owner_user_id::text, ''), u.created_at, NULL::timestamptz`
+	robotColumns = `u.id::text, u.name, u.status, COALESCE(u.owner_user_id::text, ''), COALESCE(o.email, ''), COALESCE(o.name, ''), u.created_at, NULL::timestamptz`
+	ownerJoin    = ` LEFT JOIN users o ON o.id = u.owner_user_id`
 	lastUsedSQL  = `(SELECT max(t.last_used_at) FROM api_tokens t WHERE t.user_id = u.id)`
 )
 
 func scanRobot(row pgx.CollectableRow) (portal.Robot, error) {
 	var r portal.Robot
-	err := row.Scan(&r.ID, &r.Name, &r.Status, &r.OwnerUserID, &r.CreatedAt, &r.LastUsedAt)
+	err := row.Scan(&r.ID, &r.Name, &r.Status, &r.OwnerUserID, &r.OwnerEmail, &r.OwnerName, &r.CreatedAt, &r.LastUsedAt)
 	return r, err
 }
 
@@ -36,8 +37,8 @@ func (r RobotsRepo) ListRobots(ctx context.Context, scope adminz.Scope, q portal
 	if !scope.All {
 		return nil, nil
 	}
-	rows, err := r.db.Query(ctx, `SELECT u.id::text, u.name, u.status, COALESCE(u.owner_user_id::text, ''), u.created_at, `+lastUsedSQL+`
-FROM users u WHERE u.kind = 'robot' AND ($1::uuid IS NULL OR u.id > $1::uuid) ORDER BY u.id LIMIT $2`, afterID(q.After), q.Limit)
+	rows, err := r.db.Query(ctx, `SELECT u.id::text, u.name, u.status, COALESCE(u.owner_user_id::text, ''), COALESCE(o.email, ''), COALESCE(o.name, ''), u.created_at, `+lastUsedSQL+`
+FROM users u`+ownerJoin+` WHERE u.kind = 'robot' AND ($1::uuid IS NULL OR u.id > $1::uuid) ORDER BY u.id LIMIT $2`, afterID(q.After), q.Limit)
 	if err != nil {
 		return nil, fmt.Errorf("query robots: %w", err)
 	}
@@ -49,7 +50,7 @@ FROM users u WHERE u.kind = 'robot' AND ($1::uuid IS NULL OR u.id > $1::uuid) OR
 }
 
 func (r RobotsRepo) one(ctx context.Context, suffix, id string) (portal.Robot, error) {
-	rows, err := r.db.Query(ctx, `SELECT `+robotColumns+` FROM users u WHERE u.id = $1::uuid AND u.kind = 'robot'`+suffix, id)
+	rows, err := r.db.Query(ctx, `SELECT `+robotColumns+` FROM users u`+ownerJoin+` WHERE u.id = $1::uuid AND u.kind = 'robot'`+suffix, id)
 	if err != nil {
 		return portal.Robot{}, fmt.Errorf("query robot: %w", err)
 	}

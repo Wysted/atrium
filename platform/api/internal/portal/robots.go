@@ -39,9 +39,14 @@ type Robot struct {
 	Status      string
 	Detail      bool
 	OwnerUserID string // the accountable human, informational; empty when none
+	OwnerEmail  string // of the owner; empty when none (Detail only)
+	OwnerName   string // of the owner; empty when none (Detail only)
 	CreatedAt   time.Time
 	LastUsedAt  *time.Time // the newest last_used_at of its tokens
 }
+
+// forManager trims a robot to what a manager sees: id, name and status.
+func (r Robot) forManager() Robot { return Robot{ID: r.ID, Name: r.Name, Status: r.Status} }
 
 // NewRobot is the request to create a robot; OwnerUserID is optional.
 type NewRobot struct {
@@ -150,11 +155,40 @@ func (s *Service) ListRobots(ctx context.Context, callerID string, req PageReque
 			if sub.PlatformAdmin {
 				rows[i].Detail = true
 			} else {
-				rows[i] = Robot{ID: rows[i].ID, Name: rows[i].Name, Status: rows[i].Status}
+				rows[i] = rows[i].forManager()
 			}
 		}
 		out = pageOf(rows, size, cursorKindRobots, func(r Robot) Cursor { return Cursor{ID: r.ID} })
 		return nil
+	})
+	return out, err
+}
+
+// GetRobot returns one robot with the same authorization and trimming as ListRobots: platform admins see every
+// field, managers id, name and status, anyone else is refused. An unknown or human id is ErrNotFound.
+func (s *Service) GetRobot(ctx context.Context, callerID, robotID string) (Robot, error) {
+	robotID, ok := canonicalUUID(robotID)
+	if !ok {
+		return Robot{}, ErrNotFound
+	}
+	var out Robot
+	err := s.store.WithTx(ctx, func(tx Tx) error {
+		out = Robot{}
+		sub, _, err := begin(ctx, tx, callerID, adminz.RobotList, adminz.Resource{Type: TargetRobot})
+		if err != nil {
+			return err
+		}
+		r, err := tx.Robots().GetRobot(ctx, robotID)
+		if err != nil {
+			return err
+		}
+		if !sub.PlatformAdmin {
+			out = r.forManager()
+			return nil
+		}
+		r.Detail = true
+		out = r
+		return fillLastUsed(ctx, tx, &out)
 	})
 	return out, err
 }
@@ -268,7 +302,10 @@ func (s *Service) UpdateRobot(ctx context.Context, callerID, robotID string, p R
 		}); err != nil {
 			return err
 		}
-		out = next
+		if out, err = tx.Robots().GetRobot(ctx, next.ID); err != nil { // re-read: the new owner's email and name
+			return fmt.Errorf("reread robot: %w", err)
+		}
+		out.Detail = true
 		return fillLastUsed(ctx, tx, &out)
 	})
 	return out, err

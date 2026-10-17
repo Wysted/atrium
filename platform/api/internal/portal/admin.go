@@ -237,6 +237,7 @@ type AuditEvent struct {
 	TargetID     string
 	Before       json.RawMessage
 	After        json.RawMessage
+	TokenID      string // the API token that made the request; empty for a browser session
 }
 
 // AuditQuery filters the audit listing. InitiativeID is optional.
