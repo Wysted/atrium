@@ -473,6 +473,22 @@ code=$(mutate "$JDV" POST "$P/api/v1/initiatives" same-origin application/json '
 code=$(api "$JDV" "$P/api/v1/me/apps"); apps="$(cat "$WORK/b")"
 check "dave's home lists hello-a" "$apps" "$A_HOST"; check_not "dave's home does not list hello-b (no grants in other)" "$apps" "$B_HOST"
 code=$(api "$JDV" "$P/api/v1/groups"); check "dave (manager) may list groups, to grant access (portal.ListGroups)" "$code" 200
+code=$(api "$JAD" "$P/api/v1/groups?q=demo-editors"); check "admin GET /groups?q= filters by key" "$code" 200
+check "  (q=demo-editors returns only demo-editors)" "$(json_get "$WORK/b" '[g["key"] for g in d["groups"]]')" "['demo-editors']"
+DE_ID="$(json_get "$WORK/b" 'd["groups"][0]["id"]')"
+code=$(api "$JDV" "$P/api/v1/groups?q=DEMO"); check "dave GET /groups?q= (case-insensitive name match)" "$code" 200
+check "  (q=DEMO finds demo-editors)" "$(cat "$WORK/b")" demo-editors
+code=$(api "$JAD" "$P/api/v1/groups?q=zzz-no-such-group"); check "GET /groups?q= with no match" "$code" 200
+check "  (empty list)" "$(json_get "$WORK/b" 'len(d["groups"])')" 0
+code=$(api "$JAD" "$P/api/v1/groups?q=%25"); check "GET /groups?q=%25 (literal percent)" "$code" 200
+check "  (no group matches a literal %)" "$(json_get "$WORK/b" 'len(d["groups"])')" 0
+code=$(api "$JAD" "$P/api/v1/groups?q=$(printf 'a%.0s' $(seq 1 64))"); check "GET /groups?q= of 64 characters" "$code" 200
+code=$(api "$JAD" "$P/api/v1/groups?q=$(printf 'a%.0s' $(seq 1 65))"); check "GET /groups?q= of 65 characters" "$code" 422
+code=$(api "$JAD" "$P/api/v1/groups/$DE_ID"); check "admin GET /groups/{id}" "$code" 200
+check "  (key demo-editors)" "$(json_get "$WORK/b" 'd["key"]')" demo-editors
+code=$(api "$JDV" "$P/api/v1/groups/$DE_ID"); check "dave (manager) GET /groups/{id}" "$code" 200
+code=$(api "$JP" "$P/api/v1/groups/$DE_ID"); check "alice (not admin) GET /groups/{id}" "$code" 403
+code=$(api "$JAD" "$P/api/v1/groups/00000000-0000-4000-8000-000000000000"); check "admin GET /groups/{unknown id}" "$code" 404
 
 section "15. Portal responses: security headers, no CORS, /metrics, probes and /_platform/ not served by the portal"
 code=$(api "$JAD" -H 'Origin: https://evil.example' "$P/api/v1/me"); check "GET with a foreign Origin" "$code" 200
