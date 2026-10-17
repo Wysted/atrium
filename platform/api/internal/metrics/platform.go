@@ -51,8 +51,8 @@ const (
 	viaAuthHost = "auth_host"
 )
 
-// Platform holds the event metrics of platform-api. It implements forwardauth.Observer, authhost.Observer and
-// lastseen.Observer. Create it with NewPlatform and register the state read at scrape time with
+// Platform holds the event metrics of platform-api. It implements forwardauth.Observer and authhost.Observer.
+// Create it with NewPlatform and register the state read at scrape time with
 // RegisterPlatformState.
 type Platform struct {
 	decisions        *prometheus.CounterVec
@@ -61,7 +61,6 @@ type Platform struct {
 	logins           *prometheus.CounterVec
 	logouts          *prometheus.CounterVec
 	jwks             *prometheus.CounterVec
-	flushErrors      prometheus.Counter
 }
 
 // NewPlatform creates the event metrics and registers them in reg.
@@ -92,10 +91,6 @@ func NewPlatform(reg prometheus.Registerer) (*Platform, error) {
 			Name: "platform_jwks_requests_total",
 			Help: "Requests to the JWKS endpoint by listener and status class.",
 		}, []string{"listener", "status_class"}),
-		flushErrors: prometheus.NewCounter(prometheus.CounterOpts{
-			Name: "platform_lastseen_flush_errors_total",
-			Help: "Failed last_seen_at flushes (the batch is kept and retried).",
-		}),
 	}
 	// The small closed sets start at zero so rate() works from the first event.
 	for _, o := range logins {
@@ -108,7 +103,7 @@ func NewPlatform(reg prometheus.Registerer) (*Platform, error) {
 		p.cacheLookups.WithLabelValues(c, resultLabel(true))
 		p.cacheLookups.WithLabelValues(c, resultLabel(false))
 	}
-	if err := register(reg, p.decisions, p.decisionDuration, p.cacheLookups, p.logins, p.logouts, p.jwks, p.flushErrors); err != nil {
+	if err := register(reg, p.decisions, p.decisionDuration, p.cacheLookups, p.logins, p.logouts, p.jwks); err != nil {
 		return nil, err
 	}
 	return p, nil
@@ -138,9 +133,6 @@ func (p *Platform) Login(outcome string) {
 // AuthHostLogout implements authhost.Observer.
 func (p *Platform) AuthHostLogout() { p.logouts.WithLabelValues(viaAuthHost).Inc() }
 
-// FlushFailed implements lastseen.Observer.
-func (p *Platform) FlushFailed() { p.flushErrors.Inc() }
-
 // CountJWKS wraps the JWKS handler of one listener and counts its requests by status class.
 func (p *Platform) CountJWKS(listener string, next http.Handler) http.Handler {
 	listener = listeners.clamp(listener)
@@ -165,9 +157,12 @@ type PlatformSources struct {
 	Pool         *pgxpool.Pool
 	Keys         KeyState
 	Pending      func() int                          // hosts waiting for the next last_seen_at flush
+	SeenDrops    func() uint64                       // host observations discarded because the queue was full
+	SeenErrors   func() uint64                       // failed last_seen_at flushes
 	UnknownDrops func() forwardauth.UnknownHostDrops // unknown_host denials that were not recorded
 	TokenPending func() int                          // tokens waiting for the next last_used_at flush
 	TokenDrops   func() uint64                       // token observations discarded because the queue was full
+	TokenErrors  func() uint64                       // failed last_used_at flushes
 	Now          func() time.Time                    // default time.Now
 }
 
@@ -187,6 +182,12 @@ func RegisterPlatformState(reg prometheus.Registerer, src PlatformSources) error
 			"1 when this replica's KEK does not match the active or next keys (it neither signs nor rotates), 0 otherwise.", nil, nil)
 		pending = prometheus.NewDesc("platform_lastseen_pending_hosts",
 			"Hosts waiting in memory for the next last_seen_at flush.", nil, nil)
+		seenDrops = prometheus.NewDesc("platform_lastseen_dropped_total",
+			"last_seen_at observations discarded because the in-memory queue was full.", nil, nil)
+		seenErrors = prometheus.NewDesc("platform_lastseen_flush_errors_total",
+			"Failed last_seen_at flushes (the batch is kept and retried).", nil, nil)
+		tokenErrors = prometheus.NewDesc("platform_token_use_flush_errors_total",
+			"Failed last_used_at flushes (the batch is kept and retried).", nil, nil)
 		tokenPending = prometheus.NewDesc("platform_token_use_pending_tokens",
 			"API tokens waiting in memory for the next last_used_at flush.", nil, nil)
 		tokenDrops = prometheus.NewDesc("platform_token_use_dropped_total",
@@ -196,7 +197,7 @@ func RegisterPlatformState(reg prometheus.Registerer, src PlatformSources) error
 	)
 	errPool := poolMetrics(reg, "platform", src.Pool)
 	errState := register(reg, collector{
-		descs: []*prometheus.Desc{loaded, age, mismatch, pending, tokenPending, tokenDrops, drops},
+		descs: []*prometheus.Desc{loaded, age, mismatch, pending, seenDrops, seenErrors, tokenPending, tokenDrops, tokenErrors, drops},
 		collect: func(emit func(*prometheus.Desc, prometheus.ValueType, float64, ...string)) {
 			since, ok := src.Keys.ActiveSince()
 			emit(loaded, prometheus.GaugeValue, boolValue(ok))
@@ -206,6 +207,15 @@ func RegisterPlatformState(reg prometheus.Registerer, src PlatformSources) error
 			emit(mismatch, prometheus.GaugeValue, boolValue(src.Keys.KEKMismatch()))
 			if src.Pending != nil {
 				emit(pending, prometheus.GaugeValue, float64(src.Pending()))
+			}
+			if src.SeenDrops != nil {
+				emit(seenDrops, prometheus.CounterValue, float64(src.SeenDrops()))
+			}
+			if src.SeenErrors != nil {
+				emit(seenErrors, prometheus.CounterValue, float64(src.SeenErrors()))
+			}
+			if src.TokenErrors != nil {
+				emit(tokenErrors, prometheus.CounterValue, float64(src.TokenErrors()))
 			}
 			if src.TokenPending != nil {
 				emit(tokenPending, prometheus.GaugeValue, float64(src.TokenPending()))

@@ -113,7 +113,7 @@ func New(cfg Config) (*App, error) {
 		return nil, err
 	}
 
-	seen, err := lastseen.New(lastseen.Config{Store: deployments, Observer: pm, Logger: log})
+	seen, err := lastseen.New(lastseen.Config{Store: deployments, Logger: log})
 	if err != nil {
 		return nil, err
 	}
@@ -170,7 +170,8 @@ func New(cfg Config) (*App, error) {
 
 	err = metrics.RegisterPlatformState(reg, metrics.PlatformSources{
 		Pool: cfg.Pool, Keys: cfg.Keyring, Pending: seen.Pending, UnknownDrops: fa.UnknownHostDrops,
-		TokenPending: tokenUse.Pending, TokenDrops: tokenUse.Dropped,
+		SeenDrops: seen.Dropped, SeenErrors: seen.FlushErrors,
+		TokenPending: tokenUse.Pending, TokenDrops: tokenUse.Dropped, TokenErrors: tokenUse.FlushErrors,
 	})
 	if err != nil {
 		return nil, err

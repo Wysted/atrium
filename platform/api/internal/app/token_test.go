@@ -1,6 +1,7 @@
 package app_test
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"testing"
@@ -195,5 +196,24 @@ func TestTokenLastUsedIsWrittenByTheFlusher(t *testing.T) {
 	}
 	if e.scalar(`SELECT (last_used_at > now())::text FROM api_tokens WHERE id = $1`, tid) != "true" {
 		t.Fatal("the flush moved last_used_at backwards")
+	}
+}
+
+// A failed token flush shows up in platform_token_use_flush_errors_total (and the batch stays queued).
+func TestTokenFlushErrorsAreExposed(t *testing.T) {
+	e := tokenEnv(t)
+	human := e.scalar(`INSERT INTO users (google_sub, email, name) VALUES ('g-1', 'ana@example.test', 'Ana') RETURNING id::text`)
+	secret, _ := e.addToken(human, "read", "0s", "1h")
+	e.bearer(portalHost, http.MethodGet, "Bearer "+secret)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := e.app.TokenUse.Flush(ctx); err == nil {
+		t.Fatal("flush with a canceled context succeeded")
+	}
+	if got := e.metric("platform_token_use_flush_errors_total", map[string]string{}); got != 1 {
+		t.Fatalf("platform_token_use_flush_errors_total = %v, want 1", got)
+	}
+	if e.app.TokenUse.Pending() != 1 {
+		t.Fatal("the failed batch was lost")
 	}
 }

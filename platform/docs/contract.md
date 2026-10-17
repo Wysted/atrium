@@ -661,9 +661,11 @@ platform-api (`platform_`):
 | `platform_signing_key_active_age_seconds` | gauge | none; absent while no signer is loaded |
 | `platform_signing_key_kek_mismatch` | gauge | none; 1 when the KEK does not match the active or next keys |
 | `platform_lastseen_pending_hosts` | gauge | none |
-| `platform_lastseen_flush_errors_total` | counter | none |
+| `platform_lastseen_dropped_total` | counter | none; `last_seen_at` observations discarded because the queue was full |
+| `platform_lastseen_flush_errors_total` | counter | none; failed `last_seen_at` flushes (the batch is kept and retried) |
 | `platform_token_use_pending_tokens` | gauge | none; API tokens waiting for the next `last_used_at` flush |
 | `platform_token_use_dropped_total` | counter | none; `last_used_at` observations discarded because the queue was full |
+| `platform_token_use_flush_errors_total` | counter | none; failed `last_used_at` flushes (the batch is kept and retried) |
 | `platform_unknown_host_drops_total` | counter | `reason` (`invalid`, `budget`, `marker`, `queue`) |
 | `platform_db_pool_{acquired,idle,total,max}_connections` | gauge | none |
 | `platform_db_pool_{acquires,acquires_waited,acquires_canceled}_total`, `platform_db_pool_acquire_wait_seconds_total` | counter | none |
@@ -995,7 +997,8 @@ As implemented (part 2), where the rules above left a choice:
 - `last_used_at` goes through `internal/tokenuse` (a bounded set of at most 10 000 tokens per replica flushed once a
   minute by one writer, with a final flush at shutdown; observations beyond the bound are dropped and counted, see
   the metrics table). The statement locks rows with `SKIP LOCKED`, caps the time at the database clock and never moves
-  the column backwards; a revoked or locked token is simply not written.
+  the column backwards; a token whose row is locked is kept in memory and retried on the next tick (a revoked one
+  is simply not written). Both this and `lastseen` are thin users of `internal/touchset`.
 
 New claims (block 1), present only on assertions issued by the token path; session assertions are unchanged:
 

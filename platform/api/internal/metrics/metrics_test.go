@@ -159,7 +159,8 @@ func TestPlatformExposesTheCatalogWithItsTypes(t *testing.T) {
 	since := time.Now().Add(-2 * time.Hour)
 	err := RegisterPlatformState(reg, PlatformSources{
 		Pool: lazyPool(t), Keys: fakeKeys{since: since, loaded: true},
-		Pending: func() int { return 3 },
+		Pending: func() int { return 3 }, SeenDrops: func() uint64 { return 5 }, SeenErrors: func() uint64 { return 1 },
+		TokenPending: func() int { return 6 }, TokenDrops: func() uint64 { return 7 }, TokenErrors: func() uint64 { return 8 },
 		UnknownDrops: func() forwardauth.UnknownHostDrops {
 			return forwardauth.UnknownHostDrops{Invalid: 1, Budget: 2, Marker: 3, Queue: 4}
 		},
@@ -172,7 +173,6 @@ func TestPlatformExposesTheCatalogWithItsTypes(t *testing.T) {
 	p.Login(authhost.LoginSuccess)
 	p.AppLogout()
 	p.AuthHostLogout()
-	p.FlushFailed()
 	rec := httptest.NewRecorder()
 	p.CountJWKS(ListenerJWKS, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })).
 		ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil))
@@ -186,6 +186,10 @@ func TestPlatformExposesTheCatalogWithItsTypes(t *testing.T) {
 		"platform_jwks_requests_total":                   dto.MetricType_COUNTER,
 		"platform_lastseen_flush_errors_total":           dto.MetricType_COUNTER,
 		"platform_lastseen_pending_hosts":                dto.MetricType_GAUGE,
+		"platform_lastseen_dropped_total":                dto.MetricType_COUNTER,
+		"platform_token_use_pending_tokens":              dto.MetricType_GAUGE,
+		"platform_token_use_dropped_total":               dto.MetricType_COUNTER,
+		"platform_token_use_flush_errors_total":          dto.MetricType_COUNTER,
 		"platform_unknown_host_drops_total":              dto.MetricType_COUNTER,
 		"platform_signing_key_loaded":                    dto.MetricType_GAUGE,
 		"platform_signing_key_active_age_seconds":        dto.MetricType_GAUGE,
@@ -228,6 +232,10 @@ func TestPlatformExposesTheCatalogWithItsTypes(t *testing.T) {
 		{"platform_jwks_requests_total", map[string]string{"listener": "jwks", "status_class": "2xx"}, 1},
 		{"platform_lastseen_flush_errors_total", map[string]string{}, 1},
 		{"platform_lastseen_pending_hosts", map[string]string{}, 3},
+		{"platform_lastseen_dropped_total", map[string]string{}, 5},
+		{"platform_token_use_pending_tokens", map[string]string{}, 6},
+		{"platform_token_use_dropped_total", map[string]string{}, 7},
+		{"platform_token_use_flush_errors_total", map[string]string{}, 8},
 		{"platform_unknown_host_drops_total", map[string]string{"reason": "invalid"}, 1},
 		{"platform_unknown_host_drops_total", map[string]string{"reason": "budget"}, 2},
 		{"platform_unknown_host_drops_total", map[string]string{"reason": "marker"}, 3},
