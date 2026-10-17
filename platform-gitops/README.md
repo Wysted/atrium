@@ -256,7 +256,7 @@ fake-login mode (POST /login is 405 under Google). The client secret is read fro
 loaded with `--from-file` into Secret `platform/platform-google-client-secret`, mounted with `fsGroup` + `defaultMode: 0440`
 (same policy as the KEK). The (public) client id is read from `.tools/secrets/google-client-id` into ConfigMap
 `platform/platform-google-client-id`; `up.sh` fails if either file is missing. The env is read at container start: after changing the id, `./tk kubectl -n platform rollout restart deploy/platform-api`. Env: `PLATFORM_GOOGLE_CLIENT_ID`, `PLATFORM_GOOGLE_CLIENT_SECRET_FILE`, `PLATFORM_ALLOWED_HD=wysted.dev`,
-`PLATFORM_FAKE_LOGIN=false`. The image tag is overridden with the kustomize `images` transformer (base keeps `:dev`).
+`PLATFORM_FAKE_LOGIN=false` (explicit; `overlays/local` sets `true`, `base/` leaves it unset). The image tag is overridden with the kustomize `images` transformer (base keeps `:dev`).
 
 The portal needs nothing from this overlay (it only validates assertions): `local/up.sh` deploys it and it keeps running; any
 active user may open it (reserved initiative `platform`, "any active user" rule). To use its admin API with a real user:

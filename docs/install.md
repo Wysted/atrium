@@ -210,7 +210,6 @@ patches:
                   - {name: PLATFORM_AUTH_HOST, value: auth.apps.example.com}
                   - {name: PLATFORM_ISSUER, value: "https://auth.apps.example.com"}
                   - {name: PLATFORM_PORTAL_APP_ID, value: <portal-app-id>}   # section 9
-                  - {name: PLATFORM_FAKE_LOGIN, value: "false"}
                   - {name: PLATFORM_GOOGLE_CLIENT_ID, value: <client-id>}
                   - {name: PLATFORM_GOOGLE_CLIENT_SECRET_FILE, value: /etc/platform/google/secret}
                   - {name: PLATFORM_ALLOWED_HD, value: example.com}
@@ -314,4 +313,4 @@ ON CONFLICT DO NOTHING;
 
 ## 11. Known limitations before production
 
-Open items are tracked in [TODO.md](../TODO.md): "Before production" (Google `hd` for alias domains, suspended users, KEK in a Secret, real client IP, egress filtering, `NOTIFY` serialization) and "Adopter bootstrap gaps in `base/`" (the manual steps and hardcoded values above). Also note that `base/postgres` is a single instance without backups: plan database HA and backups yourself. **Security:** `base/platform-api` sets `PLATFORM_FAKE_LOGIN=true` by default, which accepts any email; the Google patch in section 7 turns it off. Verify it before exposing the host.
+Open items are tracked in [TODO.md](../TODO.md): "Before production" (Google `hd` for alias domains, suspended users, KEK in a Secret, real client IP, egress filtering, `NOTIFY` serialization) and "Adopter bootstrap gaps in `base/`" (the manual steps and hardcoded values above). Also note that `base/postgres` is a single instance without backups: plan database HA and backups yourself. Without the Google variables of section 7, platform-api refuses to start (the fake login is off by default), so a forgotten patch fails loudly instead of opening the login.

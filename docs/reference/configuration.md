@@ -30,7 +30,7 @@ Subcommands: `platform-api migrate` (applies migrations; reads only the `PG*` va
 | `PLATFORM_ISSUER` | yes | none | exactly `https://<PLATFORM_AUTH_HOST>`, nothing else (no port, path, query, fragment or credentials) | The `iss` claim of every assertion |
 | `PLATFORM_KEK_FILE` | yes | none | path of the KEK file (see below) | Key-encryption key that seals the signing keys |
 | `PLATFORM_IDLE_TIMEOUT` | no | `45m` | duration within `30m` to `60m` | Central session idle timeout |
-| `PLATFORM_FAKE_LOGIN` | no | `false` | bool | Development login that accepts any email. Needs no Google variables; ignored with a WARN when Google is configured (the two never coexist). Manifest: `true` |
+| `PLATFORM_FAKE_LOGIN` | no | `false` | bool | Development login that accepts any email. Needs no Google variables; ignored with a WARN when Google is configured (the two never coexist). Manifest: only `overlays/local` sets `true` |
 | `PLATFORM_PORTAL_APP_ID` | no | unset (no portal app) | `app_` plus 26 characters of Crockford base32 (`^app_[0-9A-HJKMNP-TV-Z]{26}$`) | Id of the portal app, the one app any active user may open ([api.md](api.md)). Must be an app of the `platform` initiative or the exception stays inactive (WARN at start-up) |
 | `PLATFORM_GOOGLE_CLIENT_ID` | with Google | unset | non-empty, no whitespace | OAuth client id (not secret) |
 | `PLATFORM_GOOGLE_CLIENT_SECRET_FILE` | with Google | unset | path of a secret file, non-empty, at most 4 KiB | OAuth client secret |

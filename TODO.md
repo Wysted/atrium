@@ -35,9 +35,6 @@ Pending work and open questions for atrium. Detailed context lives in
 
 Found while writing `docs/install.md`. Adopters work around each one by hand today.
 
-- [ ] **Fake login is the default in `base/`.** `base/platform-api` sets `PLATFORM_FAKE_LOGIN=true` (the comment
-  "Google login arrives in a later part" is stale): the fake login accepts any email, so an adopter who forgets the
-  Google patch gets an open login with no error. Default to `false` in `base/` and set `true` in `overlays/local`.
 - [ ] **No migration creates the `platform` initiative, the portal app and its deployment.** Without the deployment
   row the portal host does not resolve, so the API cannot create it (chicken and egg). Only `overlays/local/seed.sql`
   (development data) does it; adopters INSERT by hand.
