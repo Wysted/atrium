@@ -6,7 +6,11 @@ reaches the app with a short-lived signed JWT whose audience is that app; the ap
 (`go get github.com/Wysted/atrium/platform/sdk/go`). Its web portal lists each user's apps and lets administrators
 manage initiatives (groups of apps), roles, grants, API tokens and areas.
 
-Status: pre-release. It runs end to end in a local k3d cluster; see `TODO.md` for what is still missing before production.
+## Status and limits
+
+- Pre-release: there are no tagged releases yet, only `main`.
+- Google (Workspace or Cloud Identity) is the only supported identity provider today.
+- Tested only in a local k3d cluster so far; `TODO.md` lists what is still missing before production.
 
 ## Layout
 
@@ -21,10 +25,16 @@ Status: pre-release. It runs end to end in a local k3d cluster; see `TODO.md` fo
 | `local` | k3d cluster, Traefik and cert-manager setup for local development |
 | `spikes`, `reports`, `research_notes` | the ForwardAuth spike and the research behind the design |
 
-## Local development
+## Documentation
 
-Nothing is installed on the host: Go, Node and the cluster tools run in Docker through `./gk`, `./nk` and `./tk`
-(`compose.yaml`). The local cluster, its scripts and the smoke test are described in `platform-gitops/README.md`.
+| Document | What it covers |
+|---|---|
+| `platform/docs/contract.md` | the contract: assertion, ForwardAuth, keys, data model, login, portal API |
+| `platform-gitops/README.md` | Kubernetes manifests, overlays, the smoke test and runbooks |
+| `platform/examples/hello/README.md` | the minimal app behind the platform |
+| `platform/web/COMPONENTS.md` | the portal web UI components |
+| `CONTRIBUTING.md` | local development, checks and conventions |
+| `SECURITY.md` | how to report a vulnerability |
 
 ## License and security
 

@@ -1,7 +1,7 @@
 # TODO
 
-Pending work and open questions for the portal platform. Detailed context lives in
-`platform/docs/contract.md` (block 5 "Open items") and in Engram (project `portal`).
+Pending work and open questions for atrium. Detailed context lives in
+`platform/docs/contract.md` (block 5 "Open items"). History of closed items lives in git.
 
 ## Before production
 
@@ -20,24 +20,12 @@ Pending work and open questions for the portal platform. Detailed context lives 
   global bucket. Verify the client IP behind the production load balancer.
 - [ ] **Egress filtering.** The `local-google` overlay allows platform-api HTTPS egress to any public address.
   FQDN-level filtering (Google endpoints only) needs an egress proxy or a CNI with L7 policies.
-- [x] **Local Grafana restarts in a loop.** Closed 2026-10-17. Cause: OOMKilled. Grafana idles at ~300 MiB and the smoke's
-  queries pushed it over its 384 MiB limit (`lastState.terminated.reason: OOMKilled` caught during a full smoke). The local
-  values now request 320 MiB with a 768 MiB limit. The plugin-preinstall hypothesis was refuted (downloads fail fast, block
-  nothing); preinstall is disabled anyway (`[plugins] preinstall_disabled`). Restarts with reason `Unknown` on every pod are
-  node restarts (WSL/Docker), not Grafana.
-- [x] **Internal TLS for the JWKS.** Closed 2026-10-16: opt-in HTTPS on the JWKS listener (`PLATFORM_JWKS_TLS_CERT_FILE` /
-  `_KEY_FILE`, reloaded every 30 s) and a CA file for verifiers (`PORTAL_JWKS_CA_FILE`, SDK `RootCAs`). `base/` stays HTTP;
-  the local overlay enables it with a local CA. Production adopters must supply the certificate (cert-manager, Vault or
-  manual) and distribute the CA; see `platform-gitops/README.md`.
-- [x] **`client_secret` rotation runbook.** Closed 2026-10-16. `platform-gitops/docs/runbooks/google-client-secret-rotation.md`: add, deploy (restart required), verify a real login, disable the old one, observe, delete; rollback and leak variants. Original note: Google allows two active secrets.
 - [ ] **NOTIFY commit serialization.** The `access_changed` and `signing_keys_changed` triggers use NOTIFY, and
   PostgreSQL serializes the commit of every notifying transaction on one cluster-wide lock (waits of up to ~3 s were
   seen under disk load in tests). Admin changes are rare today; measure under the production write rate before
   adding notifying triggers to hot tables.
-- [x] **Git remote.** Closed 2026-10-17: public repository https://github.com/Wysted/atrium (personal account, no
-  organization), pushed over SSH. Before the push: Apache-2.0 `LICENSE`, `SECURITY.md`, root `README.md`, history scanned
-  with gitleaks, personal identifiers removed from the tree and the history. Private vulnerability reporting must be
-  enabled in the repository settings (`SECURITY.md` points to it).
+- [ ] **Enable private vulnerability reporting.** In the GitHub repository, Settings > Code security. `SECURITY.md`
+  points reporters to it.
 - [ ] **Local TLS for contributors.** Go modules (`github.com/Wysted/atrium/...`, go-gettable) and the namespace label
   prefix (`atrium.wysted.dev/`) were renamed 2026-10-17. Left: the local domain `*.apps.wysted.dev` gets its wildcard
   certificate through the maintainer's Cloudflare token, so a contributor cannot reproduce the local TLS setup. Option:
@@ -45,61 +33,7 @@ Pending work and open questions for the portal platform. Detailed context lives 
 
 ## Next features
 
-- [x] **Portal app.** Closed 2026-10-16. Contract block 6: schema, API, integration health, `/metrics`, the probe,
-  the k3d deploy and the embedded Nuxt 4 SPA (`platform/web/`: home, administration, integration health) served with
-  a startup-computed CSP. The local smoke checks it in a real browser (Playwright, `overlays/local/browser-check/`).
-- [x] **Retire `grant.sh` and `revoke.sh`.** Removed 2026-10-17 after a grant and a revoke through `portalctl` with a
-  real Google login (audit rows `grant.create`/`grant.delete` with the token id). Bootstrap is `local-google/admin.sh`.
-- [ ] **Portal web follow-ups.** Done 2026-10-16: group search (`GET /api/v1/groups?q=`) in the grant dialog and on
-  the groups page, and the group page shows the group's name (`GET /api/v1/groups/{id}`). Open by decision: the apps payload
-  carries no portal-app flag, so the UI shows Disable and Remove host on the portal app and relies on the 409.
-  `npm audit` reports high advisories in Nuxt's build tooling (`braces`, `node-forge` via nitropack/listhen) with no
-  upstream fix; they never reach the embedded output. Recheck on each Nuxt upgrade.
-- [ ] **Non-browser clients for the portal API.** Phase 1 designed in `platform/docs/contract.md` block 6, "Non-browser
-  clients" (personal and robot tokens). Parts: (1) schema + portal API (migration, repos, handlers, adminz, audit,
-  grants by robot, last-manager rule); (2) ForwardAuth token path + assertion claims + SDK fields; (3) Traefik
-  (`Authorization` in `authRequestHeaders`, strip on the portal route) + smoke checks (done); (4) web: tokens page and robots
-  admin page; (5) CLI replacing `grant.sh`/`revoke.sh`. Phases 2 (workload identity) and 3 (device flow) stay open.
-  Part 1 (1a schema, privileges, kind filters, purge; 1b tokens and robots API, grants by robot, revocation by
-  secret) and part 2 (ForwardAuth token path, assertion claims, SDK) done 2026-10-16; part 3 (Traefik, smoke section 22), part 4 (web) and part 5 (`portalctl`, smoke section 23) done 2026-10-17: phase 1 complete.
-- [x] **Area supervisor.** Closed 2026-10-17. Someone who administers the robots and tokens of the people of their area
-  (list, revoke, reassign owner on offboarding) without acting as them or touching their access. Contract block 6, "Area
-  supervisors": local areas managed by platform admins (migration 0014), supervisor capacity from a browser session only,
-  web screens `/admin/areas` (admins) and `/areas` (supervisors), smoke section 24 and browser-check steps 5d-3b/5d-3c.
-  Later: IdP sync of members, area hierarchy, rename, supervisor audit view, `portalctl` commands.
-- [x] **Flaky test database cleanup.** Closed 2026-10-16. Root cause: every `DROP DATABASE` makes PostgreSQL run an
-  immediate checkpoint and wait for it, and the checkpoint's fsync phase covers the files of every live test database
-  (hundreds each) across all parallel test binaries. On Docker/WSL storage that phase takes seconds, and a slow one
-  lets databases pile up, which slows the next checkpoint (feedback loop) until a `t.Cleanup` drop hits its 30 s
-  timeout; every binary stalls at once. Evidence: `pg_stat_activity` showed DROPs in `IPC:CheckpointStart/Done`,
-  drops of 7-8 s in normal runs and 16 s under disk load; the same load with `fsync=off` gave checkpoints under 1.6 s.
-  Fix: the dev `postgres` service in `compose.yaml` runs with `fsync=off`, `full_page_writes=off`,
-  `synchronous_commit=off` (full run 35 s -> 15 s, 20/20 clean runs, no leftover databases); `testdb` errors now state
-  step, database and elapsed time. Deferring drops to the end of a binary was tried and is worse (live databases make
-  each checkpoint slower). Related, not fixed: `access_changed`/`signing_keys_changed` triggers use NOTIFY, which
-  serializes commits cluster-wide on one lock; timing-sensitive app tests (`TestGoogleCallbackProviderUnavailable`)
-  can fail when the disk is saturated by other work.
-- [x] **Align `deployments.host` CHECK with `hostname.Valid`.** Closed 2026-10-16. Migration 0011 replaces the CHECK
-  with `deployments_host_valid` (anchored label regex, no all-digit last label, `octet_length <= 253`), added NOT VALID
-  and validated in the same transaction so existing bad rows fail the migration loudly (remediation query in the
-  migration). `TestDeploymentsHostCheckMatchesHostnameValid` runs a shared case list through both, as owner and portal.
-- [x] **Separate JWKS listener for platform-api.** Closed 2026-10-16. `PLATFORM_JWKS_ADDR` (required) serves only the JWKS; the internal listener answers 404 for it, so `/forwardauth` and `/readyz` stay off the port app namespaces reach. Original note: App namespaces reach platform-api's internal port 8081 for the JWKS,
-  and a NetworkPolicy filters by port, not path, so they also reach `/forwardauth` and `/readyz`. Not exploitable
-  today (an app holds no valid cookies for other hosts and app sessions are host-bound), but serving the JWKS on its
-  own port would keep `/forwardauth` reachable only from Traefik.
-- [x] **Probe interval gauge for alert rules.** Closed 2026-10-16. The portal exposes `portal_probe_interval_seconds`
-  (0 = disabled) and `portal_probe_last_write_timestamp_seconds`; `ProbeNotWriting` fires when the last write is older
-  than 3 intervals and never when the probe is disabled.
-- [x] **Reduce `platform_runtime`.** Closed 2026-10-16. Migration 0010 leaves it read-only on the authorization tables
-  plus column-level UPDATE where login, sessions and last-seen need it; `CheckRuntimeRole` refuses to start on any drift.
-- [x] **Cookie prefix support in Safari.** Closed 2026-10-16: keep `__Host-Http-`. The prefix is defined in
-  `draft-ietf-httpbis-layered-cookies`; Chrome 140+ enforces it, Safari has no verified enforcement, and a browser
-  without it still applies the `__Host-` rules (the name starts with `__Host-`), so nothing breaks. Firefox skipped the
-  HttpOnly check from 144 until 150/151 (CVE-2026-6768), so the prefix is hardening, never the only guarantee: the
-  server always sets `Secure; HttpOnly; Path=/` without `Domain`.
-- [x] **Grafana behind ForwardAuth.** Closed 2026-10-16, local overlay only. Grafana is the app `grafana` of the initiative
-  `observability` (roles viewer/editor/admin map to the org roles), `[auth.jwt]` verifies `Platform-Assertion` through the
-  HTTPS JWKS with the local CA, the login form and basic auth are off, and a NetworkPolicy leaves Traefik as the only way in.
-  Smoke section 19b and a browser scenario cover it; adopter notes in `platform-gitops/README.md` "Grafana behind ForwardAuth".
-  Research that fed it: `[auth.jwt]` selects the key by `kid`, ignores the JOSE `typ` (acceptable: the platform key signs only
-  `Platform-Assertion`), has a fixed 60 s leeway, and needs `role_attribute_path` to return one string.
+- [ ] **`npm audit` in the web build tooling.** High advisories in Nuxt's build tooling (`braces`, `node-forge` via
+  nitropack/listhen) have no upstream fix; they never reach the embedded output. Recheck on each Nuxt upgrade.
+- [ ] **Non-browser clients, phases 2 and 3.** Phase 1 (personal and robot tokens, `portalctl`) is implemented; see
+  `platform/docs/contract.md` block 6, "Non-browser clients". Open: phase 2 (workload identity) and phase 3 (device flow).
