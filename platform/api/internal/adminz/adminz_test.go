@@ -85,6 +85,10 @@ func TestDecideWhoAdministersWhat(t *testing.T) {
 		{"revoke user sessions", adminz.UserSessionsRevoke, adminz.Resource{Type: "user", ID: "u1"}, a, f, f, f},
 		{"list users", adminz.UserList, adminz.Resource{Type: "user"}, a, f, f, f},
 		{"list orphan hosts", adminz.OrphanHostList, adminz.Resource{Type: "orphan_host"}, a, f, f, f},
+		{"create robot", adminz.RobotCreate, adminz.Resource{Type: "robot"}, a, f, f, f},
+		{"update robot", adminz.RobotUpdate, adminz.Resource{Type: "robot", ID: "r1"}, a, f, f, f},
+		{"create robot token", adminz.RobotTokenCreate, adminz.Resource{Type: "token"}, a, f, f, f},
+		{"list robot tokens", adminz.RobotTokenList, adminz.Resource{Type: "token"}, a, f, f, f},
 		{"revoke any token", adminz.TokenRevokeAny, adminz.Resource{Type: "token", ID: "t1"}, a, f, f, f},
 
 		// Own tokens: any active user, roles or not.
@@ -96,6 +100,7 @@ func TestDecideWhoAdministersWhat(t *testing.T) {
 		{"list initiatives", adminz.InitiativeList, adminz.Resource{Type: "initiative"}, a, a, a, f},
 		// Group names (never members) are visible to whoever may grant.
 		{"list groups", adminz.GroupList, adminz.Resource{Type: "group"}, a, a, a, f},
+		{"list robots", adminz.RobotList, adminz.Resource{Type: "robot"}, a, a, a, f},
 		{"list audit unfiltered", adminz.AuditList, adminz.Resource{Type: "audit"}, a, a, a, f},
 		// Filtered by an initiative: admin, or a manager of it; anyone else must not learn it exists.
 		{"list audit of the initiative", adminz.AuditList, inA("audit"), a, a, n, n},
@@ -169,7 +174,8 @@ func TestInactiveSubjectIsNeverAllowed(t *testing.T) {
 		adminz.GroupCreate, adminz.GroupList, adminz.GroupMemberList, adminz.RoleList, adminz.RoleUpdate, adminz.AppList,
 		adminz.DeploymentCreate, adminz.UserDisable, adminz.UserSessionsRevoke,
 		adminz.UserList, adminz.OrphanHostList, adminz.AuditList, adminz.TokenRevokeAny,
-		adminz.TokenCreateOwn, adminz.TokenListOwn, adminz.TokenRevokeOwn, "unknown.action",
+		adminz.TokenCreateOwn, adminz.TokenListOwn, adminz.TokenRevokeOwn, adminz.RobotCreate, adminz.RobotUpdate,
+		adminz.RobotList, adminz.RobotTokenCreate, adminz.RobotTokenList, "unknown.action",
 	}
 	for name, who := range map[string]adminz.Subject{"disabled platform admin": disabledAdmin, "zero value": zero} {
 		for _, action := range actions {

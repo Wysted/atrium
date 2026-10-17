@@ -257,12 +257,19 @@ func dropDatabase(ctx context.Context, c *pgx.Conn, name string) error {
 	return err
 }
 
+// maxTestConns caps every test pool: pgxpool defaults to NumCPU connections, and with one database (three pools)
+// per test, packages in parallel and 26-goroutine race tests that exhausted the server's max_connections (100,
+// "too many clients already"). Eight still lets several transactions run at once. The role pools (Runtime,
+// Portal) clone the owner's config, so they inherit the cap.
+const maxTestConns = 8
+
 func openPool(ctx context.Context, database string) (*pgxpool.Pool, error) {
 	cfg, err := pgxpool.ParseConfig("")
 	if err != nil {
 		return nil, err
 	}
 	cfg.ConnConfig.Database = database
+	cfg.MaxConns = maxTestConns
 	return pgxpool.NewWithConfig(ctx, cfg)
 }
 

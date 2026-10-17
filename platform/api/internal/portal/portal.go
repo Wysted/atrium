@@ -106,6 +106,7 @@ type Tx interface {
 	Groups() GroupRepo
 	Users() UserRepo
 	Tokens() TokenRepo
+	Robots() RobotRepo
 	// Audit appends to the audit log inside the transaction: if the insert fails the mutation rolls back.
 	Audit() audit.Recorder
 	AuditLog() AuditReader
@@ -136,6 +137,8 @@ type Config struct {
 	// TokenMaxTTLPersonal caps the lifetime of a personal API token (PORTAL_TOKEN_MAX_TTL_PERSONAL) and is the
 	// one a request without expires_in gets; zero means DefaultTokenMaxTTLPersonal.
 	TokenMaxTTLPersonal time.Duration
+	// TokenMaxTTLRobot is the same for robot tokens (PORTAL_TOKEN_MAX_TTL_ROBOT); zero means DefaultTokenMaxTTLRobot.
+	TokenMaxTTLRobot time.Duration
 	// Now is the clock for "expires_at must be in the future"; nil means time.Now.
 	Now func() time.Time
 }
@@ -151,6 +154,7 @@ type Service struct {
 	now           func() time.Time
 
 	tokenMaxTTLPersonal time.Duration
+	tokenMaxTTLRobot    time.Duration
 }
 
 // NewService builds a Service.
@@ -162,16 +166,20 @@ func NewService(cfg Config) (*Service, error) {
 	if now == nil {
 		now = time.Now
 	}
-	if cfg.TokenMaxTTLPersonal < 0 {
+	if cfg.TokenMaxTTLPersonal < 0 || cfg.TokenMaxTTLRobot < 0 {
 		return nil, errors.New("portal: the token lifetime cap cannot be negative")
 	}
-	tokenTTL := cfg.TokenMaxTTLPersonal
+	tokenTTL, robotTTL := cfg.TokenMaxTTLPersonal, cfg.TokenMaxTTLRobot
 	if tokenTTL == 0 {
 		tokenTTL = DefaultTokenMaxTTLPersonal
+	}
+	if robotTTL == 0 {
+		robotTTL = DefaultTokenMaxTTLRobot
 	}
 	return &Service{
 		permissions: cfg.Permissions, home: cfg.Home, store: cfg.Store, portalAppID: cfg.PortalAppID,
 		authHost: strings.ToLower(cfg.AuthHost), probeInterval: cfg.ProbeInterval, now: now, tokenMaxTTLPersonal: tokenTTL,
+		tokenMaxTTLRobot: robotTTL,
 	}, nil
 }
 

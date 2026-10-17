@@ -43,6 +43,7 @@ var referenceFields = map[string]string{
 	"initiative_access_initiative_id_role_id_fkey": "role_id",
 	"initiative_access_user_id_fkey":               "user_id",
 	"initiative_access_group_id_fkey":              "group_id",
+	"users_owner_user_id_fkey":                     "owner_user_id",
 	"group_members_group_id_fkey":                  "group_id",
 	"group_members_user_id_fkey":                   "user_id",
 	"initiative_roles_initiative_id_fkey":          "initiative_id",

@@ -83,7 +83,8 @@ func mustExist(exists bool, err error) error {
 	return nil
 }
 
-// CreateGrant grants a role of the initiative to a user (by email: exactly one active user) or to a group.
+// CreateGrant grants a role of the initiative to a user (by email: exactly one active user), to a group or to
+// an active robot (by id).
 // A repeated request fails with ErrGrantExists and creates no second row (the natural key is initiative, role
 // and subject). The role must belong to the initiative; the composite foreign key guarantees it and its
 // violation is reported as a validation problem on role_id.
@@ -92,7 +93,7 @@ func (s *Service) CreateGrant(ctx context.Context, callerID, initiativeID string
 	if !ok {
 		return Grant{}, ErrNotFound
 	}
-	in.RoleID, in.GroupID = lowerIfUUID(in.RoleID), lowerIfUUID(in.GroupID)
+	in.RoleID, in.GroupID, in.RobotID = lowerIfUUID(in.RoleID), lowerIfUUID(in.GroupID), lowerIfUUID(in.RobotID)
 	var out Grant
 	err := s.store.WithTx(ctx, func(tx Tx) error {
 		out = Grant{}
@@ -119,6 +120,19 @@ func (s *Service) CreateGrant(ctx context.Context, callerID, initiativeID string
 				return err
 			}
 			row.UserID = u.ID
+		} else if in.RobotID != "" {
+			// Not locked: a robot disabled right now is simply a grant that grants nothing, as with a user.
+			r, err := tx.Robots().GetRobot(ctx, in.RobotID)
+			if errors.Is(err, ErrNotFound) {
+				return invalid("robot_id", CodeUnknown)
+			}
+			if err != nil {
+				return fmt.Errorf("get robot: %w", err)
+			}
+			if r.Status != UserStatusActive {
+				return invalid("robot_id", CodeUnknown)
+			}
+			row.UserID = r.ID
 		} else {
 			if _, err := tx.Groups().GetGroup(ctx, in.GroupID); errors.Is(err, ErrNotFound) {
 				return invalid("group_id", CodeUnknown)
@@ -151,12 +165,15 @@ func (s *Service) CreateGrant(ctx context.Context, callerID, initiativeID string
 // validateNewGrant checks the shape of the request: no database involved.
 func (s *Service) validateNewGrant(in NewGrant) error {
 	var v ValidationError
-	switch hasEmail, hasGroup := in.Email != "", in.GroupID != ""; {
-	case hasEmail == hasGroup:
-		v.Problems = append(v.Problems,
-			FieldProblem{Field: "email", Code: CodeExclusive}, FieldProblem{Field: "group_id", Code: CodeExclusive})
+	hasEmail, hasGroup, hasRobot := in.Email != "", in.GroupID != "", in.RobotID != ""
+	switch {
+	case countTrue(hasEmail, hasGroup, hasRobot) != 1:
+		v.Problems = append(v.Problems, FieldProblem{Field: "email", Code: CodeExclusive},
+			FieldProblem{Field: "group_id", Code: CodeExclusive}, FieldProblem{Field: "robot_id", Code: CodeExclusive})
 	case hasGroup && !IsUUID(in.GroupID):
 		v.Problems = append(v.Problems, FieldProblem{Field: "group_id", Code: CodeInvalid})
+	case hasRobot && !IsUUID(in.RobotID):
+		v.Problems = append(v.Problems, FieldProblem{Field: "robot_id", Code: CodeInvalid})
 	}
 	switch {
 	case in.RoleID == "":
@@ -171,6 +188,16 @@ func (s *Service) validateNewGrant(in NewGrant) error {
 		return &v
 	}
 	return nil
+}
+
+func countTrue(bs ...bool) int {
+	n := 0
+	for _, b := range bs {
+		if b {
+			n++
+		}
+	}
+	return n
 }
 
 func grantWriteError(err error) error {

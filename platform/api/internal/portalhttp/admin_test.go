@@ -47,6 +47,7 @@ type fakeAdmin struct {
 
 	catalogCalls
 	tokenCalls
+	robotCalls
 }
 
 func (f *fakeAdmin) note(caller, id string) error {

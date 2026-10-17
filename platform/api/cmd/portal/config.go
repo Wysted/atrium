@@ -33,7 +33,7 @@ const (
 	// Caps of the lifetime of an API token, one per owner kind (contract block 6, "Non-browser clients"). Optional Go
 	// durations above zero; a request without expires_in gets the cap. Raising one is the adopter's decision.
 	envTokenMaxTTLPersonal = "PORTAL_TOKEN_MAX_TTL_PERSONAL" // default 720h
-	envTokenMaxTTLRobot    = "PORTAL_TOKEN_MAX_TTL_ROBOT"    // default 2160h; used by robot tokens (a later part)
+	envTokenMaxTTLRobot    = "PORTAL_TOKEN_MAX_TTL_ROBOT"    // default 2160h
 )
 
 // appIDPattern matches apps.id (the CHECK of migration 0001).

@@ -6,6 +6,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -123,6 +124,7 @@ func TestValidateNewGrant(t *testing.T) {
 	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
 	s := &Service{now: func() time.Time { return now }}
 	past, future := now.Add(-time.Second), now.Add(time.Hour)
+	allExclusive := []FieldProblem{{"email", CodeExclusive}, {"group_id", CodeExclusive}, {"robot_id", CodeExclusive}}
 	tests := []struct {
 		name string
 		in   NewGrant
@@ -130,8 +132,13 @@ func TestValidateNewGrant(t *testing.T) {
 	}{
 		{"user", NewGrant{Email: "a@example.com", RoleID: idA}, nil},
 		{"group with expiry", NewGrant{GroupID: idB, RoleID: idA, ExpiresAt: &future}, nil},
-		{"no subject", NewGrant{RoleID: idA}, []FieldProblem{{"email", CodeExclusive}, {"group_id", CodeExclusive}}},
-		{"two subjects", NewGrant{Email: "a@example.com", GroupID: idB, RoleID: idA}, []FieldProblem{{"email", CodeExclusive}, {"group_id", CodeExclusive}}},
+		{"robot", NewGrant{RobotID: idB, RoleID: idA}, nil},
+		{"no subject", NewGrant{RoleID: idA}, allExclusive},
+		{"two subjects", NewGrant{Email: "a@example.com", GroupID: idB, RoleID: idA}, allExclusive},
+		{"email and robot", NewGrant{Email: "a@example.com", RobotID: idB, RoleID: idA}, allExclusive},
+		{"group and robot", NewGrant{GroupID: idB, RobotID: idB, RoleID: idA}, allExclusive},
+		{"three subjects", NewGrant{Email: "a@example.com", GroupID: idB, RobotID: idB, RoleID: idA}, allExclusive},
+		{"robot id is not a uuid", NewGrant{RobotID: "x", RoleID: idA}, []FieldProblem{{"robot_id", CodeInvalid}}},
 		{"group id is not a uuid", NewGrant{GroupID: "x", RoleID: idA}, []FieldProblem{{"group_id", CodeInvalid}}},
 		{"no role", NewGrant{Email: "a@example.com"}, []FieldProblem{{"role_id", CodeRequired}}},
 		{"role is not a uuid", NewGrant{Email: "a@example.com", RoleID: "'; --"}, []FieldProblem{{"role_id", CodeInvalid}}},
@@ -256,5 +263,44 @@ func TestIsOnlyAdmin(t *testing.T) {
 		if got := isOnlyAdmin(tt.admins, "a"); got != tt.want {
 			t.Errorf("%s: %v, want %v", tt.name, got, tt.want)
 		}
+	}
+}
+
+func TestValidateRobotPatch(t *testing.T) {
+	t.Parallel()
+	str := func(s string) *string { return &s }
+	tests := []struct {
+		name string
+		in   RobotPatch
+		want []FieldProblem // nil: valid
+	}{
+		{"name", RobotPatch{Name: str("ci")}, nil},
+		{"status", RobotPatch{Status: str("disabled")}, nil},
+		{"clear the owner", RobotPatch{OwnerUserID: str("")}, nil},
+		{"owner", RobotPatch{OwnerUserID: str(idA)}, nil},
+		{"empty patch", RobotPatch{}, []FieldProblem{{"name", CodeAtLeastOne}, {"status", CodeAtLeastOne}, {"owner_user_id", CodeAtLeastOne}}},
+		{"blank name", RobotPatch{Name: str("  ")}, []FieldProblem{{"name", CodeRequired}}},
+		{"name of 65 characters", RobotPatch{Name: str(strings.Repeat("a", 65))}, []FieldProblem{{"name", CodeInvalid}}},
+		{"name of 64 multibyte characters", RobotPatch{Name: str(strings.Repeat("é", 64))}, nil},
+		{"name with NUL", RobotPatch{Name: str("a\x00b")}, []FieldProblem{{"name", CodeInvalid}}},
+		{"empty status", RobotPatch{Status: str("")}, []FieldProblem{{"status", CodeRequired}}},
+		{"unknown status", RobotPatch{Status: str("deleted")}, []FieldProblem{{"status", CodeInvalid}}},
+		{"owner is not a uuid", RobotPatch{OwnerUserID: str("x")}, []FieldProblem{{"owner_user_id", CodeInvalid}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := validateRobotPatch(tt.in)
+			if tt.want == nil {
+				if err != nil {
+					t.Fatalf("err = %v", err)
+				}
+				return
+			}
+			v, ok := errors.AsType[*ValidationError](err)
+			if !ok || !slices.Equal(v.Problems, tt.want) {
+				t.Fatalf("err = %#v, want %v", err, tt.want)
+			}
+		})
 	}
 }

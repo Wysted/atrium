@@ -47,6 +47,13 @@ const (
 	UserEnable         Action = "user.enable"
 	UserSessionsRevoke Action = "user_sessions.revoke"
 
+	// Robots and their tokens (block 6, "Non-browser clients"): only platform admins; managers may list the
+	// robots (RobotList below) to grant them.
+	RobotCreate      Action = "robot.create"
+	RobotUpdate      Action = "robot.update"
+	RobotTokenCreate Action = "robot_token.create" //nolint:gosec // G101: an action name, not a credential
+	RobotTokenList   Action = "robot_token.list"
+
 	// TokenRevokeAny revokes the API token of any owner (block 6, "Non-browser clients").
 	TokenRevokeAny Action = "token.revoke_any"
 )
@@ -75,6 +82,7 @@ const (
 	AuditList       Action = "audit.list"
 	GroupList       Action = "group.list"        // names only: id, key, name
 	GroupMemberList Action = "group_member.list" // admin only: who is in a group
+	RobotList       Action = "robot.list"        // admins see everything; managers get id, name and status (the use case trims)
 	UserList        Action = "user.list"
 	// OrphanHostList lists the hosts routed to the platform that have no deployment (admin only: an orphan host
 	// belongs to no app and no initiative).
@@ -232,6 +240,11 @@ var rules = map[Action]rule{
 	UserList:           {scope: scopeGlobal},
 	OrphanHostList:     {scope: scopeGlobal},
 
+	RobotCreate:      {scope: scopeGlobal},
+	RobotUpdate:      {scope: scopeGlobal},
+	RobotTokenCreate: {scope: scopeGlobal},
+	RobotTokenList:   {scope: scopeGlobal},
+
 	TokenRevokeAny: {scope: scopeGlobal},
 	TokenCreateOwn: {scope: scopeOwn},
 	TokenListOwn:   {scope: scopeOwn},
@@ -246,6 +259,7 @@ var rules = map[Action]rule{
 //     anyone else is forbidden. AuditList with Resource.InitiativeID set is a filter: allowed to admins and to
 //     managers of that initiative with that single initiative as scope, and not_found for anyone else.
 //     GroupList (id, key, name only; groups are global): admins and managers see All, anyone else is forbidden.
+//     RobotList is the same shape (robots are global; the use case shows managers only id, name and status).
 //     GrantList, RoleList and AppList list the rows of one initiative (the apps carry their deployments): allowed
 //     to admins and to its managers with that initiative as scope.
 //     The admin-only listings of global data (GroupMemberList, UserList, OrphanHostList) answer Scope All to admins.
@@ -265,7 +279,7 @@ func Decide(subject Subject, action Action, resource Resource) Decision {
 	switch action {
 	case InitiativeList:
 		return decideListing(subject, false)
-	case GroupList:
+	case GroupList, RobotList:
 		return decideListing(subject, true)
 	case AuditList:
 		if resource.InitiativeID == "" {

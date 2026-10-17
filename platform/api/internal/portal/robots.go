@@ -1,0 +1,398 @@
+package portal
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+	"unicode/utf8"
+
+	"platform/api/internal/adminz"
+)
+
+// Robots (contract block 6, "Non-browser clients"): users of kind 'robot', created and administered by platform
+// admins only. Managers may list them (id, name, status) to grant them roles.
+
+// TargetRobot is the audit target type of a robot; AuditRobotCreate and AuditRobotUpdate are the audit actions
+// (the same names as the authorization actions).
+const (
+	TargetRobot                    = "robot"
+	AuditRobotCreate adminz.Action = "robot.create"
+	AuditRobotUpdate adminz.Action = "robot.update"
+)
+
+// maxRobotName is users_robot_name_length, in characters.
+const maxRobotName = 64
+
+// The conflicts of the robots.
+var (
+	ErrRobotNameTaken = &Conflict{Detail: "a robot with this name already exists"}
+	ErrRobotDisabled  = &Conflict{Detail: "the robot is disabled"}
+)
+
+// Robot is a robot as the API shows it. Detail is false in the listing a manager gets (id, name and status only):
+// the other fields are then zero.
+type Robot struct {
+	ID          string
+	Name        string
+	Status      string
+	Detail      bool
+	OwnerUserID string // the accountable human, informational; empty when none
+	CreatedAt   time.Time
+	LastUsedAt  *time.Time // the newest last_used_at of its tokens
+}
+
+// NewRobot is the request to create a robot; OwnerUserID is optional.
+type NewRobot struct {
+	Name        string
+	OwnerUserID string
+}
+
+// RobotPatch is the change of a robot; nil leaves a field alone. An OwnerUserID that points to "" clears the owner.
+type RobotPatch struct {
+	Name        *string
+	Status      *string
+	OwnerUserID *string
+}
+
+// RobotRepo is the storage of robots. Every lookup and lock sees robots only: a human id is ErrNotFound (the
+// counterpart of UserRepo, which sees humans only).
+type RobotRepo interface {
+	// ListRobots lists by id; only Scope.All lists them (robots are global).
+	ListRobots(ctx context.Context, scope adminz.Scope, q PageQuery) ([]Robot, error)
+	// GetRobot returns ErrNotFound for an unknown id or a human. LastUsedAt is only filled by ListRobots (and
+	// LastUsed): the other callers do not return it.
+	GetRobot(ctx context.Context, id string) (Robot, error)
+	// LastUsed is the newest last_used_at of the robot's tokens (nil: never used).
+	LastUsed(ctx context.Context, id string) (*time.Time, error)
+	// LockRobot is GetRobot with a row lock (FOR NO KEY UPDATE), the lock SetUserStatus takes on a human: token
+	// creation and the disable of the robot serialize on it.
+	LockRobot(ctx context.Context, id string) (Robot, error)
+	// InsertRobot returns ErrDuplicate when the name is taken (case-insensitive) and a *ReferenceError when the
+	// owner does not exist.
+	InsertRobot(ctx context.Context, name, ownerID string) (Robot, error)
+	// UpdateRobot writes name, status and owner of a locked robot; same errors as InsertRobot.
+	UpdateRobot(ctx context.Context, r Robot) error
+}
+
+// robotDoc is the audit document of a robot.
+type robotDoc struct {
+	Name          string   `json:"name"`
+	Status        string   `json:"status"`
+	OwnerUserID   string   `json:"owner_user_id,omitempty"`
+	TokensRevoked []string `json:"tokens_revoked,omitempty"` // ids, so each one can be traced
+}
+
+func docOfRobot(r Robot) robotDoc {
+	return robotDoc{Name: r.Name, Status: r.Status, OwnerUserID: r.OwnerUserID}
+}
+
+// robotNameProblems validates a trimmed name against users_robot_name_length (1 to 64 characters).
+func robotNameProblems(name string) []FieldProblem {
+	switch {
+	case name == "":
+		return []FieldProblem{{Field: "name", Code: CodeRequired}}
+	case utf8.RuneCountInString(name) > maxRobotName || !cleanText(name):
+		return []FieldProblem{{Field: "name", Code: CodeInvalid}}
+	}
+	return nil
+}
+
+// checkRobotOwner requires ownerID to be an active human. Unknown, a robot, disabled: all the same problem.
+func checkRobotOwner(ctx context.Context, tx Tx, ownerID string) error {
+	u, err := tx.Users().GetUser(ctx, ownerID) // humans only
+	if errors.Is(err, ErrNotFound) {
+		return invalid("owner_user_id", CodeUnknown)
+	}
+	if err != nil {
+		return fmt.Errorf("get robot owner: %w", err)
+	}
+	if u.Status != UserStatusActive {
+		return invalid("owner_user_id", CodeUnknown)
+	}
+	return nil
+}
+
+// robotWriteError maps the constraint violations of a robot write.
+func robotWriteError(what string, err error) error {
+	var ref *ReferenceError
+	switch {
+	case errors.Is(err, ErrDuplicate):
+		return ErrRobotNameTaken
+	case errors.As(err, &ref): // the owner vanished meanwhile
+		return invalid("owner_user_id", CodeUnknown)
+	default:
+		return fmt.Errorf("%s: %w", what, err)
+	}
+}
+
+// ListRobots lists the robots by id. Platform admins see every field; managers (who need the list to grant) see
+// id, name and status.
+func (s *Service) ListRobots(ctx context.Context, callerID string, req PageRequest) (Page[Robot], error) {
+	size := pageSize(req.Limit)
+	var out Page[Robot]
+	err := s.store.WithTx(ctx, func(tx Tx) error {
+		out = Page[Robot]{}
+		sub, d, err := begin(ctx, tx, callerID, adminz.RobotList, adminz.Resource{Type: TargetRobot})
+		if err != nil {
+			return err
+		}
+		after, err := decodeCursor(cursorKindRobots, req.Cursor, false)
+		if err != nil {
+			return err
+		}
+		rows, err := tx.Robots().ListRobots(ctx, d.Scope, PageQuery{After: after, Limit: size + 1})
+		if err != nil {
+			return fmt.Errorf("list robots: %w", err)
+		}
+		for i := range rows {
+			if sub.PlatformAdmin {
+				rows[i].Detail = true
+			} else {
+				rows[i] = Robot{ID: rows[i].ID, Name: rows[i].Name, Status: rows[i].Status}
+			}
+		}
+		out = pageOf(rows, size, cursorKindRobots, func(r Robot) Cursor { return Cursor{ID: r.ID} })
+		return nil
+	})
+	return out, err
+}
+
+// CreateRobot creates a robot (platform admins only). The name is 1 to 64 characters, unique among robots
+// case-insensitively (ErrRobotNameTaken); the optional owner must be an active human (422).
+func (s *Service) CreateRobot(ctx context.Context, callerID string, in NewRobot) (Robot, error) {
+	in.OwnerUserID = lowerIfUUID(in.OwnerUserID)
+	var out Robot
+	err := s.store.WithTx(ctx, func(tx Tx) error {
+		out = Robot{}
+		if _, _, err := begin(ctx, tx, callerID, adminz.RobotCreate, adminz.Resource{Type: TargetRobot}); err != nil {
+			return err
+		}
+		name := strings.TrimSpace(in.Name)
+		var v ValidationError
+		v.Problems = append(v.Problems, robotNameProblems(name)...)
+		if in.OwnerUserID != "" && !IsUUID(in.OwnerUserID) {
+			v.Problems = append(v.Problems, FieldProblem{Field: "owner_user_id", Code: CodeInvalid})
+		}
+		if len(v.Problems) > 0 {
+			return &v
+		}
+		if in.OwnerUserID != "" {
+			if err := checkRobotOwner(ctx, tx, in.OwnerUserID); err != nil {
+				return err
+			}
+		}
+		r, err := tx.Robots().InsertRobot(ctx, name, in.OwnerUserID)
+		if err != nil {
+			return robotWriteError("insert robot", err)
+		}
+		if err := record(ctx, tx, event{
+			actor: callerID, action: AuditRobotCreate, targetType: TargetRobot, targetID: r.ID, after: docOfRobot(r),
+		}); err != nil {
+			return err
+		}
+		out = r
+		out.Detail = true
+		return nil
+	})
+	return out, err
+}
+
+// UpdateRobot renames a robot, disables or enables it, or changes its owner (platform admins only). Disabling
+// revokes every live token of the robot in the same transaction, through the repository function shared with the
+// disable of a human, and the audit row lists the revoked ids; re-enabling brings nothing back. A patch that
+// changes nothing writes no audit row and returns the robot as it is. A human id is ErrNotFound.
+//
+// The robot row is locked FOR NO KEY UPDATE (the lock token creation takes), so a disable and a creation for the
+// same robot run one after the other. It is a leaf lock: no other explicit lock is held with it.
+func (s *Service) UpdateRobot(ctx context.Context, callerID, robotID string, p RobotPatch) (Robot, error) {
+	robotID, ok := canonicalUUID(robotID)
+	if !ok {
+		return Robot{}, ErrNotFound
+	}
+	if p.OwnerUserID != nil {
+		owner := lowerIfUUID(*p.OwnerUserID)
+		p.OwnerUserID = &owner
+	}
+	var out Robot
+	err := s.store.WithTx(ctx, func(tx Tx) error {
+		out = Robot{}
+		res := adminz.Resource{Type: TargetRobot, ID: robotID}
+		if _, _, err := begin(ctx, tx, callerID, adminz.RobotUpdate, res); err != nil {
+			return err
+		}
+		if err := validateRobotPatch(p); err != nil {
+			return err
+		}
+		cur, err := tx.Robots().LockRobot(ctx, robotID)
+		if err != nil {
+			return err
+		}
+		if _, _, err := begin(ctx, tx, callerID, adminz.RobotUpdate, res); err != nil {
+			return err
+		}
+		next := cur
+		if p.Name != nil {
+			next.Name = strings.TrimSpace(*p.Name)
+		}
+		if p.Status != nil {
+			next.Status = *p.Status
+		}
+		if p.OwnerUserID != nil {
+			next.OwnerUserID = *p.OwnerUserID
+		}
+		next.Detail = true
+		if next.Name == cur.Name && next.Status == cur.Status && next.OwnerUserID == cur.OwnerUserID {
+			out = cur
+			out.Detail = true
+			return fillLastUsed(ctx, tx, &out)
+		}
+		if next.OwnerUserID != "" && next.OwnerUserID != cur.OwnerUserID {
+			if err := checkRobotOwner(ctx, tx, next.OwnerUserID); err != nil {
+				return err
+			}
+		}
+		if err := tx.Robots().UpdateRobot(ctx, next); err != nil {
+			return robotWriteError("update robot", err)
+		}
+		after := docOfRobot(next)
+		if next.Status == UserStatusDisabled && cur.Status != UserStatusDisabled {
+			if after.TokensRevoked, err = tx.Users().RevokeTokens(ctx, next.ID); err != nil {
+				return fmt.Errorf("revoke robot tokens: %w", err)
+			}
+		}
+		if err := record(ctx, tx, event{
+			actor: callerID, action: AuditRobotUpdate, targetType: TargetRobot, targetID: next.ID,
+			before: docOfRobot(cur), after: after,
+		}); err != nil {
+			return err
+		}
+		out = next
+		return fillLastUsed(ctx, tx, &out)
+	})
+	return out, err
+}
+
+func fillLastUsed(ctx context.Context, tx Tx, r *Robot) error {
+	var err error
+	if r.LastUsedAt, err = tx.Robots().LastUsed(ctx, r.ID); err != nil {
+		return fmt.Errorf("robot last use: %w", err)
+	}
+	return nil
+}
+
+func validateRobotPatch(p RobotPatch) error {
+	var v ValidationError
+	if p.Name == nil && p.Status == nil && p.OwnerUserID == nil {
+		v.Problems = append(v.Problems, FieldProblem{Field: "name", Code: CodeAtLeastOne},
+			FieldProblem{Field: "status", Code: CodeAtLeastOne}, FieldProblem{Field: "owner_user_id", Code: CodeAtLeastOne})
+	}
+	if p.Name != nil {
+		v.Problems = append(v.Problems, robotNameProblems(strings.TrimSpace(*p.Name))...)
+	}
+	if p.Status != nil {
+		switch *p.Status {
+		case UserStatusActive, UserStatusDisabled:
+		case "":
+			v.Problems = append(v.Problems, FieldProblem{Field: "status", Code: CodeRequired})
+		default:
+			v.Problems = append(v.Problems, FieldProblem{Field: "status", Code: CodeInvalid})
+		}
+	}
+	if p.OwnerUserID != nil && *p.OwnerUserID != "" && !IsUUID(*p.OwnerUserID) {
+		v.Problems = append(v.Problems, FieldProblem{Field: "owner_user_id", Code: CodeInvalid})
+	}
+	if len(v.Problems) > 0 {
+		return &v
+	}
+	return nil
+}
+
+// CreateRobotToken creates a token owned by a robot (platform admins only) and returns it with its secret. Like a
+// personal token it needs a browser session (a request authenticated by a token is ErrForbidden) and counts
+// against MaxLiveTokens, but its lifetime cap is PORTAL_TOKEN_MAX_TTL_ROBOT and the creator recorded in
+// created_by is the admin. The scope admin needs the robot to hold a manages_access grant right now (a robot is
+// never a platform admin): a token never carries more than its owner can do at issuance.
+//
+// Same unit of work as CreateOwnToken: the robot row is locked first (LockRobot, the robot counterpart of
+// LockUser), its status is read again under the lock (a disabled robot is ErrRobotDisabled), then the live tokens
+// are counted and the token inserted. Without the lock a token could be inserted after a concurrent disable
+// revoked the others, and parallel creations could pass the count together.
+func (s *Service) CreateRobotToken(ctx context.Context, callerID, robotID string, in NewToken) (CreatedToken, error) {
+	if TokenFrom(ctx) != "" {
+		return CreatedToken{}, ErrForbidden
+	}
+	robotID, ok := canonicalUUID(robotID)
+	if !ok {
+		return CreatedToken{}, ErrNotFound
+	}
+	res := adminz.Resource{Type: TargetToken}
+	var out CreatedToken
+	err := s.store.WithTx(ctx, func(tx Tx) error {
+		out = CreatedToken{}
+		if _, _, err := begin(ctx, tx, callerID, adminz.RobotTokenCreate, res); err != nil { // before locking: a non-admin locks nothing
+			return err
+		}
+		r, err := tx.Robots().LockRobot(ctx, robotID)
+		if err != nil {
+			return err
+		}
+		if _, _, err := begin(ctx, tx, callerID, adminz.RobotTokenCreate, res); err != nil {
+			return err
+		}
+		if r.Status != UserStatusActive {
+			return ErrRobotDisabled
+		}
+		name, ttl, err := validateNewToken(in, s.tokenMaxTTLRobot)
+		if err != nil {
+			return err
+		}
+		if in.Scope == TokenScopeAdmin {
+			p, err := tx.Permissions().LoadPermissions(ctx, r.ID)
+			if err != nil {
+				return fmt.Errorf("load robot permissions: %w", err)
+			}
+			if !p.PlatformAdmin && len(p.Managed) == 0 {
+				return invalid("scope", CodeNotAllowed)
+			}
+		}
+		tok, err := issueToken(ctx, tx, r.ID, callerID, name, in.Scope, ttl)
+		if err != nil {
+			return err
+		}
+		out = tok
+		return nil
+	})
+	return out, err
+}
+
+// ListRobotTokens lists a robot's tokens, newest first, including the recently dead ones (platform admins only).
+func (s *Service) ListRobotTokens(ctx context.Context, callerID, robotID string, req PageRequest) (Page[APIToken], error) {
+	robotID, ok := canonicalUUID(robotID)
+	if !ok {
+		return Page[APIToken]{}, ErrNotFound
+	}
+	size := pageSize(req.Limit)
+	var out Page[APIToken]
+	err := s.store.WithTx(ctx, func(tx Tx) error {
+		out = Page[APIToken]{}
+		if _, _, err := begin(ctx, tx, callerID, adminz.RobotTokenList, adminz.Resource{Type: TargetToken}); err != nil {
+			return err
+		}
+		if _, err := tx.Robots().GetRobot(ctx, robotID); err != nil {
+			return err
+		}
+		after, err := decodeCursor(cursorKindTokens, req.Cursor, false)
+		if err != nil {
+			return err
+		}
+		rows, err := tx.Tokens().TokensOf(ctx, robotID, PageQuery{After: after, Limit: size + 1})
+		if err != nil {
+			return fmt.Errorf("list robot tokens: %w", err)
+		}
+		out = pageOf(rows, size, cursorKindTokens, func(t APIToken) Cursor { return Cursor{ID: t.ID} })
+		return nil
+	})
+	return out, err
+}

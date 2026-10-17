@@ -161,10 +161,11 @@ type Grant struct {
 	GrantedAt    time.Time
 }
 
-// NewGrant is the request to grant a role. Exactly one of Email and GroupID names the subject.
+// NewGrant is the request to grant a role. Exactly one of Email, GroupID and RobotID names the subject.
 type NewGrant struct {
 	Email     string
 	GroupID   string
+	RobotID   string
 	RoleID    string
 	ExpiresAt *time.Time
 }
@@ -341,4 +342,5 @@ const (
 	cursorKindMembers = "members"
 	cursorKindAudit   = "audit"
 	cursorKindTokens  = "tokens"
+	cursorKindRobots  = "robots"
 )

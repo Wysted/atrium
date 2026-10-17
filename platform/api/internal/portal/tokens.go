@@ -13,7 +13,8 @@ import (
 )
 
 // API tokens (contract block 6, "Non-browser clients"). Personal tokens are created by their owner from a
-// browser session; robot tokens come with the robots (a later part) and share the repository and the revocation.
+// browser session; robot tokens (robots.go) are created by platform admins and share the repository, the unit
+// of work (issueToken) and the revocation.
 
 // Token scopes (mirror the api_tokens.scope CHECK).
 const (
@@ -117,8 +118,9 @@ func docOfToken(t APIToken) tokenDoc {
 	return tokenDoc{OwnerID: t.UserID, Name: t.Name, Scope: t.Scope, ExpiresAt: t.ExpiresAt}
 }
 
-// validateNewToken checks a creation request and returns the trimmed name and the lifetime to use.
-func (s *Service) validateNewToken(in NewToken) (name string, ttl time.Duration, err error) {
+// validateNewToken checks a creation request against the lifetime cap of the owner's kind and returns the
+// trimmed name and the lifetime to use.
+func validateNewToken(in NewToken, maxTTL time.Duration) (name string, ttl time.Duration, err error) {
 	var problems []FieldProblem
 	name = strings.TrimSpace(in.Name)
 	switch n := utf8.RuneCountInString(name); {
@@ -134,12 +136,12 @@ func (s *Service) validateNewToken(in NewToken) (name string, ttl time.Duration,
 	default:
 		problems = append(problems, FieldProblem{Field: "scope", Code: CodeInvalid})
 	}
-	ttl = s.tokenMaxTTLPersonal
+	ttl = maxTTL
 	if in.ExpiresIn != nil {
 		switch {
 		case *in.ExpiresIn <= 0:
 			problems = append(problems, FieldProblem{Field: "expires_in", Code: CodeInvalid})
-		case *in.ExpiresIn > s.tokenMaxTTLPersonal:
+		case *in.ExpiresIn > maxTTL:
 			problems = append(problems, FieldProblem{Field: "expires_in", Code: CodeTooLarge})
 		default:
 			ttl = *in.ExpiresIn
@@ -182,39 +184,50 @@ func (s *Service) CreateOwnToken(ctx context.Context, callerID string, in NewTok
 		if err != nil {
 			return err
 		}
-		name, ttl, err := s.validateNewToken(in)
+		name, ttl, err := validateNewToken(in, s.tokenMaxTTLPersonal)
 		if err != nil {
 			return err
 		}
 		if in.Scope == TokenScopeAdmin && !sub.PlatformAdmin && len(sub.Managed) == 0 {
 			return invalid("scope", CodeNotAllowed)
 		}
-		live, err := tx.Tokens().CountLive(ctx, callerID)
+		tok, err := issueToken(ctx, tx, callerID, callerID, name, in.Scope, ttl)
 		if err != nil {
-			return fmt.Errorf("count live tokens: %w", err)
-		}
-		if live >= MaxLiveTokens {
-			return ErrTokenLimit
-		}
-		secret, err := apitoken.Generate()
-		if err != nil {
-			return fmt.Errorf("generate token: %w", err)
-		}
-		tok, err := tx.Tokens().InsertToken(ctx, TokenRow{
-			OwnerID: callerID, CreatedBy: callerID, Name: name, Scope: in.Scope, Hash: apitoken.Hash(secret), TTL: ttl,
-		})
-		if err != nil {
-			return fmt.Errorf("insert token: %w", err)
-		}
-		if err := record(ctx, tx, event{
-			actor: callerID, action: AuditTokenCreate, targetType: TargetToken, targetID: tok.ID, after: docOfToken(tok),
-		}); err != nil {
 			return err
 		}
-		out = CreatedToken{APIToken: tok, Secret: secret}
+		out = tok
 		return nil
 	})
 	return out, err
+}
+
+// issueToken is the tail of every creation, run under the lock of the owner's row: it counts the owner's live
+// tokens against MaxLiveTokens, generates the secret, inserts the token and writes the audit row (actor is the
+// creator: the owner for a personal token, a platform admin for a robot's).
+func issueToken(ctx context.Context, tx Tx, ownerID, creatorID, name, scope string, ttl time.Duration) (CreatedToken, error) {
+	live, err := tx.Tokens().CountLive(ctx, ownerID)
+	if err != nil {
+		return CreatedToken{}, fmt.Errorf("count live tokens: %w", err)
+	}
+	if live >= MaxLiveTokens {
+		return CreatedToken{}, ErrTokenLimit
+	}
+	secret, err := apitoken.Generate()
+	if err != nil {
+		return CreatedToken{}, fmt.Errorf("generate token: %w", err)
+	}
+	tok, err := tx.Tokens().InsertToken(ctx, TokenRow{
+		OwnerID: ownerID, CreatedBy: creatorID, Name: name, Scope: scope, Hash: apitoken.Hash(secret), TTL: ttl,
+	})
+	if err != nil {
+		return CreatedToken{}, fmt.Errorf("insert token: %w", err)
+	}
+	if err := record(ctx, tx, event{
+		actor: creatorID, action: AuditTokenCreate, targetType: TargetToken, targetID: tok.ID, after: docOfToken(tok),
+	}); err != nil {
+		return CreatedToken{}, err
+	}
+	return CreatedToken{APIToken: tok, Secret: secret}, nil
 }
 
 // ListOwnTokens lists the caller's tokens, newest first, including the recently dead ones.

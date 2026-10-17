@@ -52,6 +52,12 @@ type AdminService interface {
 	RevokeToken(ctx context.Context, callerID, tokenID string) error
 	RevokeBySecret(ctx context.Context, callerID, secret string) error
 
+	ListRobots(ctx context.Context, callerID string, req portal.PageRequest) (portal.Page[portal.Robot], error)
+	CreateRobot(ctx context.Context, callerID string, in portal.NewRobot) (portal.Robot, error)
+	UpdateRobot(ctx context.Context, callerID, robotID string, p portal.RobotPatch) (portal.Robot, error)
+	CreateRobotToken(ctx context.Context, callerID, robotID string, in portal.NewToken) (portal.CreatedToken, error)
+	ListRobotTokens(ctx context.Context, callerID, robotID string, req portal.PageRequest) (portal.Page[portal.APIToken], error)
+
 	ListAudit(ctx context.Context, callerID string, q portal.AuditQuery) (portal.Page[portal.AuditEvent], error)
 
 	AppHealth(ctx context.Context, callerID, appID string) (portal.AppHealth, error)
@@ -113,6 +119,7 @@ func (a *api) adminRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE "+PathUserSessions, a.revokeSessions)
 
 	a.tokenRoutes(mux)
+	a.robotRoutes(mux)
 
 	mux.HandleFunc("GET "+PathAudit, a.listAudit)
 
@@ -125,6 +132,7 @@ func (a *api) adminRoutes(mux *http.ServeMux) {
 type createGrantRequest struct {
 	Email     string     `json:"email"`
 	GroupID   string     `json:"group_id"`
+	RobotID   string     `json:"robot_id"`
 	RoleID    string     `json:"role_id"`
 	ExpiresAt *time.Time `json:"expires_at"`
 }

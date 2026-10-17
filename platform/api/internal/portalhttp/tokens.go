@@ -111,18 +111,11 @@ func tokenToJSON(t portal.APIToken) tokenJSON {
 // maxExpiresInSeconds is the largest expires_in that fits a time.Duration; larger values are refused by the cap.
 const maxExpiresInSeconds = int64(math.MaxInt64 / int64(time.Second))
 
-func (a *api) createOwnToken(w http.ResponseWriter, r *http.Request) {
-	uid, ok := a.caller(w, r)
-	if !ok {
-		return
-	}
-	in, ok := DecodeJSON[createTokenRequest](w, r)
-	if !ok {
-		return
-	}
+// newTokenFrom converts the request; expires_in (seconds) is range-checked before the multiplication, so a huge
+// negative value cannot wrap into a valid duration.
+func newTokenFrom(in createTokenRequest) portal.NewToken {
 	req := portal.NewToken{Name: in.Name, Scope: in.Scope}
 	if in.ExpiresIn != nil {
-		// Range-check in seconds before multiplying: a huge negative value would wrap into a valid duration.
 		var d time.Duration
 		switch secs := *in.ExpiresIn; {
 		case secs <= 0: // the use case answers 422 invalid
@@ -133,6 +126,19 @@ func (a *api) createOwnToken(w http.ResponseWriter, r *http.Request) {
 		}
 		req.ExpiresIn = &d
 	}
+	return req
+}
+
+func (a *api) createOwnToken(w http.ResponseWriter, r *http.Request) {
+	uid, ok := a.caller(w, r)
+	if !ok {
+		return
+	}
+	in, ok := DecodeJSON[createTokenRequest](w, r)
+	if !ok {
+		return
+	}
+	req := newTokenFrom(in)
 	t, err := a.admin.CreateOwnToken(r.Context(), uid, req)
 	if err != nil {
 		a.fail(w, r, "token_create", err)

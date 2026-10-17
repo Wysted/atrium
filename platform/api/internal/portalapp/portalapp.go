@@ -44,6 +44,8 @@ type Config struct {
 	ProbeInterval time.Duration
 	// TokenMaxTTLPersonal is PORTAL_TOKEN_MAX_TTL_PERSONAL (zero: portal.DefaultTokenMaxTTLPersonal).
 	TokenMaxTTLPersonal time.Duration
+	// TokenMaxTTLRobot is PORTAL_TOKEN_MAX_TTL_ROBOT (zero: portal.DefaultTokenMaxTTLRobot).
+	TokenMaxTTLRobot time.Duration
 	// Web serves the SPA outside /api/ (a later part); nil answers 404.
 	Web            http.Handler
 	RequestTimeout time.Duration // zero means httpx.RequestTimeout
@@ -125,6 +127,7 @@ func New(cfg Config) (*App, error) {
 		AuthHost:            authHost,
 		ProbeInterval:       cfg.ProbeInterval,
 		TokenMaxTTLPersonal: cfg.TokenMaxTTLPersonal,
+		TokenMaxTTLRobot:    cfg.TokenMaxTTLRobot,
 	})
 	if err != nil {
 		return nil, err
