@@ -49,7 +49,7 @@ platform-api serves four listeners so that `/forwardauth` is never reachable thr
 
 A NetworkPolicy filters by port, never by path, so `/metrics` and the JWKS each have a listener of their own: neither can share one that Traefik or the app namespaces reach, and the app namespaces reach a port that serves nothing but the JWKS. The four addresses (`PLATFORM_INTERNAL_ADDR`, `PLATFORM_PUBLIC_ADDR`, `PLATFORM_METRICS_ADDR`, `PLATFORM_JWKS_ADDR`) are required and must use different ports (a wildcard host conflicts with any host on the same port).
 
-`/readyz` fails when the database is unreachable, when no signer is loaded, or on `KEKMismatch`.
+`/readyz` fails when the database is unreachable, when an embedded migration is not applied (`migrations pending`, or `migrations check failed` if the check itself errors; the portal behaves the same), when no signer is loaded, or on `KEKMismatch`.
 
 ## Inputs read by platform-api
 

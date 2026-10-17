@@ -142,7 +142,9 @@ Anything else is refused at start-up: `CheckRuntimeRole` compares the privileges
 column, with the expected set in both directions (an extra grant or a missing one stops the process).
 
 - Read only: `group_members`, `initiatives`, `initiative_roles`, `apps`, `initiative_access`.
-- No access: `groups`, `platform_admins`, `schema_migrations`.
+- No access: `groups`, `platform_admins`, `schema_migrations`. EXECUTE on the SECURITY DEFINER function
+  `applied_migrations()` (migration 0015) is the only view of `schema_migrations`: it returns the applied version names
+  for the readiness check. `platform_portal` holds the same EXECUTE; PUBLIC does not.
 - `users`: SELECT, INSERT of `google_sub`, `email`, `name` only (the columns of the login upsert, so this role cannot create a robot), and UPDATE of `email`, `name`, `updated_at` only (JIT login upsert); `status` and `google_sub` are never writable.
 - `sessions`: SELECT, INSERT, DELETE, UPDATE of `last_seen_at`. `app_sessions`: SELECT, INSERT, DELETE.
 - `login_codes`, `oauth_flows`: SELECT, INSERT, DELETE, UPDATE of `consumed_at`.
@@ -167,7 +169,8 @@ Operational notes:
 - Table-level SELECT and INSERT also cover columns added later, while UPDATE is column-level here: a new column needs an
   explicit `GRANT UPDATE (col)` (and an entry in `runtimeGrants`) to be writable.
 - Deployment ordering: the migrate Job must complete before platform-api (and the portal) roll out. Otherwise new pods
-  see the old grants and refuse to start (fail closed); the old pods keep serving.
+  see the old grants and refuse to start, or stay not ready with reason `migrations pending` (fail closed); the old pods
+  keep serving.
 
 ### `platform_portal` privileges
 
