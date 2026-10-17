@@ -33,13 +33,14 @@ Pending work and open questions for atrium. Detailed context lives in
 
 ## Adopter bootstrap gaps in `base/`
 
-Found while writing `docs/install.md`. Adopters work around each one by hand today.
+Found while writing `docs/install.md`.
 
-- [ ] **NetworkPolicy selectors are fixed** to `kube-system`/`k8s-app=kube-dns`, `traefik`/`app.kubernetes.io/name=traefik`,
-  the Traefik pod port 8443, `platform-db` and `monitoring`/`prometheus`.
-- [ ] **Egress to Google exists only in `overlays/local-google`**, and its `except` list is k3d-specific.
-- [ ] **Hardcoded in `base/`:** `PGHOST`, `PGSSLMODE=disable`, `PORTAL_PROBE_ADDR`, `PORTAL_JWKS_URL`, and
-  `storageClassName: local-path` with 2Gi.
+- [ ] **Cluster-specific defaults in `base/` that every adopter patches** (documented in `docs/install.md`, sections 4
+  and 7): NetworkPolicy selectors (`kube-system`/`k8s-app=kube-dns`, `traefik`/`app.kubernetes.io/name=traefik`, Traefik
+  pod port 8443, `platform-db`, `monitoring`/`prometheus`), egress to Google (only in `overlays/local-google`, with a
+  k3d-specific `except` list), `PGHOST`, `PGSSLMODE=disable`, `PORTAL_PROBE_ADDR`, `PORTAL_JWKS_URL`, and
+  `storageClassName: local-path` with 2Gi. Revisit if a second adopter repeats the same patches (a kustomize component
+  would then remove real duplication).
 - [ ] **Migrate-before-platform-api ordering is not enforced in `base/`** (README "Ordering"). Pods now stay not ready
   with reason `migrations pending` until the Job runs (fail closed); a PreSync hook or `dependsOn` in the adopter's
   GitOps is still needed for zero-downtime ordering.
