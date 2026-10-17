@@ -1,4 +1,8 @@
-# forwardauth-cookie spike (disposable)
+# forwardauth-cookie spike (historical)
+
+> Historical. This spike validated the ForwardAuth flow before the platform was built; it is not deployed and
+> its cookie and header names predate the product. The current behavior is specified in
+> [docs/reference/forwardauth.md](../../docs/reference/forwardauth.md) and [docs/reference/assertion.md](../../docs/reference/assertion.md).
 
 Validates the IAP flow: Traefik ForwardAuth -> `authz`, central session on the auth host,
 per-app `__Host-portal_app` cookie planted through a one-time code in a 302 of the ForwardAuth response.

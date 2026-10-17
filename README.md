@@ -23,7 +23,7 @@ manage initiatives (groups of apps), roles, grants, API tokens and areas.
 | `docs` | architecture, reference pages and decision records |
 | `platform-gitops` | Kustomize manifests (`base/` for adopters, `overlays/local*` for the local cluster) and runbooks |
 | `local` | k3d cluster, Traefik and cert-manager setup for local development |
-| `spikes`, `reports`, `research_notes` | the ForwardAuth spike and the research behind the design |
+| `spikes` | the ForwardAuth spike that validated the design (historical) |
 
 ## Documentation
 
