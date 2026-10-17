@@ -38,7 +38,7 @@ func (r RobotsRepo) ListRobots(ctx context.Context, scope adminz.Scope, q portal
 		return nil, nil
 	}
 	rows, err := r.db.Query(ctx, `SELECT u.id::text, u.name, u.status, COALESCE(u.owner_user_id::text, ''), COALESCE(o.email, ''), COALESCE(o.name, ''), u.created_at, `+lastUsedSQL+`
-FROM users u`+ownerJoin+` WHERE u.kind = 'robot' AND ($1::uuid IS NULL OR u.id > $1::uuid) ORDER BY u.id LIMIT $2`, afterID(q.After), q.Limit)
+FROM users u`+ownerJoin+` WHERE u.kind = 'robot' AND ($1::uuid IS NULL OR u.id > $1::uuid) AND ($3::text = '' OR u.status = $3::text) ORDER BY u.id LIMIT $2`, afterID(q.After), q.Limit, q.Status)
 	if err != nil {
 		return nil, fmt.Errorf("query robots: %w", err)
 	}

@@ -52,7 +52,7 @@ type AdminService interface {
 	RevokeToken(ctx context.Context, callerID, tokenID string) error
 	RevokeBySecret(ctx context.Context, callerID, secret string) error
 
-	ListRobots(ctx context.Context, callerID string, req portal.PageRequest) (portal.Page[portal.Robot], error)
+	ListRobots(ctx context.Context, callerID string, req portal.PageRequest, status string) (portal.Page[portal.Robot], error)
 	GetRobot(ctx context.Context, callerID, robotID string) (portal.Robot, error)
 	CreateRobot(ctx context.Context, callerID string, in portal.NewRobot) (portal.Robot, error)
 	UpdateRobot(ctx context.Context, callerID, robotID string, p portal.RobotPatch) (portal.Robot, error)
@@ -97,6 +97,7 @@ const (
 	queryLimit        = "limit"
 	queryText         = "q"
 	queryEmail        = "email"
+	queryStatus       = "status"
 	queryInitiativeID = "initiative_id"
 )
 

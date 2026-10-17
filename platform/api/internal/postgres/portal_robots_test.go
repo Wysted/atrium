@@ -147,7 +147,7 @@ func TestListRobots(t *testing.T) {
 	mustExec(t, e.owner, `UPDATE api_tokens SET last_used_at = '2030-01-01T00:00:00Z' WHERE id = $1`, tok)
 
 	t.Run("admins see every field; humans are not listed", func(t *testing.T) {
-		p, err := e.svc.ListRobots(ctx, admin, portal.PageRequest{})
+		p, err := e.svc.ListRobots(ctx, admin, portal.PageRequest{}, "")
 		if err != nil || len(p.Items) != 3 || p.NextCursor != "" {
 			t.Fatalf("page = %+v, %v", p, err)
 		}
@@ -169,8 +169,46 @@ func TestListRobots(t *testing.T) {
 		}
 	})
 
+	t.Run("status filter keeps the keyset and rejects unknown values", func(t *testing.T) {
+		for status, want := range map[string][]string{"active": {a, c}, "disabled": {b}} {
+			var seen []string
+			req := portal.PageRequest{Limit: 1}
+			for pages := 0; ; pages++ {
+				p, err := e.svc.ListRobots(ctx, admin, req, status)
+				if err != nil || pages > 3 {
+					t.Fatalf("%s page %d: %v", status, pages, err)
+				}
+				for _, r := range p.Items {
+					if r.Status != status {
+						t.Errorf("%s filter returned %+v", status, r)
+					}
+					seen = append(seen, r.ID)
+				}
+				if p.NextCursor == "" {
+					break
+				}
+				req.Cursor = p.NextCursor
+			}
+			slices.Sort(want)
+			if !slices.Equal(seen, want) {
+				t.Errorf("%s: seen %v, want %v", status, seen, want)
+			}
+		}
+		pm, err := e.svc.ListRobots(ctx, mgr, portal.PageRequest{}, "disabled")
+		if err != nil || len(pm.Items) != 1 || pm.Items[0].ID != b || pm.Items[0].Detail || pm.Items[0].OwnerUserID != "" || pm.Items[0].LastUsedAt != nil {
+			t.Fatalf("manager disabled = %+v, %v", pm, err)
+		}
+		if _, err := e.svc.ListRobots(ctx, plain, portal.PageRequest{}, "gone"); !errors.Is(err, portal.ErrForbidden) {
+			t.Fatalf("unauthorized with bad status: %v", err)
+		}
+		var v *portal.ValidationError
+		if _, err := e.svc.ListRobots(ctx, admin, portal.PageRequest{}, "gone"); !errors.As(err, &v) {
+			t.Fatalf("unknown status: %v", err)
+		}
+	})
+
 	t.Run("a manager gets id, name and status only", func(t *testing.T) {
-		p, err := e.svc.ListRobots(ctx, mgr, portal.PageRequest{})
+		p, err := e.svc.ListRobots(ctx, mgr, portal.PageRequest{}, "")
 		if err != nil || len(p.Items) != 3 {
 			t.Fatalf("page = %+v, %v", p, err)
 		}
@@ -182,7 +220,7 @@ func TestListRobots(t *testing.T) {
 	})
 
 	t.Run("a user without managed initiatives is refused", func(t *testing.T) {
-		if _, err := e.svc.ListRobots(ctx, plain, portal.PageRequest{}); !errors.Is(err, portal.ErrForbidden) {
+		if _, err := e.svc.ListRobots(ctx, plain, portal.PageRequest{}, ""); !errors.Is(err, portal.ErrForbidden) {
 			t.Fatalf("err = %v", err)
 		}
 	})
@@ -191,7 +229,7 @@ func TestListRobots(t *testing.T) {
 		var seen []string
 		req := portal.PageRequest{Limit: 2}
 		for pages := 0; ; pages++ {
-			p, err := e.svc.ListRobots(ctx, admin, req)
+			p, err := e.svc.ListRobots(ctx, admin, req, "")
 			if err != nil || pages > 3 {
 				t.Fatalf("page %d: %v", pages, err)
 			}
@@ -208,7 +246,7 @@ func TestListRobots(t *testing.T) {
 		if !slices.Equal(seen, want) {
 			t.Fatalf("seen %v, want %v", seen, want)
 		}
-		if _, err := e.svc.ListRobots(ctx, admin, portal.PageRequest{Cursor: "garbage"}); !errors.Is(err, portal.ErrInvalidCursor) {
+		if _, err := e.svc.ListRobots(ctx, admin, portal.PageRequest{Cursor: "garbage"}, ""); !errors.Is(err, portal.ErrInvalidCursor) {
 			t.Fatalf("garbage cursor: %v", err)
 		}
 	})

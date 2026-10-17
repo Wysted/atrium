@@ -133,8 +133,9 @@ func robotWriteError(what string, err error) error {
 }
 
 // ListRobots lists the robots by id. Platform admins see every field; managers (who need the list to grant) see
-// id, name and status.
-func (s *Service) ListRobots(ctx context.Context, callerID string, req PageRequest) (Page[Robot], error) {
+// id, name and status. A non-empty status keeps the robots in that status; the keyset is the same, so a cursor
+// stays valid for the same status.
+func (s *Service) ListRobots(ctx context.Context, callerID string, req PageRequest, status string) (Page[Robot], error) {
 	size := pageSize(req.Limit)
 	var out Page[Robot]
 	err := s.store.WithTx(ctx, func(tx Tx) error {
@@ -143,11 +144,14 @@ func (s *Service) ListRobots(ctx context.Context, callerID string, req PageReque
 		if err != nil {
 			return err
 		}
+		if status != "" && status != UserStatusActive && status != UserStatusDisabled {
+			return invalid("status", CodeInvalid)
+		}
 		after, err := decodeCursor(cursorKindRobots, req.Cursor, false)
 		if err != nil {
 			return err
 		}
-		rows, err := tx.Robots().ListRobots(ctx, d.Scope, PageQuery{After: after, Limit: size + 1})
+		rows, err := tx.Robots().ListRobots(ctx, d.Scope, PageQuery{After: after, Limit: size + 1, Status: status})
 		if err != nil {
 			return fmt.Errorf("list robots: %w", err)
 		}

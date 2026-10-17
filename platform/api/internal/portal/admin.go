@@ -107,6 +107,9 @@ type PageQuery struct {
 	// Search is the validated text a group listing filters by (case-insensitive substring of key or name);
 	// empty means no filter. Other listings ignore it.
 	Search string
+	// Status is the validated status a robot listing filters by (UserStatusActive or UserStatusDisabled); empty
+	// means no filter. Other listings ignore it.
+	Status string
 }
 
 // uuidPattern is the canonical text form of an id; anything else is "not found" before it reaches SQL.

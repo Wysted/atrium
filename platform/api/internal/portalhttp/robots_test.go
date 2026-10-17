@@ -17,10 +17,11 @@ type robotCalls struct {
 	newRobot   portal.NewRobot
 	robotPatch portal.RobotPatch
 	robots     portal.Page[portal.Robot]
+	status     string
 }
 
-func (f *fakeAdmin) ListRobots(_ context.Context, caller string, req portal.PageRequest) (portal.Page[portal.Robot], error) {
-	f.req = req
+func (f *fakeAdmin) ListRobots(_ context.Context, caller string, req portal.PageRequest, status string) (portal.Page[portal.Robot], error) {
+	f.req, f.status = req, status
 	return f.robots, f.note(caller, "")
 }
 
@@ -100,6 +101,15 @@ func TestRobotRequestsAndResponses(t *testing.T) {
 		`{"id":"01a14296-1449-7be0-957b-4b1ad8d7a0cc","name":"bot","status":"disabled"}]}`
 	if w.Code != http.StatusOK || strings.TrimSpace(w.Body.String()) != want || fake.req.Limit != 7 || fake.req.Cursor != "abc" {
 		t.Fatalf("status %d body %s req %+v", w.Code, w.Body.String(), fake.req)
+	}
+
+	do(h, http.MethodGet, PathRobots+"?status=disabled", "", nil)
+	if fake.status != "disabled" {
+		t.Fatalf("status filter = %q", fake.status)
+	}
+	do(h, http.MethodGet, PathRobots, "", nil)
+	if fake.status != "" {
+		t.Fatalf("status without the parameter = %q", fake.status)
 	}
 
 	w = do(h, http.MethodGet, robotPath(), "", nil)

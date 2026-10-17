@@ -73,7 +73,7 @@ func (a *api) listRobots(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	p, err := a.admin.ListRobots(r.Context(), uid, req)
+	p, err := a.admin.ListRobots(r.Context(), uid, req, r.URL.Query().Get(queryStatus))
 	if err != nil {
 		a.fail(w, r, "robots_list", err)
 		return
