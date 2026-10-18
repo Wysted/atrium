@@ -24,8 +24,6 @@ Pending work and open questions for atrium. Detailed context lives in
   PostgreSQL serializes the commit of every notifying transaction on one cluster-wide lock (waits of up to ~3 s were
   seen under disk load in tests). Admin changes are rare today; measure under the production write rate before
   adding notifying triggers to hot tables.
-- [ ] **Enable private vulnerability reporting.** In the GitHub repository, Settings > Code security. `SECURITY.md`
-  points reporters to it.
 
 ## Adopter bootstrap gaps in `base/`
 
