@@ -27,7 +27,7 @@ overlays/local-google  real Google login on top of overlays/local: image tag, cl
 | `roles.sh` / `roles.sql` | `platform_portal` (NOLOGIN) and the `portal_app` login role (member of `platform_portal` only) as the bootstrap superuser; idempotent; `base/postgres/initdb.sh` now creates them on a fresh volume, so this is for volumes initialized before that |
 | `seed.sh` / `seed.sql` | dev data as platform_owner; idempotent, also restores grants revoked by the smoke |
 | `jwks-tls.sh` | local PKI for the JWKS listener (ECDSA P-256 CA 10 y + leaf 90 days, SANs of `platform-api-jwks`), Secret `platform-api-jwks-tls` and ConfigMap `platform-jwks-ca` per app namespace; idempotent, re-issues the leaf 30 days before expiry; called by `up.sh` before the rollouts |
-| `smoke.sh` | end-to-end checks with curl from the host; leaves the cluster as found |
+| `smoke.sh` | end-to-end checks with curl from the host (trusting `.tools/secrets/local-ca.crt` when it exists); leaves the cluster as found |
 | `down-spike.sh` | deletes spike-authz / spike-app1 / spike-app2 (manifests stay in `spikes/`) |
 | `down-monitoring.sh` | removes PodMonitors/rules, the Helm release and the `monitoring` namespace (`DROP_CRDS=1` also the Operator CRDs); the platform keeps running |
 
@@ -51,8 +51,8 @@ the local overlay's `seed.sql`, never in base.
 - Database: login role `portal_app`, member only of `platform_portal`; password in `.tools/secrets/k3d-pg-portal-password`, pgpass
   Secret `portal/portal-pgpass` (`fsGroup` + `defaultMode: 0440`, like platform-api). The role is created by `base/postgres/initdb.sh` (key `portal-password` of `postgres-bootstrap`; `roles.sh` covers older volumes), not by
   the migrations: `platform_owner` has no CREATEROLE and migration 0009 only creates `platform_portal` if it is missing.
-- Probe: `PORTAL_PROBE_ADDR=traefik.traefik.svc.cluster.local:443`. The wildcard certificate is the real Let's Encrypt one, so the
-  system roots verify it: no `PORTAL_PROBE_CA_FILE` and no `PORTAL_PROBE_INSECURE_TLS`. Local interval 1m (`PORTAL_PROBE_INTERVAL`).
+- Probe: `PORTAL_PROBE_ADDR=traefik.traefik.svc.cluster.local:443`. With the Let's Encrypt wildcard the
+  system roots verify it: no `PORTAL_PROBE_CA_FILE` and no `PORTAL_PROBE_INSECURE_TLS`. In local CA mode (`local/certs-up.sh` without a Cloudflare token, see CONTRIBUTING.md) `up.sh` applies `overlays/local/portal-local-ca` instead: ConfigMap `portal/local-tls-ca` from `.tools/secrets/local-ca.crt`, mounted and set as `PORTAL_PROBE_CA_FILE` (added to the system roots). Local interval 1m (`PORTAL_PROBE_INTERVAL`).
 - NetworkPolicies (default deny both ways): ingress only from Traefik to 8080 (kubelet probes on 8081 come from the node and are
   never filtered); egress to DNS, PostgreSQL 5432, platform-api 8083 (JWKS) and Traefik pods on 8443. Policies see the POD port: the
   Service port 443 of Traefik is `websecure` = 8443. The metrics port 9090 is open only to the Prometheus pods of the `monitoring`
