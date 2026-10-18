@@ -31,7 +31,7 @@ Ver la tabla en `README.md`. En resumen: el código Go vive en `platform/` (work
 ```bash
 local/db-up.sh                                       # local PostgreSQL for the Go tests (needs Docker)
 (cd platform/api && ../../gk go test ./...)          # repeat in platform/sdk/go and platform/examples/hello
-local/lint.sh                                        # golangci-lint, govulncheck, alert rules (lint|vuln|rules to narrow)
+local/lint.sh                                        # golangci-lint, govulncheck, alert rules, docs (lint|vuln|rules|docs to narrow)
 platform-gitops/monitoring/test-rules.sh             # alert rules only (promtool via Docker)
 cd platform/web && ../../nk npm ci                   # first time; then, from platform/web:
 ../../nk npm run generate && ../../nk npm run check:csp
