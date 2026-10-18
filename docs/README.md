@@ -2,6 +2,8 @@
 
 Start with [architecture.md](architecture.md) to see how the pieces fit; use the reference pages for exact behavior.
 
+Español: [es/README.md](es/README.md).
+
 ## Adopters (operating atrium)
 
 | Document | What it covers |

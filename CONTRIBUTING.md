@@ -86,5 +86,7 @@ BUILD=1 bash platform-gitops/overlays/local-google/up.sh          # return to Go
 ## Conventions
 
 - Conventional Commits. Code, comments, UI text, docs and commit messages are in English.
+- Docs have a Spanish copy under `docs/es/` (same paths; docs outside `docs/` live in `docs/es/repo/`). A docs change
+  updates both languages in the same commit.
 - Keep code and docs changes in separate commits.
 - Never commit secrets or personal data: this repository is public.

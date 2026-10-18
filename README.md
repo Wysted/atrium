@@ -30,6 +30,7 @@ manage initiatives (groups of apps), roles, grants, API tokens and areas.
 | Document | What it covers |
 |---|---|
 | `docs/README.md` | index of the documentation by audience |
+| `docs/es/` | Spanish copy of the documentation ([docs/es/repo/README.md](docs/es/repo/README.md)) |
 | `docs/install.md` | install atrium on your cluster |
 | `docs/onboard-an-app.md` | put an internal app behind atrium end to end |
 | `docs/operate.md` | portalctl, upgrades, backup, monitoring, hardening and troubleshooting |
