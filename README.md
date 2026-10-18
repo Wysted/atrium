@@ -1,5 +1,7 @@
 # atrium
 
+English | [Español](docs/es/repo/README.md)
+
 One entrance to a company's internal apps. atrium is self-hosted: Google Workspace sign-in, per-app authorization kept
 in PostgreSQL, and an identity-aware proxy in front of every app through Traefik ForwardAuth. Each request that passes
 reaches the app with a short-lived signed JWT whose audience is that app; the app verifies it with a small Go SDK
