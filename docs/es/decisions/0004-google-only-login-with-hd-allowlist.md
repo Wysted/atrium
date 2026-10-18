@@ -18,7 +18,7 @@ Las empresas que adoptan atrium usan Google Workspace o Cloud Identity. El login
 
 ## Resultado de la decisión
 
-Authorization Code + PKCE (S256) + `state` + `nonce`; el claim `hd` se envía solo como pista de UI y se hace cumplir contra `PLATFORM_ALLOWED_HD` sobre el ID token (las cuentas personales no llevan `hd`). La identidad es `sub`, mapeado a `users.google_sub`; los usuarios se crean just in time en el primer login. No se guarda ningún token de Google. El emisor está fijo en `https://accounts.google.com` y nunca es configurable. La revocación es local: un flag `disabled`, sesiones eliminadas al deshabilitar, y la caché de decisiones de 30 s acota el corte.
+Authorization Code + PKCE (S256) + `state` + `nonce`; el claim `hd` se envía solo como pista de UI y se hace cumplir contra `PLATFORM_ALLOWED_HD` sobre el ID token (las cuentas personales no llevan `hd`). La identidad es `sub`, mapeado a `users.google_sub`; los usuarios se crean en el momento de su primer login. No se guarda ningún token de Google. El emisor está fijo en `https://accounts.google.com` y nunca es configurable. La revocación es local: un flag `disabled`, sesiones eliminadas al deshabilitar, y la caché de decisiones de 30 s acota el corte.
 
 ## Consecuencias
 
