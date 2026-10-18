@@ -4,6 +4,7 @@
 #   local/lint.sh lint       # only golangci-lint (config: .golangci.yml)
 #   local/lint.sh vuln       # only govulncheck
 #   local/lint.sh rules      # only the alert rules (promtool in the pinned Prometheus image; `all` runs it too)
+#   local/lint.sh docs       # only the docs: links, anchors, Spanish copies (local/check-docs.py; `all` runs it too)
 # Covers every tracked go.mod except spikes/ (disposable code, never promoted to platform/).
 # The tools run with `go run <pkg>@<version>` so they are built by the same Go as the code (a prebuilt golangci-lint
 # image older than the module's Go version refuses to lint it). Builds are cached in .tools/go/.
@@ -12,11 +13,13 @@ set -euo pipefail
 readonly ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 readonly GOLANGCI_LINT=github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
 readonly GOVULNCHECK=golang.org/x/vuln/cmd/govulncheck@v1.9.0
+# Pinned by tag and index digest; runs local/check-docs.py only (standard library).
+readonly PYTHON_IMAGE=python:3.14.0-alpine3.22@sha256:8373231e1e906ddfb457748bfc032c4c06ada8c759b7b62d9c73ec2a3c56e710
 
 mode="${1:-all}"
 case "$mode" in
-  all | lint | vuln | rules) ;;
-  *) echo "usage: $0 [all|lint|vuln|rules]" >&2; exit 2 ;;
+  all | lint | vuln | rules | docs) ;;
+  *) echo "usage: $0 [all|lint|vuln|rules|docs]" >&2; exit 2 ;;
 esac
 
 cd "$ROOT"
@@ -26,7 +29,13 @@ if [ "$mode" = all ] || [ "$mode" = rules ]; then
   echo "== platform-gitops/monitoring (alert rules)"
   platform-gitops/monitoring/test-rules.sh || failed=1
 fi
-[ "$mode" = rules ] && exit "$failed"
+if [ "$mode" = all ] || [ "$mode" = docs ]; then
+  echo "== docs (links, anchors, Spanish copies)"
+  # Read-only mount, no network, non-root.
+  git ls-files -z '*.md' | xargs -0 docker run --rm --network none --user "$(id -u):$(id -g)" \
+    -v "$ROOT:/repo:ro" -w /repo "$PYTHON_IMAGE" python3 -I local/check-docs.py . || failed=1
+fi
+case "$mode" in rules | docs) exit "$failed" ;; esac
 while IFS= read -r gomod; do
   module="$(dirname "$gomod")"
   modules=$((modules + 1))
