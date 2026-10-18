@@ -29,10 +29,24 @@ mkdir -p "$ROOT/.tools/npm/cache" "$HERE/out" "$HERE/node_modules"
 LB_IP="$(docker inspect "$LB" --format "{{(index .NetworkSettings.Networks \"$NET\").IPAddress}}")"
 [[ -n "$LB_IP" ]] || { echo "  FAIL: cannot resolve the IP of $LB on $NET (is the cluster up?)"; exit 1; }
 
+# Local CA mode (local/certs-up.sh without a Cloudflare token exports this file; stale files are rejected): Node (the orphan
+# fetch) trusts the CA through NODE_EXTRA_CA_CERTS. Chromium cannot add a root (the pinned image has no NSS tools to do it as
+# non-root), so it gets --ignore-certificate-errors-spki-list with the SPKI hash of the wildcard LEAF (Chromium matches only
+# certificates the server presents, and Traefik presents the leaf alone). The leaf is read from the cluster Secret and first
+# verified against the local CA, so the pin is exactly "this certificate, signed by the local CA".
+source "$HERE/../local-ca-lib.sh"
+local_ca_detect "$ROOT"
+ca=()
+if [[ -n "$LOCAL_CA" ]]; then
+  leaf="$("$ROOT/tk" kubectl -n traefik get secret apps-wildcard-tls -o jsonpath='{.data.tls\.crt}' | base64 -d)"
+  openssl verify -x509_strict -CAfile "$LOCAL_CA" <(printf '%s\n' "$leaf") >/dev/null || { echo "  FAIL: the wildcard does not verify against $LOCAL_CA"; exit 1; }
+  leaf_spki="$(printf '%s\n' "$leaf" | openssl x509 -pubkey -noout | openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | base64)"
+  ca=(-e "LEAF_SPKI=$leaf_spki" -e NODE_EXTRA_CA_CERTS=/local-ca.crt -v "$LOCAL_CA:/local-ca.crt:ro")
+fi
 run() { # run <command...>: inside the pinned image, as the host user, with the check directory mounted at /work
   local hosts=() h
   for h in "${HOSTS[@]}"; do hosts+=(--add-host "$h:$LB_IP"); done
-  docker run --rm --init --user "$(id -u):$(id -g)" --network "$NET" "${hosts[@]}" \
+  docker run --rm --init --user "$(id -u):$(id -g)" --network "$NET" "${hosts[@]}" "${ca[@]}" \
     --cap-drop ALL --security-opt no-new-privileges --shm-size=256m \
     -e HOME=/tmp -e npm_config_cache=/npmcache -e npm_config_update_notifier=false -e OUT_DIR=/work/out -e ORPHAN_HOST="$ORPHAN_HOST" \
     -v "$ROOT/.tools/npm/cache:/npmcache" -v "$HERE:/work:ro" -v "$HERE/node_modules:/work/node_modules" -v "$HERE/out:/work/out" -w /work "$IMG" "$@"

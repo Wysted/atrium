@@ -66,7 +66,7 @@ const pass = (m) => console.log(`  PASS: ${m}`)
 const fail = (m) => { fails++; console.log(`  FAIL: ${m}`) }
 const check = (label, ok, detail = '') => (ok ? pass(label) : fail(detail ? `${label}: ${detail}` : label))
 
-const browser = await chromium.launch()
+const browser = await chromium.launch({ args: process.env.LEAF_SPKI ? [`--ignore-certificate-errors-spki-list=${process.env.LEAF_SPKI}`] : [] })
 let ctx, page
 let consoleErrors = []
 let failedRequests = []

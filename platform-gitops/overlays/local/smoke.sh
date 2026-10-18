@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # End-to-end smoke of the platform in the k3d cluster, with curl from the HOST
-# (*.apps.wysted.dev -> 127.0.0.1 through public DNS; Traefik serves the real wildcard certificate).
+# (*.apps.wysted.dev -> 127.0.0.1 through public DNS; Traefik serves the Let's Encrypt wildcard certificate, or the one
+# of the local CA when local/certs-up.sh ran without a Cloudflare token and exported .tools/secrets/local-ca.crt).
 # Needs: up.sh already run, python3 on the host, ./gk (Docker) to build portalctl. Cluster access goes through ./tk.
 # Leaves the cluster as found (temporary pods and fixtures are removed; alice's revoked grant is re-seeded).
 set -uo pipefail
@@ -24,7 +25,12 @@ PROBE_DEADLINE_S=300 # the local portal probes every minute (PORTAL_PROBE_INTERV
 CURL_IMG=curlimages/curl:8.11.1
 REVOKE_DEADLINE_MS=5000
 LAST_USED_DEADLINE_S=150 # token last_used_at: throttled to once a minute per replica and flushed once a minute
+source "$HERE/local-ca-lib.sh"
+local_ca_detect "$ROOT"
 WORK="$(mktemp -d)"
+# Local CA mode: curl (CURL_CA_BUNDLE; distro builds compile their own CA path in) and the Go portalctl (SSL_CERT_FILE)
+# verify against the local CA. Never -k. The file is removed by certs-up.sh in the Let's Encrypt modes.
+if [[ -n "$LOCAL_CA" ]]; then export CURL_CA_BUNDLE="$LOCAL_CA" SSL_CERT_FILE="$LOCAL_CA"; fi
 mkdir -p "$ROOT/.tools/tmp"
 GW="$(mktemp -d -p "$ROOT/.tools/tmp")" # shared with the toolbox container (/workspace): Grafana checks and its credentials file
 FAILS=0
@@ -1246,8 +1252,8 @@ code=$(mutate "$JTA" DELETE "$P/api/v1/me/tokens/$idA" same-origin application/j
 $K delete -f "$REL/smoke-whoami.yaml" -f "$REL/smoke-whoami-portal.yaml" --wait=false >/dev/null
 
 section "23. portalctl (docs/reference/api.md, 'Tokens'): grant and revoke through the API with a token"
-# The host reaches the portal like curl does: public DNS -> 127.0.0.1 and the real Let's Encrypt wildcard, so no
-# --resolve and no SSL_CERT_FILE are needed (the CLI uses the system roots).
+# The host reaches the portal like curl does: public DNS -> 127.0.0.1 and the wildcard certificate, so no --resolve is
+# needed (the CLI uses the system roots, or SSL_CERT_FILE in local CA mode, exported above).
 CTL="$ROOT/.tools/portalctl/portalctl"
 rm -f "$CTL" # a broken build must never run against a binary left by a previous run
 if (cd platform/api && ../../gk env CGO_ENABLED=0 go build -o ../../.tools/portalctl/portalctl ./cmd/portalctl) >"$WORK/ctl-build.log" 2>&1; then

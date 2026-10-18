@@ -1,0 +1,39 @@
+# Local CA for contributors without a Cloudflare token (local/certs-up.sh, local mode): a self-signed root signs the
+# same wildcard Certificate the Let's Encrypt issuers sign. The CA secret lives in the cert-manager namespace (the
+# cluster resource namespace of the chart), where a ClusterIssuer of type `ca` looks it up.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: local-selfsigned
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: local-ca
+  namespace: cert-manager
+spec:
+  isCA: true
+  commonName: atrium local CA
+  secretName: local-ca-tls
+  duration: 87600h # 10 years
+  # The CA can only sign names under apps.wysted.dev: a leaked CA key cannot impersonate other sites for a browser that trusts it.
+  nameConstraints:
+    critical: true
+    permitted:
+      dnsDomains: ["apps.wysted.dev"]
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    kind: ClusterIssuer
+    name: local-selfsigned
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: local-ca
+spec:
+  ca:
+    secretName: local-ca-tls

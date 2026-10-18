@@ -28,6 +28,8 @@ readonly KPS_CHART=prometheus-community/kube-prometheus-stack
 readonly KPS_VERSION=92.10.0
 readonly KPS_REPO=https://prometheus-community.github.io/helm-charts
 kc() { ./tk kubectl "$@"; }
+source "$HERE/local-ca-lib.sh"
+local_ca_detect "$ROOT"   # fails fast on a stale local-ca.crt; LOCAL_CA is set in local CA mode
 
 echo "==> secrets (generated once in $SECRETS)"
 umask 077
@@ -116,8 +118,15 @@ for n in a b; do
 done
 
 echo "==> portal"
-kc apply --dry-run=server -k "$REL/portal" >/dev/null
-kc apply -k "$REL/portal"
+PORTAL_DIR="$REL/portal"
+if [[ -n "$LOCAL_CA" ]]; then
+  # Local CA mode (local/certs-up.sh without a Cloudflare token): the integration probe must trust the wildcard's issuer.
+  echo "    local CA mode: the integration probe trusts $SECRETS/local-ca.crt"
+  ./tk sh -c "kubectl -n portal create configmap local-tls-ca --from-file=ca.crt=$SECRETS/local-ca.crt --dry-run=client -o yaml | kubectl apply -f - >/dev/null"
+  PORTAL_DIR="$REL/portal-local-ca"
+fi
+kc apply --dry-run=server -k "$PORTAL_DIR" >/dev/null
+kc apply -k "$PORTAL_DIR"
 kc -n portal rollout restart deploy/portal >/dev/null
 kc -n portal rollout status deploy/portal --timeout="$ROLLOUT_TIMEOUT"
 

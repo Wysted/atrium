@@ -1,0 +1,25 @@
+# The local portal for a cluster whose wildcard comes from the local CA (local/certs-up.sh without a Cloudflare token).
+# up.sh applies this instead of ../portal when .tools/secrets/local-ca.crt exists; it creates ConfigMap portal/local-tls-ca
+# (key ca.crt) from that file. The integration probe adds the CA to the system roots (PORTAL_PROBE_CA_FILE); the Let's
+# Encrypt mode keeps the system roots only, so ../portal alone stays the default.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: [../portal]
+patches:
+  - target: {kind: Deployment, name: portal}
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata: {name: portal}
+      spec:
+        template:
+          spec:
+            containers:
+              - name: portal
+                env:
+                  - {name: PORTAL_PROBE_CA_FILE, value: /etc/portal/local-tls-ca/ca.crt}
+                volumeMounts:
+                  - {name: local-tls-ca, mountPath: /etc/portal/local-tls-ca, readOnly: true}
+            volumes:
+              - name: local-tls-ca
+                configMap: {name: local-tls-ca}
