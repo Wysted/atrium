@@ -11,13 +11,15 @@ import (
 	"testing"
 )
 
-const (
-	// Both are relative to this package directory (platform/api/cmd/platform-api).
-	configDocPath = "../../../../docs/reference/configuration.md"
-	platformRoot  = "../../.."
-)
+// Relative to this package directory (platform/api/cmd/platform-api).
+const platformRoot = "../../.."
 
 var (
+	// configDocPaths are the English page and its Spanish copy; both must list the same variables as the code.
+	configDocPaths = []string{
+		"../../../../docs/reference/configuration.md",
+		"../../../../docs/es/reference/configuration.md",
+	}
 	// envLiteralPattern matches a quoted variable name in Go source. A quoted literal that is not a variable
 	// would be a false positive; none exists today (see the sorted set in the failure message).
 	envLiteralPattern = regexp.MustCompile(`"((?:PLATFORM|PORTAL|HELLO)_[A-Z0-9_]+)"`)
@@ -55,9 +57,18 @@ func codeEnvNames(t *testing.T, root string) []string {
 	return slices.Compact(names)
 }
 
-// TestConfigurationDocMatchesCode keeps docs/reference/configuration.md and the code in step in both directions.
+// TestConfigurationDocMatchesCode keeps docs/reference/configuration.md (and its Spanish copy) and the code in step
+// in both directions.
 func TestConfigurationDocMatchesCode(t *testing.T) {
-	raw, err := os.ReadFile(configDocPath)
+	code := codeEnvNames(t, platformRoot)
+	for _, path := range configDocPaths {
+		t.Run(path, func(t *testing.T) { checkConfigDoc(t, path, code) })
+	}
+}
+
+func checkConfigDoc(t *testing.T, configDocPath string, code []string) {
+	t.Helper()
+	raw, err := os.ReadFile(configDocPath) //nolint:gosec // G304: fixed doc paths
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +78,6 @@ func TestConfigurationDocMatchesCode(t *testing.T) {
 	}
 	slices.Sort(documented)
 	documented = slices.Compact(documented)
-	code := codeEnvNames(t, platformRoot)
 
 	var problems []string
 	for _, n := range code {
