@@ -82,8 +82,9 @@ golang-jwt/jwt v5.3.1, coreos/go-oidc v3.21.0, golang.org/x/oauth2 v0.37.0, jack
 
 ## Limitations
 
-- `hd` for alias and secondary domains is undocumented by Google: the allowlist is a configurable list of `hd` values,
-  rejections log `hd` and email, and it must be tested with real alias and secondary-domain accounts before production.
+- `hd` for users of a secondary domain is undocumented by Google: the allowlist is a configurable list of `hd` values,
+  rejections log `hd` and email, and it must be tested with a real secondary-domain user before production. Email
+  aliases and user alias domains never reach the ID token: Google signs in only with the primary address.
 - Suspended Workspace users: the cutoff is the local `disabled` flag plus the 8 h session cap. Offboarding must disable
   the user in the portal: that revokes their sessions and API tokens ([API tokens](api.md#tokens)). A user suspended in
   Google but not disabled in the portal keeps working tokens up to the personal cap (30 days by default). A faster cutoff

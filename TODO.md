@@ -5,10 +5,11 @@ Pending work and open questions for atrium. Detailed context lives in
 
 ## Before production
 
-- [ ] **Google `hd` with alias and secondary domains.** Google does not document which `hd` value an ID token carries
-  when the user signs in with an alias or secondary-domain address. Verified only for a primary-domain user of
-  Cloud Identity Free (`wysted.dev`). Test with real alias and secondary-domain accounts of the target Workspace,
-  decode the ID token, and adjust `PLATFORM_ALLOWED_HD` if needed. Rejections already log `hd` and email.
+- [ ] **Google `hd` with secondary domains.** Google does not document which `hd` value an ID token carries for a
+  user whose primary address is in a secondary domain. Verified only for a primary-domain user of Cloud Identity Free
+  (`wysted.dev`). Email aliases and user alias domains are not a case: Google signs in only with the primary address
+  (tested 2026-10-18: an alias is "account not found"). Test with a real secondary-domain user of the target Workspace
+  and adjust `PLATFORM_ALLOWED_HD` if needed. Rejections already log `hd` and email.
 - [ ] **Suspended Workspace users.** Today access is cut by the local `disabled` flag plus the 8 h session cap.
   A faster cutoff needs the Admin SDK Directory API (`users.get`, `admin.directory.user.readonly`, domain-wide
   delegation granted by a super admin). Decide together with the company's offboarding process.

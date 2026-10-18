@@ -118,7 +118,7 @@ In Google Cloud (project of your Workspace organization):
 3. Authorized redirect URI, exactly one: `https://auth.apps.example.com/oauth2/callback` (`https://` + `PLATFORM_AUTH_HOST` + `/oauth2/callback`).
 4. Put the client secret in the file used in section 3. The client id is not secret; it goes in `PLATFORM_GOOGLE_CLIENT_ID` (section 7).
 
-`PLATFORM_ALLOWED_HD` is the comma-separated, lowercase list of Workspace domains (the `hd` claim) allowed to sign in. Alias and secondary domains are untested, see [section 11](#11-known-limitations-before-production).
+`PLATFORM_ALLOWED_HD` is the comma-separated, lowercase list of Workspace domains (the `hd` claim) allowed to sign in. Secondary domains are untested (aliases cannot sign in), see [section 11](#11-known-limitations-before-production).
 
 ## 6. Traefik
 
@@ -307,4 +307,4 @@ Revoke with `DELETE FROM platform_admins WHERE user_id = ...` as `platform_owner
 
 ## 11. Known limitations before production
 
-Open items are tracked in [TODO.md](../TODO.md): "Before production" (Google `hd` for alias domains, suspended users, KEK in a Secret, real client IP, egress filtering, `NOTIFY` serialization) and "Adopter bootstrap gaps in `base/`" (hardcoded values above). Also note that `base/postgres` is a single instance without backups: plan database HA and backups yourself. Without the Google variables of section 7, platform-api refuses to start (the fake login is off by default), so a forgotten patch fails loudly instead of opening the login.
+Open items are tracked in [TODO.md](../TODO.md): "Before production" (Google `hd` for secondary domains, suspended users, KEK in a Secret, real client IP, egress filtering, `NOTIFY` serialization) and "Adopter bootstrap gaps in `base/`" (hardcoded values above). Also note that `base/postgres` is a single instance without backups: plan database HA and backups yourself. Without the Google variables of section 7, platform-api refuses to start (the fake login is off by default), so a forgotten patch fails loudly instead of opening the login.
