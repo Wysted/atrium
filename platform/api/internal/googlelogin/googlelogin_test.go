@@ -60,6 +60,20 @@ func TestNotReadyBeforeDiscovery(t *testing.T) {
 	}
 }
 
+func TestHostedDomainHint(t *testing.T) {
+	for _, tc := range []struct {
+		allowed []string
+		want    string
+	}{
+		{[]string{"a.test"}, "a.test"},
+		{[]string{"a.test", "b.test"}, "*"}, // the first domain alone would lock b.test users out of Google's page
+	} {
+		if got := hostedDomainHint(tc.allowed); got != tc.want {
+			t.Errorf("hostedDomainHint(%v) = %q, want %q", tc.allowed, got, tc.want)
+		}
+	}
+}
+
 func TestCheckIdentity(t *testing.T) {
 	l := newLogin(t, "example.test", "other.test")
 	tests := []struct {

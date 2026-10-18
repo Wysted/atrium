@@ -51,6 +51,7 @@ const (
 	paramPrompt     = "prompt"
 	promptSelect    = "select_account"
 	paramHostedDom  = "hd"
+	hostedDomainAny = "*"
 	idTokenKey      = "id_token"
 	signingAlgRS256 = "RS256"
 
@@ -157,7 +158,7 @@ type Config struct {
 	ClientID     string
 	ClientSecret string
 	RedirectURL  string
-	// AllowedHD are the accepted hosted domains (lowercase, non-empty). The first one is sent as the hd hint.
+	// AllowedHD are the accepted hosted domains (lowercase, non-empty). See hostedDomainHint for the hd hint.
 	AllowedHD []string
 	Flows     FlowStore
 
@@ -305,8 +306,18 @@ func (l *Login) Begin(ctx context.Context, in BeginInput) (cookieValue, authURL 
 	// hd is a UI hint only; the real check is on the verified ID token.
 	authURL = c.oauth.AuthCodeURL(state,
 		oauth2.S256ChallengeOption(verifier), oidc.Nonce(nonce), oauth2.AccessTypeOnline,
-		oauth2.SetAuthURLParam(paramPrompt, promptSelect), oauth2.SetAuthURLParam(paramHostedDom, l.cfg.AllowedHD[0]))
+		oauth2.SetAuthURLParam(paramPrompt, promptSelect), oauth2.SetAuthURLParam(paramHostedDom, hostedDomainHint(l.cfg.AllowedHD)))
 	return cookieValue, authURL, nil
+}
+
+// hostedDomainHint is the hd sent to Google. Google's sign-in page locks the address to that domain, so with several
+// allowed domains it is "*" (any organization account, as documented by Google): the first domain alone would lock
+// out the users of the others.
+func hostedDomainHint(allowed []string) string {
+	if len(allowed) == 1 {
+		return allowed[0]
+	}
+	return hostedDomainAny
 }
 
 // CompleteInput is what the callback received: the login cookie value and the query parameters.
