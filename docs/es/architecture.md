@@ -2,14 +2,14 @@
 
 > English version: [docs/architecture.md](../architecture.md)
 
-atrium es una única entrada a las apps internas de una empresa: inicio de sesión con Google Workspace, autorización por app guardada en PostgreSQL y un proxy consciente de la identidad frente a cada app mediante Traefik ForwardAuth. Cada request que pasa llega a la app con un JWT firmado de corta vida cuya audiencia es esa app. Esta página explica cómo encajan las piezas y por qué se puede confiar en los límites; el comportamiento exacto está en la [referencia](README.md). Las decisiones de diseño individuales están en [decisions/](decisions/).
+atrium es una única entrada a las apps internas de una empresa: inicio de sesión con Google Workspace, autorización por app guardada en PostgreSQL y un proxy consciente de la identidad frente a cada app mediante Traefik ForwardAuth. Cada solicitud que pasa llega a la app con un JWT firmado de corta vida cuya audiencia es esa app. Esta página explica cómo encajan las piezas y por qué se puede confiar en los límites; el comportamiento exacto está en la [referencia](README.md). Las decisiones de diseño individuales están en [decisions/](decisions/).
 
 ## Componentes y procesos
 
 | Componente | Rol |
 |---|---|
 | Traefik | Entrypoint `websecure`. Ejecuta `strip-assertion` y luego ForwardAuth en cada router, sin posibilidad de exclusión |
-| `platform-api` | Autoriza cada request (`/forwardauth`), ejecuta el login con Google y las sesiones, es dueño de las llaves de firma y publica el JWKS. Guarda la KEK. Cuatro listeners (internal, jwks, public, metrics): [Listeners](reference/forwardauth.md#listeners) |
+| `platform-api` | Autoriza cada solicitud (`/forwardauth`), ejecuta el login con Google y las sesiones, es dueño de las llaves de firma y publica el JWKS. Guarda la KEK. Cuatro listeners (internal, jwks, public, metrics): [Listeners](reference/forwardauth.md#listeners) |
 | `portal` (`cmd/portal`) | La app del portal: el inicio ("qué apps puedo abrir") para todo usuario, más las pantallas de administración y la API JSON que las sostiene. Deployment, host y rol de base de datos propios; nunca guarda la KEK ni ninguna llave de firma |
 | `portalctl` | CLI en Go (`platform/api/cmd/portalctl`) que habla con la API del portal con un token y solo con el host del portal. Resuelve llaves y nombres de robots listando (la API no filtra por llave), trata un 409 al crear como `unchanged` solo cuando el grant directo existente está vigente (uno vencido es un error: la llave única ignora `expires_at`) y rechaza cualquier redirección. Uso: [operate.md](operate.md#portalctl) |
 | `sdk/go` | La biblioteca que usan las apps para validar la aserción una sola vez: [JWT de aserción](reference/assertion.md#validación-del-lado-de-la-app) |
@@ -38,7 +38,7 @@ atrium es una única entrada a las apps internas de una empresa: inicio de sesi�
 
 Fundamento: [ADR 0003](decisions/0003-separate-listeners-per-audience.md), [ADR 0006](decisions/0006-portal-as-a-separate-process-and-database-role.md).
 
-## Flujo de un request
+## Flujo de una solicitud
 
 1. Un cliente llega a Traefik en `websecure`. `strip-assertion` elimina cualquier `Platform-Assertion` enviado por el cliente, luego
    ForwardAuth llama a `platform-api /forwardauth` (siempre con GET; el método original llega en `X-Forwarded-Method`).
@@ -95,14 +95,14 @@ Modelo de amenazas de los tokens de API y los robots:
 | Token reenviado al portal por una app hermana que lo recibió por error | Los tokens no se aceptan en ningún otro host; las apps no pueden leer los headers de la ruta del portal (Traefik los elimina); los clientes hablan solo con el host del portal | Una app hermana maliciosa que obtenga el secreto puede reutilizarlo contra el portal hasta el vencimiento o la revocación: el token no tiene vínculo de audiencia más allá de la regla de host |
 | Token enviado a otros hosts de apps | Platform-api lo ignora ahí; el secreto queda expuesto a esa app, que podría reutilizarlo contra el portal | Hasta el vencimiento o la revocación. La CLI rechaza cualquier host que no sea el del portal; un `Authorization` extraviado en otro lado es un error del cliente |
 | Escalada de privilegios al emitir | Solo sesión de navegador; los dueños solo para sí mismos; `admin` solo si el dueño es admin o manager en ese momento; tokens de robot solo por administradores de plataforma; el scope nunca agrega permisos | Ninguno más allá de los derechos propios del dueño al emitir |
-| Deriva de privilegios tras la emisión (grant revocado, dueño deshabilitado) | Los permisos se resuelven en vivo en cada request desde el dueño; deshabilitar revoca los tokens; ForwardAuth verifica el `status` del dueño en cada request | La fila del token no tiene caché, pero las reglas de app e iniciativa pueden venir de la caché de decisiones de 30 s si se reutiliza el Evaluator |
+| Deriva de privilegios tras la emisión (grant revocado, dueño deshabilitado) | Los permisos se resuelven en vivo en cada solicitud desde el dueño; deshabilitar revoca los tokens; ForwardAuth verifica el `status` del dueño en cada solicitud | La fila del token no tiene caché, pero las reglas de app e iniciativa pueden venir de la caché de decisiones de 30 s si se reutiliza el Evaluator |
 | Brecha de baja (offboarding): usuario suspendido en Google pero no deshabilitado en el portal | Tope personal de 30 días; la baja deshabilita al usuario en el portal, lo que revoca sesiones y tokens de inmediato ([limitaciones del login](reference/login.md#limitaciones)) | Un usuario suspendido, no deshabilitado, conserva un token personal funcional hasta 30 días; cerrarlo requiere la verificación con la Directory API ([limitaciones del login](reference/login.md#limitaciones)) |
 | El `Authorization` de cada app llega a platform-api | Agregado a `authRequestHeaders`; se lee solo para la app del portal, nunca se registra; el listener interno es alcanzable solo desde Traefik (NetworkPolicy), la misma exposición que `Cookie` hoy | Un compromiso de platform-api ve los headers `Authorization` de las apps, como ya ve las cookies |
 | Robot usado como administrador encubierto | Los robots nunca son administradores de plataforma (restricción del esquema), nunca están en grupos, nunca son managers efectivos; solo los administradores de plataforma los crean; la creación y los grants quedan auditados | Un administrador de plataforma aún puede otorgar a un robot `manages_access` en una iniciativa junto con un manager humano; se revisa mediante la auditoría y la lista de robots |
 | Un token filtrado emite tokens nuevos | Emisión solo desde una sesión de navegador (aserción sin `tid`) | Solo contención: un token `admin` filtrado de un administrador aún puede cambiar grants, deshabilitar usuarios y revocar tokens hasta ser revocado |
 | CSRF o confused deputy a través del navegador | Bearer no es ambiental; el preflight nunca se aprueba; Fetch Metadata y solo JSON sin cambios; la ruta de token ignora las cookies | Ninguno identificado |
 | DoS con valores Bearer aleatorios | Verificación de formato y checksum antes de la base de datos; de lo contrario una consulta indexada, no más pesada que la consulta de sesión sin caché existente; los rate limits de Traefik son herramienta del adoptante | Una avalancha de tokens aleatorios bien formados cuesta una consulta indexada cada uno; misma clase que una avalancha de cookies aleatorias |
-| Latencia de revocación | Sin caché: el siguiente request tras la revocación falla en todas las réplicas | Un request que ya pasó ForwardAuth termina; su aserción vive como máximo 90 s y nunca es visible para el cliente |
+| Latencia de revocación | Sin caché: la siguiente solicitud tras la revocación falla en todas las réplicas | Una solicitud que ya pasó ForwardAuth termina; su aserción vive como máximo 90 s y nunca es visible para el cliente |
 | Phishing a un administrador para que cree un token | La creación requiere una sesión de navegador en el host del portal y muestra el scope y el vencimiento; auditada | Un administrador engañado puede entregar un token a un atacante; mitigado solo por el vencimiento y la revisión. El device flow (fase 3) ampliaría esta superficie |
 | Interno que crea un robot | Solo administradores de plataforma; cada creación de robot, grant y token queda auditada; los robots se listan con dueño y último uso | Un administrador de plataforma malicioso ya tiene confianza para otorgar grants; la auditoría es el control |
 | Proceso del portal comprometido | No puede leer `token_hash` ni escribir `platform_admins`; `platform_runtime` no puede insertar tokens ni eliminarlos, y no puede crear un robot | El rol del portal puede insertar un token con un hash que conoce para cualquier usuario, equivalente a lo que ya permiten sus escrituras de grants; ese rol puede eludir el rastro de auditoría |
@@ -114,12 +114,12 @@ Fundamento: [ADR 0010](decisions/0010-local-areas-with-admin-assigned-supervisor
 | Amenaza | Mitigación | Riesgo residual |
 |---|---|---|
 | El supervisor escala a acceso | Sin acción sobre grants, roles, grupos ni apps; el alcance son metadatos de credenciales, revocación y `owner_user_id` | Ninguno para el acceso |
-| El supervisor administra a un par, a un administrador o a sí mismo | Los supervisores y los administradores de plataforma nunca son supervisables (un predicado SQL sobre el destino, evaluado en cada request, con tests) | Ninguno identificado |
+| El supervisor administra a un par, a un administrador o a sí mismo | Los supervisores y los administradores de plataforma nunca son supervisables (un predicado SQL sobre el destino, evaluado en cada solicitud, con tests) | Ninguno identificado |
 | Privilegio por efecto secundario (alguien agregado a un grupo de acceso cae bajo un supervisor) | Las áreas son tablas propias, gestionadas solo por administradores de plataforma | Un error de un administrador de plataforma al agregar un miembro; auditado |
 | El supervisor interrumpe la automatización (revoca los tokens de un robot de deploy) | Solo robots que pertenecen a sus personas; auditado con `area_id` | Capacidad intencional: un administrador que asigna el dueño de un robot compartido lo entrega a los supervisores de ese dueño |
 | Robot movido fuera de alcance | Reasignación solo a personas supervisables de las áreas del actor; se rechaza borrar el dueño | Un supervisor de dos áreas puede mover un robot entre ellas, de modo que los otros supervisores del área destino lo ganan |
 | Token filtrado de un supervisor | La capacidad de supervisor es solo de sesión de navegador: bajo un token `Supervised` está vacío (un solo lugar, `portal.subject`), y supervisar nunca permite un token `admin` | Ninguno más allá de lo que el dueño del token puede hacer sin la capacidad |
-| Un supervisor removido termina una acción en curso | El siguiente request relee el alcance; sin caché | Un request que ya está en su transacción hace commit; nunca extiende el acceso; auditado |
+| Un supervisor removido termina una acción en curso | La siguiente solicitud relee el alcance; sin caché | Una solicitud que ya está en su transacción hace commit; nunca extiende el acceso; auditado |
 
 ## Casos de uso
 

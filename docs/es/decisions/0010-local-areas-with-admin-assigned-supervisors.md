@@ -18,7 +18,7 @@ La baja (offboarding) de la automatización de una persona (sus tokens y robots)
 
 ## Resultado de la decisión
 
-Las áreas, `area_members` (un área por persona, solo humanos) y `area_supervisors` son tablas propias, gestionadas solo por admins de la plataforma. Una persona es supervisable cuando es miembro humano de un área, no es admin de la plataforma y no supervisa ningún área, de modo que los supervisores nunca alcanzan a sí mismos, entre sí ni a los admins. Un supervisor puede listar metadatos, revocar tokens y cambiar el `owner_user_id` de un robot dentro de sus áreas, nunca grants, grupos ni acceso. La capacidad es solo de sesión de navegador, se evalúa desde la base de datos en cada request, y los objetivos fuera de alcance responden 404.
+Las áreas, `area_members` (un área por persona, solo humanos) y `area_supervisors` son tablas propias, gestionadas solo por admins de la plataforma. Una persona es supervisable cuando es miembro humano de un área, no es admin de la plataforma y no supervisa ningún área, de modo que los supervisores nunca alcanzan a sí mismos, entre sí ni a los admins. Un supervisor puede listar metadatos, revocar tokens y cambiar el `owner_user_id` de un robot dentro de sus áreas, nunca grants, grupos ni acceso. La capacidad es solo de sesión de navegador, se evalúa desde la base de datos en cada solicitud, y los objetivos fuera de alcance responden 404.
 
 ## Consecuencias
 

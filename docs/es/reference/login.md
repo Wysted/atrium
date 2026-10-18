@@ -31,7 +31,7 @@ Variables, formatos y archivos: [configuration.md](configuration.md#platform-api
 - El flujo se consume solo cuando el `state` del callback coincide con él (`UPDATE ... WHERE id AND state`), de modo que un callback
   falsificado con un `state` ajeno, o `?error=` sin el `state` correcto, nunca cancela un login en curso.
   La cookie de login se borra solo cuando el flujo realmente se quemó.
-- Resultados del callback, siempre con páginas genéricas que nunca reflejan parámetros del request:
+- Resultados del callback, siempre con páginas genéricas que nunca reflejan parámetros de la solicitud:
   - 400: ningún flujo coincidente, código faltante, Google rechazó el código (`invalid_grant` y otros 4xx), ID token inválido,
     `?error=` con el `state` correcto.
   - 403: `hd` ausente o no permitido, `email_verified` no verdadero, `sub` vacío o con el prefijo reservado `fake:`,
@@ -49,7 +49,7 @@ Rotación de `client_secret`: Google permite dos secretos activos por cliente OA
 | Tabla | Cookie | Vida |
 |---|---|---|
 | `oauth_flows` | `__Host-Http-platform_login` (host de autenticación) | 10 min; guarda `state`, `nonce`, verificador PKCE, `rd`, hash de `bind`; se consume atómicamente |
-| `sessions` | `__Host-Http-platform_session` (host de autenticación) | 8 h absolutas + 30-60 min de inactividad; `last_seen_at` se actualiza con throttling, refrescado por cualquier request a una app |
+| `sessions` | `__Host-Http-platform_session` (host de autenticación) | 8 h absolutas + 30-60 min de inactividad; `last_seen_at` se actualiza con throttling, refrescado por cualquier solicitud a una app |
 | `app_sessions` | `__Host-Http-platform_app` (cada host de app) | Nunca más allá de la sesión central; FK a `sessions` con `ON DELETE CASCADE` |
 | `login_codes` | ninguna (URL del callback) | 30 s, un solo uso; ligado a la sesión, la app, el host destino y el hash de `bind` |
 

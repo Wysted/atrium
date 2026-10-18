@@ -16,7 +16,7 @@ La administración necesita una UI web y una API, y necesita acceso de escritura
 
 ## Resultado de la decisión
 
-El portal es su propio Deployment (`cmd/portal`, mismo módulo Go) en su propio host detrás del mismo ForwardAuth. Nunca posee la KEK ni ninguna llave de firma. platform-api corre como `platform_runtime` con solo lo que ForwardAuth y el login necesitan; el portal corre como `platform_portal`. Ambos roles se verifican al arrancar contra un conjunto esperado de privilegios, en ambas direcciones, y el proceso se niega a arrancar si hay desvío. Los permisos del portal se resuelven desde la base de datos en cada request (nunca viajan en la aserción, que quedaría desactualizada durante su vida) mediante una función pura `adminz.Decide`, en la misma transacción que la mutación. Un recurso no autorizado de otra iniciativa responde 404 para no confirmar su existencia.
+El portal es su propio Deployment (`cmd/portal`, mismo módulo Go) en su propio host detrás del mismo ForwardAuth. Nunca posee la KEK ni ninguna llave de firma. platform-api corre como `platform_runtime` con solo lo que ForwardAuth y el login necesitan; el portal corre como `platform_portal`. Ambos roles se verifican al arrancar contra un conjunto esperado de privilegios, en ambas direcciones, y el proceso se niega a arrancar si hay desvío. Los permisos del portal se resuelven desde la base de datos en cada solicitud (nunca viajan en la aserción, que quedaría desactualizada durante su vida) mediante una función pura `adminz.Decide`, en la misma transacción que la mutación. Un recurso no autorizado de otra iniciativa responde 404 para no confirmar su existencia.
 
 ## Consecuencias
 

@@ -145,7 +145,7 @@ Cluster local:
 
 ## Grafana detrás de ForwardAuth (overlay local)
 
-Grafana está registrada como una app del modelo del portal y se alcanza solo a través de Traefik; autentica el request con el
+Grafana está registrada como una app del modelo del portal y se alcanza solo a través de Traefik; autentica la solicitud con el
 header `Platform-Assertion` que ForwardAuth inyecta. Nada en `base/` cambia.
 
 | Pieza | Dónde |
@@ -159,7 +159,7 @@ header `Platform-Assertion` que ForwardAuth inyecta. Nada en `base/` cambia.
 
 Propiedades que conviene conocer: Grafana ignora el `typ` JOSE (`platform-assertion+jwt`, ver [aserción](../../reference/assertion.md)) y no puede exigirlo, lo cual es
 aceptable porque la llave de firma de la plataforma firma solo `Platform-Assertion`; la tolerancia de reloj de 60 s es fija (go-jose); el header se
-verifica en cada request, por lo que la revocación surte efecto en el siguiente request (ForwardAuth responde 403; no hay sesión del lado de Grafana
+verifica en cada solicitud, por lo que la revocación surte efecto en la siguiente solicitud (ForwardAuth responde 403; no hay sesión del lado de Grafana
 que la sobreviva). `cache_ttl` (5m) solo acota cuánto tarda en verse una llave JWKS rotada: la plataforma ([llaves](../../reference/keys.md)) publica la llave `next` al
 menos 1 h antes de firmar y conserva la retirada 1 h, y la ventana de emergencia es de 5 min (`docs/reference/keys.md`, igual que el `max-age` del JWKS),
 por lo que 5m nunca rechaza un token legítimo. Grafana no tiene claim de nombre visible en `[auth.jwt]`, por lo que los usuarios aparecen con su login UUID y

@@ -17,7 +17,7 @@ Las apps detrás de ForwardAuth necesitan saber quién es el usuario sin impleme
 
 ## Resultado de la decisión
 
-ForwardAuth inyecta un JWT ES256 `Platform-Assertion`, emitido para una sola app: `aud` es `app_<ulid>`, inyectado en cada app por configuración; `sub` es el UUID interno del usuario. El `typ` es `platform-assertion+jwt` (tipado explícito de RFC 8725 sección 3.11). El token vive 90 s y se vuelve a emitir en cada request, por lo que las apps no mantienen una lista de replay; `jti` es solo para correlación de logs. `sid` es un id de sesión público, nunca el valor de la cookie. `roles` lleva solo las claves de rol de la iniciativa dueña de `aud`. Las apps leen la identidad únicamente de la aserción verificada e ignoran `X-Forwarded-User` y headers similares.
+ForwardAuth inyecta un JWT ES256 `Platform-Assertion`, emitido para una sola app: `aud` es `app_<ulid>`, inyectado en cada app por configuración; `sub` es el UUID interno del usuario. El `typ` es `platform-assertion+jwt` (tipado explícito de RFC 8725 sección 3.11). El token vive 90 s y se vuelve a emitir en cada solicitud, por lo que las apps no mantienen una lista de replay; `jti` es solo para correlación de logs. `sid` es un id de sesión público, nunca el valor de la cookie. `roles` lleva solo las claves de rol de la iniciativa dueña de `aud`. Las apps leen la identidad únicamente de la aserción verificada e ignoran `X-Forwarded-User` y headers similares.
 
 ## Consecuencias
 

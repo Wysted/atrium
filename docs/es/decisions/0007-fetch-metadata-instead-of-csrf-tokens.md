@@ -20,7 +20,7 @@ Para `/api/*` el portal rechaza cualquier `Sec-Fetch-Site` distinto de `same-ori
 
 ## Consecuencias
 
-- Un request sin `Sec-Fetch-Site` ni `Origin` pasa (clientes que no son navegadores); los navegadores siempre lo envían.
+- Una solicitud sin `Sec-Fetch-Site` ni `Origin` pasa (clientes que no son navegadores); los navegadores siempre lo envían.
 - Sin `Sec-Fetch-Site`, `Origin` se compara con `Host` sin el esquema, por lo que HSTS importa.
 - Un futuro WebSocket debe validar `Origin` explícitamente.
-- Referencia: [Protección de requests](../reference/api.md#protección-de-las-solicitudes).
+- Referencia: [Protección de solicitudes](../reference/api.md#protección-de-las-solicitudes).

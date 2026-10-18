@@ -15,7 +15,7 @@ cookie `__Host-portal_app` por app plantada mediante un código de un solo uso e
    -> 302 `https://auth.apps.wysted.dev/login?rd=<original url>` (XHR, `/api/`, accept JSON -> 401 JSON; preflight -> 200).
 2. `/login?user=alice` (falso) establece `__Host-portal_session` en el host de autenticación, crea un código de un solo uso (30s, vinculado a usuario + host de la app + rd)
    y responde 302 a `https://app1.../_portal/callback?code=...`.
-3. Ese request pasa por ForwardAuth otra vez; `authz` consume el código y responde 302 a `rd` con
+3. Esa solicitud pasa por ForwardAuth otra vez; `authz` consume el código y responde 302 a `rd` con
    `Set-Cookie: __Host-portal_app=...; Path=/; Secure; HttpOnly; SameSite=Lax` (sin Domain).
 4. Con la cookie, `authz` responde 200 + `X-Portal-Token` (ES256, aud = id de la app, sub = UUID del usuario, TTL 90s);
    usuario no autorizado -> 403. El binario `app` valida el token contra `/.well-known/jwks.json`.
@@ -33,6 +33,6 @@ Imagen: `docker build --build-arg BINARY=authz|app .`
 
 - El `Set-Cookie` + `Location` del 302 devuelto por `authz` llegan al navegador a través de un ForwardAuth real de Traefik.
 - `authResponseHeaders: X-Portal-Token` sobrescribe cualquier `X-Portal-Token` enviado por el cliente.
-- El middleware asociado a nivel de entrypoint cubre toda IngressRoute, incluido el host de autenticación: sus requests (`/login`, `/.well-known/jwks.json`) llegan a `/forwardauth` y obtienen 200 sin `X-Portal-Token` (el host de autenticación nunca es una app; `New` rechaza configuraciones que lo listen en `Apps`). Verificar que `/login` y el JWKS sigan siendo alcanzables y que ahí no se inyecte ningún header de token.
+- El middleware asociado a nivel de entrypoint cubre toda IngressRoute, incluido el host de autenticación: sus solicitudes (`/login`, `/.well-known/jwks.json`) llegan a `/forwardauth` y obtienen 200 sin `X-Portal-Token` (el host de autenticación nunca es una app; `New` rechaza configuraciones que lo listen en `Apps`). Verificar que `/login` y el JWKS sigan siendo alcanzables y que ahí no se inyecte ningún header de token.
 - Traefik reenvía `Cookie`, `Accept`, `Sec-Fetch-Mode`, `Origin`, `Access-Control-Request-Method` a authz. Verificado (Traefik v3.7.14): `/forwardauth` siempre se llama con GET; el método original solo llega en `X-Forwarded-Method`, por lo que authz lee ese header primero.
 - Comportamiento de `X-Forwarded-Host` (sin puerto) en puertos no estándar.

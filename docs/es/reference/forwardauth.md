@@ -2,7 +2,7 @@
 
 > English version: [docs/reference/forwardauth.md](../../reference/forwardauth.md)
 
-El contrato entre Traefik y platform-api: cómo se autoriza cada request y qué recibe la app. Por qué está construido así: [ADR 0001](../decisions/0001-per-app-assertion-with-opaque-ids.md), [ADR 0003](../decisions/0003-separate-listeners-per-audience.md).
+El contrato entre Traefik y platform-api: cómo se autoriza cada solicitud y qué recibe la app. Por qué está construido así: [ADR 0001](../decisions/0001-per-app-assertion-with-opaque-ids.md), [ADR 0003](../decisions/0003-separate-listeners-per-audience.md).
 
 ## Configuración de Traefik
 
@@ -28,12 +28,12 @@ Traefik v3.7.14:
    (los provee Traefik); los headers fuera de la lista (personalizados) no. Un `X-Forwarded-Host` enviado por el cliente es reemplazado
    por el host real.
 2. `strip-assertion` (`customRequestHeaders` con valor vacío) elimina una aserción enviada por el cliente en el host de autenticación y
-   en requests de preflight; los requests autorizados siguen recibiendo la aserción emitida por platform-api.
+   en solicitudes de preflight; las solicitudes autorizadas siguen recibiendo la aserción emitida por platform-api.
 3. `maxResponseBodySize` está en bytes; una respuesta de autenticación mayor se rechaza con 401.
 4. `trustForwardHeader` está deprecado en v3.7 (se elimina en el próximo major); permanece explícitamente en `false` y se revisa
    en la actualización al major de Traefik.
 5. `Authorization` en `authRequestHeaders` llega a platform-api y nada más cambia para las apps: una app detrás de
-   ForwardAuth sigue recibiendo el `Authorization` que se le envió, detrás de una sesión válida; sin una, el request es un 401
+   ForwardAuth sigue recibiendo el `Authorization` que se le envió, detrás de una sesión válida; sin una, la solicitud es un 401
    como antes.
 6. En un 401/403 de ForwardAuth, Traefik copia el `WWW-Authenticate` de la respuesta de autenticación al cliente
    (`Bearer error="invalid_token"`, `Bearer` solo, `insufficient_scope`), sin redirección y sin `Set-Cookie`.
@@ -64,7 +64,7 @@ La app se resuelve solo desde `X-Forwarded-Host` (exacto, en minúsculas) contra
 | Caso | Respuesta |
 |---|---|
 | El host es el host de autenticación | 200, sin aserción |
-| Host que no está en deployments | 403 (una fila `unknown_host` va a `access_denials`, ver [Clasificación de requests y reglas de borde](#clasificación-de-requests-y-reglas-de-borde)) |
+| Host que no está en deployments | 403 (una fila `unknown_host` va a `access_denials`, ver [Clasificación de solicitudes y reglas de borde](#clasificación-de-solicitudes-y-reglas-de-borde)) |
 | Preflight de CORS (`OPTIONS` + `Origin` + `Access-Control-Request-Method`) | 200, sin aserción (CORS es responsabilidad de la app) |
 | Host del portal con un header `Authorization` (cualquier valor; la fila de preflight anterior tiene prioridad) | Solo ruta de token, cookie ignorada (una cookie válida con un token inválido es 401), nunca una redirección: token `Bearer` válido y dueño activo -> 200 + `Platform-Assertion` (`roles` vacío, claims de token); token malformado, desconocido, vencido o revocado, dueño inactivo -> 401 problem+json con `WWW-Authenticate: Bearer error="invalid_token"`; método no permitido por el scope del token -> 403. Cualquier otro host ignora `Authorization` |
 | `/_platform/callback?code=` con un código de un solo uso válido ligado a este host y a la cookie `__Host-Http-platform_bind` del navegador | 302 al `rd` guardado + `Set-Cookie: __Host-Http-platform_app`, `Referrer-Policy: no-referrer` |
@@ -75,11 +75,11 @@ La app se resuelve solo desde `X-Forwarded-Host` (exacto, en minúsculas) contra
 | Autorizado | 200 + `Platform-Assertion` |
 | Falla de platform-api o de la base de datos | 503; fail closed, nunca 2xx |
 
-## Clasificación de requests y reglas de borde
+## Clasificación de solicitudes y reglas de borde
 
 - Navegación vs API: solo `GET`/`HEAD` pueden ser navegación. Cuando `Sec-Fetch-Mode` está presente, decide por sí solo
   (`navigate` = navegación, cualquier otro = API, sin importar `Accept`); sin él, un `Accept` HTML significa navegación.
-  Cualquier otro método, incluido un `POST` de formulario, es API (401): un request no idempotente nunca se redirige.
+  Cualquier otro método, incluido un `POST` de formulario, es API (401): una solicitud no idempotente nunca se redirige.
 - La cookie `__Host-Http-platform_bind` se reutiliza (y se renueva su vida) cuando ya existe una bien formada,
   de modo que pestañas paralelas o llamadas de API no sobrescriban el vínculo de las otras. Las respuestas 401 de API también la establecen, con
   `login_url` apuntando a `https://<host>/`.
@@ -107,7 +107,7 @@ La app se resuelve solo desde `X-Forwarded-Host` (exacto, en minúsculas) contra
 - Rutas reservadas en cada host de app: `/_platform/*` (`callback`, `logout`). Las apps no deben usarlas. `logout` acepta solo POST ([login](login.md#reglas)).
 - Los errores JSON usan RFC 9457 `application/problem+json` con un miembro adicional `login_url`, para que los frontends de las apps sepan adónde enviar al usuario en un 401.
 - Cada respuesta de `/forwardauth` lleva `Cache-Control: no-store`.
-- Una línea de log de decisión por request: decisión, motivo, host, app id, `sid`, `jti`. Nunca tokens ni cookies.
+- Una línea de log de decisión por solicitud: decisión, motivo, host, app id, `sid`, `jti`. Nunca tokens ni cookies.
 
 ## Ruta de token
 
@@ -117,7 +117,7 @@ Permite que clientes que no son navegadores (CLI, automatización) llamen a la A
    lo lee solo cuando la app resuelta cumple la misma regla de portal que el Evaluator (`Facts.PortalApp`: app id igual
    a `PLATFORM_PORTAL_APP_ID` **y** iniciativa `platform`, no solo el app id) y lo ignora, y nunca lo registra,
    en cualquier otro host. Como `Cookie`, llega solo al listener interno, que solo Traefik alcanza (NetworkPolicy). Las apps detrás de ForwardAuth conservan su propio `Authorization` (Grafana, por ejemplo): ForwardAuth nunca
-   cambia el request que llega a la app.
+   cambia la solicitud que llega a la app.
 2. En un host del portal, cualquier header `Authorization` toma exclusivamente la ruta de token; la cookie no se consulta y no
    hay fallback a ella. Forma aceptada: un header, esquema `Bearer` (sin distinguir mayúsculas), un token. Los tokens nunca se
    aceptan en un query string, una cookie ni otro header.
@@ -150,7 +150,7 @@ Permite que clientes que no son navegadores (CLI, automatización) llamen a la A
 Donde las reglas anteriores dejaron una elección:
 
 - El hecho del portal se lee del Evaluator (`Decision.PortalApp`, establecido siempre que el host es conocido) a través de la caché
-  de decisiones bajo un sujeto nil-UUID, solo cuando un request lleva `Authorization`; en un host que no es el del portal el
+  de decisiones bajo un sujeto nil-UUID, solo cuando una solicitud lleva `Authorization`; en un host que no es el del portal el
   header no se vuelve a leer y la ruta de cookie corre como antes. Las reglas de app e iniciativa de la regla 3 vienen de
   esa misma caché (`authorize` para el dueño); la fila del token y el `status` del dueño nunca.
 - La búsqueda selecciona la fila por hash y la base de datos calcula `revoked`, `expired` (contra `now()`) y `owner active`
@@ -176,7 +176,7 @@ Donde las reglas anteriores dejaron una elección:
 `strip-authorization` está en `platform-gitops/base/portal/ingressroute.yaml` junto a la ruta que lo referencia. El
 smoke check lista todo IngressRoute que coincide con un host del portal y falla si a alguno le falta el middleware; también lista
 los objetos `Ingress` estándar y falla ante cualquier ruta pública sin `Host(`, con `HostRegexp`, o un Ingress sin regla de
-host, porque esos podrían coincidir con el host del portal sin ser notados. Un request con un Bearer en una navegación es un 401, nunca
+host, porque esos podrían coincidir con el host del portal sin ser notados. Una solicitud con un Bearer en una navegación es un 401, nunca
 una redirección de login.
 
 ### Limitaciones

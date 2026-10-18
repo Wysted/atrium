@@ -2,7 +2,7 @@
 
 > English version: [README.md](../../../README.md)
 
-Una única entrada a las apps internas de una empresa. atrium es auto-alojado: inicio de sesión con Google Workspace, autorización por app guardada en PostgreSQL y un proxy consciente de la identidad delante de cada app mediante Traefik ForwardAuth. Cada request que pasa llega a la app con un JWT firmado de corta vida cuya audiencia es esa app; la app lo verifica con un pequeño SDK de Go (`go get github.com/Wysted/atrium/platform/sdk/go`). Su portal web lista las apps de cada usuario y permite a los administradores gestionar iniciativas (grupos de apps), roles, grants (asignaciones de rol), tokens de API y áreas.
+Una única entrada a las apps internas de una empresa. atrium es auto-alojado: inicio de sesión con Google Workspace, autorización por app guardada en PostgreSQL y un proxy consciente de la identidad delante de cada app mediante Traefik ForwardAuth. Cada solicitud que pasa llega a la app con un JWT firmado de corta vida cuya audiencia es esa app; la app lo verifica con un pequeño SDK de Go (`go get github.com/Wysted/atrium/platform/sdk/go`). Su portal web lista las apps de cada usuario y permite a los administradores gestionar iniciativas (grupos de apps), roles, grants (asignaciones de rol), tokens de API y áreas.
 
 ## Estado y límites
 
@@ -31,7 +31,7 @@ Una única entrada a las apps internas de una empresa. atrium es auto-alojado: i
 | [`docs/install.md`](../install.md) | instalar atrium en tu cluster |
 | [`docs/onboard-an-app.md`](../onboard-an-app.md) | poner una app interna detrás de atrium de punta a punta |
 | [`docs/operate.md`](../operate.md) | portalctl, actualizaciones, backup, monitoreo, endurecimiento y resolución de problemas |
-| [`docs/architecture.md`](../architecture.md) | componentes, flujo de requests, modelo de confianza y glosario |
+| [`docs/architecture.md`](../architecture.md) | componentes, flujo de solicitudes, modelo de confianza y glosario |
 | [`docs/reference/`](../reference/) | aserción, ForwardAuth, llaves, login, configuración, modelo de datos, API del portal y métricas |
 | [`docs/runbooks/`](../runbooks/) | runbooks operativos (rotación del client secret de Google) |
 | [`platform-gitops/README.md`](platform-gitops/README.md) | manifiestos de Kubernetes, el cluster local, sus scripts y el smoke test |

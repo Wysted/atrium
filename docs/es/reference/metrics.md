@@ -190,6 +190,6 @@ Un host huérfano no pertenece a ninguna app, por lo tanto a ninguna iniciativa,
 `GET /api/v1/health/orphan-hosts` (acción `orphan_host.list`, solo administradores de plataforma; los demás reciben 403) lista los
 hosts con denegaciones `unknown_host` en los últimos 7 días que ahora no tienen deployment (un host que se agregó después
 ya no es huérfano), la denegación más reciente primero, como máximo 100: `{hosts: [{host, count, last_denied_at}]}`. `count`
-es el número de denegaciones registradas; platform-api registra como máximo una por host cada 10 minutos por réplica ([ForwardAuth](forwardauth.md#clasificación-de-requests-y-reglas-de-borde)),
+es el número de denegaciones registradas; platform-api registra como máximo una por host cada 10 minutos por réplica ([ForwardAuth](forwardauth.md#clasificación-de-solicitudes-y-reglas-de-borde)),
 así que mide cuánto tiempo se ha golpeado a un host, no cuántas solicitudes recibió. La consulta lee `access_denials`, que
-el rol `platform_portal` puede consultar con select; no se mantiene un índice adicional: las filas `unknown_host` están acotadas a 30 por minuto por réplica ([ForwardAuth](forwardauth.md#clasificación-de-requests-y-reglas-de-borde)), así que una semana contiene como máximo unas 300 000 por réplica, y el endpoint es solo para administradores.
+el rol `platform_portal` puede consultar con select; no se mantiene un índice adicional: las filas `unknown_host` están acotadas a 30 por minuto por réplica ([ForwardAuth](forwardauth.md#clasificación-de-solicitudes-y-reglas-de-borde)), así que una semana contiene como máximo unas 300 000 por réplica, y el endpoint es solo para administradores.
