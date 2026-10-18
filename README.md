@@ -8,7 +8,7 @@ manage initiatives (groups of apps), roles, grants, API tokens and areas.
 
 ## Status and limits
 
-- Pre-release: there are no tagged releases yet, only `main`.
+- Pre-1.0: v0.1.0 is the first tagged release. Configuration, API and SDK may still change between minor versions.
 - Google (Workspace or Cloud Identity) is the only supported identity provider today.
 - Tested only in a local k3d cluster so far; `TODO.md` lists what is still missing before production.
 

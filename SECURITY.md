@@ -2,7 +2,14 @@
 
 ## Supported versions
 
-The project has no releases yet. Only the `main` branch is supported; fixes land there.
+| Version | Supported |
+|---|---|
+| `main` | yes |
+| 0.1.x | yes |
+| older | no |
+
+The project is pre-1.0: fixes land on `main` and in a new patch release of the latest minor version only. The Go SDK
+(`platform/sdk/go`) is versioned with the repository; its tags are `platform/sdk/go/vX.Y.Z`.
 
 ## Reporting a vulnerability
 
