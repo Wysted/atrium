@@ -886,13 +886,15 @@ try {
   // ---- 5d-3c: area supervisor. carol supervises smoke-ui-sup (alice and bob are members); alice owns a robot and has a personal
   // token. Placed BEFORE auditSince for the same reason as 5d-3b (its events must not enter the audit count). Idempotent: leftovers
   // (area, active smoke-sup robots, live smoke-sup tokens of alice) are removed first and last, as admin. Robots cannot be deleted:
-  // the per-run robot is created, reassigned by the supervisor and disabled at the end (that also revokes its tokens).
+  // the single fixed-name robot is reused across runs (created once, then re-activated and given back to alice), reassigned
+  // by the supervisor and disabled at the end (that also revokes its tokens). A per-run name would pile up rows and push the
+  // robot off the first page of the paginated Robots table.
   console.log('  -- supervisor: carol (smoke-ui-sup) manages alice tokens and robots; alice (not a supervisor) sees no areas')
   const SUP_AREA = 'smoke-ui-sup'
   const SUP_AREA_NAME = 'Smoke UI sup'
   const SUP_RUN = Math.random().toString(16).slice(2, 8)
   const SUP_TOKEN = `smoke-sup-token-${SUP_RUN}`
-  const SUP_ROBOT = `smoke-sup-robot-${SUP_RUN}`
+  const SUP_ROBOT = 'smoke-sup-robot'
   const BOB = { email: 'bob@example.com', name: 'bob' }
   const supApi = (method, path, body) => page.evaluate(async ([m, p, b]) => {
     const r = await fetch(`/api/v1${p}`, { method: m, headers: { Accept: 'application/json', ...(m === 'GET' ? {} : { 'Content-Type': 'application/json' }) }, body: b === undefined ? undefined : JSON.stringify(b) })
@@ -925,9 +927,12 @@ try {
       const r = await supApi('POST', `/areas/${supArea.id}/${kind}`, { email })
       check(`supervisor setup: ${email} added to ${kind}`, r.status === 201 || r.status === 200, String(r.status))
     }
-    const mkRobot = await supApi('POST', '/robots', { name: SUP_ROBOT, owner_user_id: aliceU.id })
+    const oldRobot = (await apiAll('/robots', 'robots')).find((r) => r.name === SUP_ROBOT)
+    const mkRobot = oldRobot
+      ? await supApi('PATCH', `/robots/${oldRobot.id}`, { status: 'active', owner_user_id: aliceU.id })
+      : await supApi('POST', '/robots', { name: SUP_ROBOT, owner_user_id: aliceU.id })
     const supRobot = (await apiAll('/robots', 'robots')).find((r) => r.name === SUP_ROBOT)
-    check('supervisor setup: robot owned by alice', mkRobot.status === 201 && supRobot?.owner_user_id === aliceU.id, `${mkRobot.status} ${supRobot?.owner_user_id}`)
+    check('supervisor setup: robot owned by alice', (mkRobot.status === 201 || mkRobot.status === 200) && supRobot?.owner_user_id === aliceU.id && supRobot?.status === 'active', `${mkRobot.status} ${supRobot?.owner_user_id}`)
     await login(ALICE.email)
     const mkToken = await supApi('POST', '/me/tokens', { name: SUP_TOKEN, scope: 'read', expires_in: 3600 })
     check('supervisor setup: alice personal token created', mkToken.status === 201, String(mkToken.status))
@@ -983,7 +988,7 @@ try {
 
     console.log('  -- carol: robot tokens dialog, change the owner to bob')
     reset()
-    const supRobotRow = page.getByRole('table', { name: 'Robots', exact: true }).getByRole('row').filter({ hasText: SUP_ROBOT })
+    const supRobotRow = page.getByRole('table', { name: 'Robots', exact: true }).getByRole('row').filter({ hasText: new RegExp(`${SUP_ROBOT}(?!-)`) })
     await supRobotRow.waitFor({ timeout: DATA_TIMEOUT })
     await supRobotRow.getByRole('button', { name: `Tokens of robot ${SUP_ROBOT}`, exact: true }).click()
     await page.getByRole('heading', { name: `Tokens of robot ${SUP_ROBOT}`, exact: true }).waitFor({ timeout: DATA_TIMEOUT })
