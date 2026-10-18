@@ -5,7 +5,8 @@ How users sign in with Google and how sessions, cookies and one-time codes work.
 ## Google OIDC
 
 1. Authorization Code + PKCE (S256) + `state` + `nonce`; scopes `openid email profile`; `access_type=online`;
-   `prompt=select_account`; `hd` sent only as a UI hint. Single redirect URI: `https://auth.apps.<domain>/oauth2/callback`.
+   `prompt=select_account`; `hd` sent only as a UI hint: the allowed domain when `PLATFORM_ALLOWED_HD` has one, `*`
+   when it has several (Google's page locks the address to the hinted domain). Single redirect URI: `https://auth.apps.<domain>/oauth2/callback`.
 2. The Google Cloud OAuth consent screen is configured as **Internal** (external accounts are rejected by Google).
 3. ID token validation:
    - `coreos/go-oidc` v3 `Verify`: signature, `iss`, `aud`, `exp`.
